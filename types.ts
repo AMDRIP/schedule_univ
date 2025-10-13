@@ -124,21 +124,43 @@ export interface TeacherSubjectLink extends BaseItem {
   classTypes: ClassType[];
 }
 
-export enum RuleType {
-  Prohibition = 'Запрет',
-  Requirement = 'Требование',
-  Preference = 'Предпочтение',
+export enum RuleSeverity {
+  Strict = 'Строгое требование (нельзя нарушать)',
+  Strong = 'Сильное предпочтение',
+  Medium = 'Среднее предпочтение',
+  Weak = 'Слабое предпочтение',
 }
-export type RuleTarget = 'teachers' | 'groups' | 'classrooms' | 'subjects';
+
+export enum RuleAction {
+    AvoidTime = 'Избегать времени/дня',
+    RequireTime = 'Требовать время/день',
+    PreferTime = 'Предпочитать время/день',
+    SameDay = 'Размещать в один день',
+    DifferentDay = 'Размещать в разные дни',
+    Consecutive = 'Размещать пары подряд',
+    MaxPerDay = 'Максимум пар в день',
+    Order = 'Определенный порядок (A перед B)',
+    NoOverlap = 'Не пересекать с (по времени)',
+}
+
+export type RuleEntityType = 'teacher' | 'group' | 'subject' | 'classroom' | 'classType' | 'department';
+
+export interface RuleCondition {
+    entityType: RuleEntityType;
+    entityIds: string[]; // Can be one or more IDs
+    classType?: ClassType; // Optional filter
+}
 
 export interface SchedulingRule extends BaseItem {
   description: string;
-  type: RuleType;
-  target: RuleTarget;
-  day: string;
-  timeSlotId: string;
-  targetId: string;
+  severity: RuleSeverity;
+  action: RuleAction;
+  conditions: [RuleCondition, RuleCondition?];
+  day?: string; 
+  timeSlotId?: string;
+  param?: number; 
 }
+
 
 export enum ProductionCalendarEventType {
   Holiday = 'Государственный праздник',

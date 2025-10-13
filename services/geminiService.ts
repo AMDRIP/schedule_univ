@@ -1,9 +1,11 @@
 
+
+
 import { GoogleGenAI, Type } from '@google/genai';
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
     SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS, Specialty, EducationalPlan, DeliveryMode, ClassroomType,
-    Subgroup, Elective
+    Subgroup, Elective, RuleSeverity, RuleAction, RuleEntityType
 } from '../types';
 
 interface GenerationData {
@@ -76,7 +78,24 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
     - Производственный календарь (нерабочие дни, которые нужно пропустить): ${JSON.stringify(productionCalendar)}
     - "Окна" (свободные пары между занятиями) для студентов и преподавателей ${settings.allowWindows ? 'РАЗРЕШЕНЫ' : 'ЗАПРЕЩЕНЫ. Старайся ставить пары подряд.'}.
 
-    ОСНОВНЫЕ ПРАВИЛА СОСТАВЛЕНИЯ РАСПИСАНИЯ:
+    НОВАЯ СИСТЕМА ПРАВИЛ РАСПИСАНИЯ:
+    Это самый важный раздел. Правила задают ограничения и предпочтения. У каждого правила есть 'severity' (серьезность) и 'action' (действие).
+    - 'severity: ${RuleSeverity.Strict}': Это правило НАРУШАТЬ НЕЛЬЗЯ. Любое нарушение делает расписание невалидным.
+    - 'severity: ${RuleSeverity.Strong}', '${RuleSeverity.Medium}', '${RuleSeverity.Weak}': Это предпочтения. Их нарушение не запрещено, но делает расписание менее оптимальным. Старайся выполнить их как можно лучше, в порядке убывания серьезности.
+    - 'action': Определяет суть правила. Например:
+      - '${RuleAction.AvoidTime}': Указанные в 'conditions' сущности не должны иметь занятий в указанные 'day' и 'timeSlotId'.
+      - '${RuleAction.SameDay}': Сущности из первого и второго условия ('conditions') должны быть в один день.
+      - '${RuleAction.Order}': Сущности из первого условия должны быть раньше, чем из второго, в пределах одного дня.
+      - '${RuleAction.MaxPerDay}': Для сущности из первого условия не должно быть больше 'param' занятий в день.
+      - '${RuleAction.Consecutive}': Занятия для указанных сущностей должны идти подряд, без окон.
+    
+    ПРИМЕРЫ ПРАВИЛ:
+    - \`{ "action": "${RuleAction.Order}", "severity": "${RuleSeverity.Strong}", "conditions": [{ "entityType": "subject", "entityIds": ["subj-1"], "classType": "Лекция" }, { "entityType": "subject", "entityIds": ["subj-1"], "classType": "Практика" }]}\`
+      Означает: лекция по предмету subj-1 должна быть раньше практики по нему же в тот же день. Это сильное предпочтение.
+    - \`{ "action": "${RuleAction.MaxPerDay}", "severity": "${RuleSeverity.Strict}", "conditions": [{ "entityType": "group", "entityIds": ["group-101"] }], "param": 3 }\`
+      Означает: у группы group-101 не может быть больше 3 пар в день. Это строгое требование.
+
+    ОСНОВНЫЕ ПРАВИЛА СОСТАВЛЕНИЯ РАСПИСАНИЯ (помимо указанных в JSON):
     1.  ИСТОЧНИК ДАННЫХ: Все обязательные занятия, их количество и тип (лекция, практика, лаб.) должны браться ИСКЛЮЧИТЕЛЬНО из Учебных планов. Дополнительные занятия берутся из списка Факультативов.
     2.  ПОДГРУППЫ: Некоторые занятия в учебном плане могут быть помечены как 'splitForSubgroups'. Это значит, что для каждой подгруппы основной группы нужно создать отдельное занятие. При проверке вместимости аудитории используй 'studentCount' из подгруппы. ВАЖНО: когда занятие идет у подгруппы, вся основная группа ('parentGroupId') считается занятой.
     3.  НАЗНАЧЕНИЕ ПРЕПОДАВАТЕЛЕЙ ПОДГРУППАМ: У подгрупп может быть поле 'teacherAssignments'. Это СТРОГОЕ требование. Если для дисциплины и типа занятия у подгруппы указан конкретный преподаватель, ты ОБЯЗАН использовать именно его. Если назначения нет, выбери любого подходящего преподавателя из общих привязок.
@@ -105,11 +124,12 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
     - Временные слоты: ${JSON.stringify(timeSlots)}
     - Дни недели: ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
     - Привязки преподавателей к дисциплинам: ${JSON.stringify(teacherSubjectLinks)}
-    - Правила расписания: ${JSON.stringify(schedulingRules)}
+    - Правила расписания (НОВАЯ СТРУКТУРА): ${JSON.stringify(schedulingRules)}
 
     Создай полное и оптимальное расписание на семестр.
   `;
 
+  // FIX: Replaced unsupported 'enum' property with guidance in the 'description' to resolve parsing errors.
   const responseSchema = {
     type: Type.ARRAY,
     items: {
@@ -122,9 +142,9 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
         subjectId: { type: Type.STRING, description: 'ID предмета' },
         teacherId: { type: Type.STRING, description: 'ID преподавателя' },
         classroomId: { type: Type.STRING, description: 'ID аудитории' },
-        classType: { type: Type.STRING, enum: Object.values(ClassType), description: 'Тип занятия' },
-        weekType: { type: Type.STRING, enum: ['even', 'odd', 'every'], description: 'Тип недели' },
-        deliveryMode: { type: Type.STRING, enum: Object.values(DeliveryMode), description: 'Тип проведения' },
+        classType: { type: Type.STRING, description: `Тип занятия. Допустимые значения: ${Object.values(ClassType).join(', ')}` },
+        weekType: { type: Type.STRING, description: "Тип недели. Допустимые значения: 'even', 'odd', 'every'" },
+        deliveryMode: { type: Type.STRING, description: `Тип проведения. Допустимые значения: ${Object.values(DeliveryMode).join(', ')}` },
       },
       required: ['day', 'timeSlotId', 'groupId', 'subjectId', 'teacherId', 'classroomId', 'classType', 'weekType', 'deliveryMode']
     }
