@@ -408,69 +408,92 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const deleteItem = (dataType: DataType, id: string) => {
-    const performCascadingDelete = (type: DataType, itemId: string) => {
-      switch (type) {
-        case 'faculties':
-          departments.filter(d => d.facultyId === itemId).forEach(d => performCascadingDelete('departments', d.id));
-          break;
-        case 'departments':
-          teachers.filter(t => t.departmentId === itemId).forEach(t => performCascadingDelete('teachers', t.id));
-          groups.filter(g => g.departmentId === itemId).forEach(g => performCascadingDelete('groups', g.id));
-          cabinets.filter(c => c.departmentId === itemId).forEach(c => performCascadingDelete('cabinets', c.id));
-          break;
-        case 'ugs':
-          specialties.filter(s => s.ugsId === itemId).forEach(s => performCascadingDelete('specialties', s.id));
-          break;
-        case 'specialties':
-          groups.filter(g => g.specialtyId === itemId).forEach(g => performCascadingDelete('groups', g.id));
-          educationalPlans.filter(p => p.specialtyId === itemId).forEach(p => performCascadingDelete('educationalPlans', p.id));
-          setDepartments(prev => prev.map(d => ({ ...d, specialtyIds: d.specialtyIds?.filter(sid => sid !== itemId) })));
-          break;
-        case 'groups':
-          setSchedule(prev => prev.filter(e => e.groupId !== itemId));
-          setStreams(prev => prev.map(s => ({ ...s, groupIds: s.groupIds.filter(gid => gid !== itemId) })));
-          setSubgroups(prev => prev.filter(sg => sg.parentGroupId !== itemId));
-          setElectives(prev => prev.filter(el => el.groupId !== itemId));
-          break;
-        case 'teachers':
-          setSchedule(prev => prev.filter(e => e.teacherId !== itemId));
-          setTeacherSubjectLinks(prev => prev.filter(l => l.teacherId !== itemId));
-          setElectives(prev => prev.filter(el => el.teacherId !== itemId));
-          setSubgroups(prev => prev.map(sg => ({ ...sg, teacherAssignments: sg.teacherAssignments?.filter(a => a.teacherId !== itemId) })));
-          break;
-        case 'subjects':
-          setSchedule(prev => prev.filter(e => e.subjectId !== itemId));
-          setTeacherSubjectLinks(prev => prev.filter(l => l.subjectId !== itemId));
-          setEducationalPlans(prev => prev.map(p => ({ ...p, entries: p.entries.filter(e => e.subjectId !== itemId) })));
-          setElectives(prev => prev.filter(el => el.subjectId !== itemId));
-          setSubgroups(prev => prev.map(sg => ({ ...sg, teacherAssignments: sg.teacherAssignments?.filter(a => a.subjectId !== itemId) })));
-          break;
-        case 'classroomTypes':
-            if (classrooms.some(c => c.typeId === itemId)) {
-                alert('Этот тип аудитории используется. Сначала измените тип у всех аудиторий, использующих его.');
-                return;
-            }
-            break;
-        case 'classrooms':
-          setSchedule(prev => prev.filter(e => e.classroomId !== itemId));
-          setTeachers(prev => prev.map(t => t.pinnedClassroomId === itemId ? { ...t, pinnedClassroomId: '' } : t));
-          setGroups(prev => prev.map(g => g.pinnedClassroomId === itemId ? { ...g, pinnedClassroomId: '' } : g));
-          setSubjects(prev => prev.map(s => s.pinnedClassroomId === itemId ? { ...s, pinnedClassroomId: '' } : s));
-          break;
-        case 'timeSlots':
-        case 'timeSlotsShortened':
-          setSchedule(prev => prev.filter(e => e.timeSlotId !== itemId));
-          setSchedulingRules(prev => prev.filter(r => r.timeSlotId !== itemId));
-          break;
-        default:
-          break;
-      }
-      if (stateSetters[type]) {
-        stateSetters[type](prev => prev.filter(i => i.id !== itemId));
-      }
+    const fullState = getFullState();
+
+    // Pre-deletion checks
+    if (dataType === 'classroomTypes' && fullState.classrooms.some((c: Classroom) => c.typeId === id)) {
+      alert('Этот тип аудитории используется. Сначала измените тип у всех аудиторий, использующих его.');
+      return;
+    }
+
+    const toDelete: { [K in DataType]?: Set<string> } = {};
+    const getSet = (type: DataType) => {
+        if (!toDelete[type]) {
+            toDelete[type] = new Set<string>();
+        }
+        return toDelete[type]!;
     };
-    performCascadingDelete(dataType, id);
+    
+    const queue: { type: DataType; id: string }[] = [{ type: dataType, id }];
+    const processed = new Set<string>();
+
+    while (queue.length > 0) {
+        const { type, id: currentId } = queue.shift()!;
+        const processKey = `${type}-${currentId}`;
+        if (processed.has(processKey)) continue;
+
+        getSet(type).add(currentId);
+        processed.add(processKey);
+
+        switch (type) {
+            case 'faculties':
+                fullState.departments.filter((d: Department) => d.facultyId === currentId).forEach((d: Department) => queue.push({ type: 'departments', id: d.id }));
+                break;
+            case 'departments':
+                fullState.teachers.filter((t: Teacher) => t.departmentId === currentId).forEach((t: Teacher) => queue.push({ type: 'teachers', id: t.id }));
+                fullState.groups.filter((g: Group) => g.departmentId === currentId).forEach((g: Group) => queue.push({ type: 'groups', id: g.id }));
+                fullState.cabinets.filter((c: Cabinet) => c.departmentId === currentId).forEach((c: Cabinet) => queue.push({ type: 'cabinets', id: c.id }));
+                break;
+            case 'ugs':
+                fullState.specialties.filter((s: Specialty) => s.ugsId === currentId).forEach((s: Specialty) => queue.push({ type: 'specialties', id: s.id }));
+                break;
+            case 'specialties':
+                fullState.groups.filter((g: Group) => g.specialtyId === currentId).forEach((g: Group) => queue.push({ type: 'groups', id: g.id }));
+                fullState.educationalPlans.filter((p: EducationalPlan) => p.specialtyId === currentId).forEach((p: EducationalPlan) => queue.push({ type: 'educationalPlans', id: p.id }));
+                break;
+            case 'groups':
+                fullState.subgroups.filter((sg: Subgroup) => sg.parentGroupId === currentId).forEach((sg: Subgroup) => queue.push({ type: 'subgroups', id: sg.id }));
+                break;
+        }
+    }
+
+    // Apply deletions
+    Object.keys(toDelete).forEach(key => {
+        const type = key as DataType;
+        const ids = toDelete[type]!;
+        if (ids.size > 0 && stateSetters[type]) {
+            stateSetters[type](prev => prev.filter(item => !ids.has(item.id)));
+        }
+    });
+    
+    // Apply cascading cleanups on related data
+    const groupIds = getSet('groups');
+    const teacherIds = getSet('teachers');
+    const subjectIds = getSet('subjects');
+    const classroomIds = getSet('classrooms');
+    const specialtyIds = getSet('specialties');
+    const timeSlotIds = new Set([...getSet('timeSlots'), ...getSet('timeSlotsShortened')]);
+    
+    setSchedule(prev => prev.filter(e => 
+        !groupIds.has(e.groupId) &&
+        !teacherIds.has(e.teacherId) &&
+        !subjectIds.has(e.subjectId) &&
+        !classroomIds.has(e.classroomId) &&
+        !timeSlotIds.has(e.timeSlotId)
+    ));
+    setStreams(prev => prev.map(s => ({ ...s, groupIds: s.groupIds.filter(gid => !groupIds.has(gid)) })));
+    setElectives(prev => prev.filter(el => !groupIds.has(el.groupId) && !teacherIds.has(el.teacherId) && !subjectIds.has(el.subjectId)));
+    setTeacherSubjectLinks(prev => prev.filter(l => !teacherIds.has(l.teacherId) && !subjectIds.has(l.subjectId)));
+    setDepartments(prev => prev.map(d => ({ ...d, specialtyIds: d.specialtyIds?.filter(sid => !specialtyIds.has(sid)) })));
+    setEducationalPlans(prev => prev.map(p => ({ ...p, entries: p.entries.filter(e => !subjectIds.has(e.subjectId)) })));
+    setSubgroups(prev => prev.map(sg => ({ ...sg, teacherAssignments: sg.teacherAssignments?.filter(a => !teacherIds.has(a.teacherId) && !subjectIds.has(a.subjectId)) })));
+    
+    // Cleanup pinned classrooms
+    setTeachers(prev => prev.map(t => classroomIds.has(t.pinnedClassroomId || '') ? { ...t, pinnedClassroomId: '' } : t));
+    setGroups(prev => prev.map(g => classroomIds.has(g.pinnedClassroomId || '') ? { ...g, pinnedClassroomId: '' } : g));
+    setSubjects(prev => prev.map(s => classroomIds.has(s.pinnedClassroomId || '') ? { ...s, pinnedClassroomId: '' } : s));
   };
+
 
   const placeUnscheduledItem = (item: UnscheduledEntry, day: string, timeSlotId: string, weekType: 'even' | 'odd' | 'every', date: string) => {
       if (settings.respectProductionCalendar) {
