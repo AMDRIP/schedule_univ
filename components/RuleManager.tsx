@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../hooks/useStore';
 import { SchedulingRule, RuleAction, RuleSeverity, RuleEntityType, RuleCondition, ClassType } from '../types';
@@ -151,7 +152,8 @@ const RuleConditionEditor: React.FC<{
                 <select 
                     multiple 
                     value={condition.entityIds} 
-                    onChange={e => onChange({ ...condition, entityIds: Array.from(e.target.selectedOptions, option => option.value) })}
+                    // FIX: Explicitly type the `option` parameter to resolve `Property 'value' does not exist on type 'unknown'` error.
+                    onChange={e => onChange({ ...condition, entityIds: Array.from(e.target.selectedOptions, (option: HTMLOptionElement) => option.value) })}
                     className={`${defaultInputClass} h-24`}
                 >
                     {options.map((opt: any) => <option key={opt.id} value={opt.id}>{opt.name || opt.number}</option>)}

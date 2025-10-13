@@ -247,22 +247,3 @@ export interface Elective extends BaseItem {
 
 export type DataItem = Faculty | Department | Teacher | Group | Stream | Classroom | Subject | Cabinet | TimeSlot | TeacherSubjectLink | SchedulingRule | ProductionCalendarEvent | UGS | Specialty | EducationalPlan | ScheduleTemplate | ClassroomType | Subgroup | Elective;
 export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'streams' | 'classrooms' | 'subjects' | 'cabinets' | 'timeSlots' | 'teacherSubjectLinks' | 'schedulingRules' | 'productionCalendar' | 'ugs' | 'specialties' | 'educationalPlans' | 'scheduleTemplates' | 'classroomTypes' | 'subgroups' | 'electives' | 'timeSlotsShortened';
-
-// Интерфейс для API, предоставляемого через preload.js в Electron
-export interface IElectronAPI {
-  getApiKey: () => Promise<string | undefined>;
-  setWindowTitle: (title: string) => Promise<void>;
-  openFile: () => Promise<{ filePath: string; data: string } | null>;
-  saveFile: (filePath: string, data: string) => Promise<{ success: boolean; error?: string }>;
-  saveAsFile: (data: string) => Promise<string | null>;
-  autosave: (data: string) => Promise<void>;
-  onRestoreAutosaveRequest: (callback: () => void) => void;
-  restoreAutosave: () => Promise<{ data: string } | null>;
-  log: (...args: any[]) => void;
-}
-
-declare global {
-  interface Window {
-    electronAPI: IElectronAPI;
-  }
-}
