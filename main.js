@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs/promises');
 
 let mainWindow;
+let userApiKey = process.env.API_KEY; // Initialize from env var, can be updated by user
 
 // --- File Operations ---
 const AUTOSAVE_FILE = 'autosave.schd';
@@ -48,7 +49,12 @@ app.whenReady().then(() => {
   // --- IPC Handlers ---
 
   // API Key
-  ipcMain.handle('get-api-key', () => process.env.API_KEY);
+  ipcMain.handle('get-api-key', () => userApiKey);
+  ipcMain.handle('set-api-key', (event, key) => {
+    console.log(`Main process: API key set in session (length: ${key ? key.length : 0})`);
+    userApiKey = key;
+    return { success: true };
+  });
 
   // Window Title
   ipcMain.handle('set-window-title', (event, title) => {

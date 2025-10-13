@@ -7,6 +7,7 @@
  */
 interface IElectronAPI {
   getApiKey: () => Promise<string | undefined>;
+  setApiKey: (key: string) => Promise<{ success: boolean }>;
   setWindowTitle: (title: string) => Promise<void>;
   openFile: () => Promise<{ filePath: string; data: string } | null>;
   saveFile: (filePath: string, data: string) => Promise<{ success: boolean; error?: string }>;

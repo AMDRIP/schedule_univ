@@ -199,6 +199,7 @@ interface StoreState {
   isGeminiAvailable: boolean;
   currentFilePath: string | null;
   lastAutosave: Date | null;
+  apiKey: string;
   
   addItem: (dataType: DataType, item: Omit<DataItem, 'id'>) => void;
   updateItem: (dataType: DataType, item: DataItem) => void;
@@ -210,6 +211,7 @@ interface StoreState {
   removeScheduleEntries: (entryIds: string[]) => void;
   addScheduleEntry: (entry: Omit<ScheduleEntry, 'id'>) => void;
   updateSettings: (newSettings: SchedulingSettings) => void;
+  updateApiKey: (newKey: string) => Promise<void>;
   propagateWeekSchedule: (weekTypeToCopy: 'even' | 'odd') => void;
   saveCurrentScheduleAsTemplate: (name: string, description: string) => void;
   loadScheduleFromTemplate: (templateId: string) => void;
@@ -277,6 +279,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [subgroups, setSubgroups] = useState(initialSubgroups);
   const [electives, setElectives] = useState(initialElectives);
   const [isGeminiAvailable, setIsGeminiAvailable] = useState(false);
+  const [apiKey, setApiKey] = useState('');
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
   const [lastAutosave, setLastAutosave] = useState<Date | null>(null);
 
@@ -288,21 +291,23 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, [groups, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives]);
 
   useEffect(() => {
-    const checkApiKey = async () => {
+    const initializeApiKey = async () => {
         if (window.electronAPI && typeof window.electronAPI.getApiKey === 'function') {
             try {
-                const apiKey = await window.electronAPI.getApiKey();
-                setIsGeminiAvailable(!!apiKey);
+                const key = await window.electronAPI.getApiKey();
+                setApiKey(key || '');
+                setIsGeminiAvailable(!!key);
             } catch (error) {
-                console.error("Не удалось проверить API-ключ:", error);
+                console.error("Не удалось получить API-ключ:", error);
                 setIsGeminiAvailable(false);
+                setApiKey('');
             }
         } else {
             setIsGeminiAvailable(false);
             console.log("Приложение запущено не в среде Electron. Функции ИИ будут отключены.");
         }
     };
-    checkApiKey();
+    initializeApiKey();
   }, []);
   
   // FIX: Removed problematic return type to avoid circular dependency and let TypeScript infer it.
@@ -540,6 +545,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       setSettings(newSettings);
   };
 
+  const updateApiKey = async (newKey: string) => {
+    if (!window.electronAPI) return;
+    try {
+      await window.electronAPI.setApiKey(newKey);
+      setApiKey(newKey);
+      setIsGeminiAvailable(!!newKey);
+    } catch (error) {
+      console.error("Не удалось установить API-ключ:", error);
+      alert("Ошибка при сохранении ключа API.");
+    }
+  };
+
   const propagateWeekSchedule = (weekTypeToCopy: 'even' | 'odd') => {
     if (!settings.semesterStart || !settings.semesterEnd) {
       alert("Даты начала и конца семестра не установлены в настройках.");
@@ -624,7 +641,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         unschedulable = result.unschedulable;
     } else {
         if (!isGeminiAvailable) {
-            throw new Error("API Gemini недоступен. Убедитесь, что приложение запущено через Electron и API-ключ настроен.");
+            throw new Error("API Gemini недоступен. Убедитесь, что API-ключ настроен в настройках.");
         }
         newSchedule = await generateScheduleWithGemini(generationData);
         const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
@@ -700,8 +717,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const value: StoreState = {
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
-    classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave,
-    addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings,
+    classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey,
+    addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings, updateApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
     runScheduler, clearSchedule, removeScheduleEntries,
     startNewProject, handleOpen, handleSave, handleSaveAs,

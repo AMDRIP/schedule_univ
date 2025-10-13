@@ -1,22 +1,30 @@
 
 
 
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { SchedulingSettings } from '../types';
-import { CogIcon } from './icons';
+import { CogIcon, SparklesIcon } from './icons';
 import { exportAllDataAsPdf } from '../services/pdfExporter';
 
 const SettingsView: React.FC = () => {
   const store = useStore();
-  const { settings, updateSettings, getFullState, loadFullState } = store;
+  const { settings, updateSettings, getFullState, loadFullState, apiKey, updateApiKey } = store;
   const [formData, setFormData] = useState<SchedulingSettings>(settings);
   const [isSaved, setIsSaved] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [keyInput, setKeyInput] = useState('');
+  const [isKeySaved, setIsKeySaved] = useState(false);
 
   useEffect(() => {
     setFormData(settings);
   }, [settings]);
+
+  useEffect(() => {
+    setKeyInput(apiKey);
+  }, [apiKey]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = e.target;
@@ -32,6 +40,13 @@ const SettingsView: React.FC = () => {
     updateSettings(formData);
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
+  };
+  
+  const handleKeySave = () => {
+    updateApiKey(keyInput).then(() => {
+        setIsKeySaved(true);
+        setTimeout(() => setIsKeySaved(false), 3000);
+    });
   };
 
   const handleExportJson = () => {
@@ -252,6 +267,43 @@ const SettingsView: React.FC = () => {
             </div>
           </form>
        </div>
+
+      <div className="pt-8 border-t">
+        <div className="flex items-center mb-4">
+            <SparklesIcon className="h-8 w-8 text-purple-600 mr-3" />
+            <h3 className="text-xl font-bold text-gray-800">Настройки ИИ-ассистента (Gemini)</h3>
+        </div>
+        <p className="text-sm text-gray-500 mb-4">
+            Введите ваш API-ключ для Google AI Studio, чтобы активировать функции автоматического составления расписания. Ключ хранится только в текущей сессии и не сохраняется в файле проекта.
+        </p>
+        <div className="space-y-2">
+            <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700">Google Gemini API Key</label>
+            <div className="flex items-center gap-4">
+                <input 
+                    type="password" 
+                    id="apiKey" 
+                    name="apiKey" 
+                    value={keyInput}
+                    onChange={e => setKeyInput(e.target.value)}
+                    className={defaultInputClass}
+                    placeholder="Введите ваш API ключ..."
+                />
+                <button
+                    type="button"
+                    onClick={handleKeySave}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors whitespace-nowrap"
+                >
+                    Сохранить ключ
+                </button>
+            </div>
+            {isKeySaved && (
+                <p className="text-sm text-green-600 mt-2 transition-opacity duration-300">
+                    Ключ API успешно сохранен для текущей сессии.
+                </p>
+            )}
+        </div>
+      </div>
+
        <div className="pt-8 border-t">
           <h3 className="text-xl font-bold text-gray-800 mb-4">Управление данными</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

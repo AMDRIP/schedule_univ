@@ -3,10 +3,17 @@ const { contextBridge, ipcRenderer } = require('electron');
 // Безопасно предоставляем API из главного процесса процессу рендеринга
 contextBridge.exposeInMainWorld('electronAPI', {
   /**
-   * Запрашивает API-ключ из переменных окружения главного процесса.
+   * Запрашивает API-ключ из главного процесса.
    * @returns {Promise<string | undefined>} API-ключ.
    */
   getApiKey: () => ipcRenderer.invoke('get-api-key'),
+  
+  /**
+   * Устанавливает API-ключ в главном процессе для текущей сессии.
+   * @param {string} key - The API key to set.
+   * @returns {Promise<{success: boolean}>}
+   */
+  setApiKey: (key) => ipcRenderer.invoke('set-api-key', key),
 
   // --- File System and Window API ---
   setWindowTitle: (title) => ipcRenderer.invoke('set-window-title', title),

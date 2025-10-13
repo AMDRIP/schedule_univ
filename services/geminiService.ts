@@ -2,6 +2,8 @@
 
 
 
+
+
 import { GoogleGenAI, Type } from '@google/genai';
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
@@ -160,7 +162,7 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
     
     // Если клиент не создан (нет ключа или не Electron), сообщаем пользователю.
     if (!aiClient) {
-      throw new Error("Не удалось инициализировать ИИ-ассистента. Убедитесь, что приложение запущено в среде Electron и API-ключ Gemini предоставлен.");
+      throw new Error("Не удалось инициализировать ИИ-ассистента. Убедитесь, что API-ключ Gemini предоставлен в меню 'Настройки'.");
     }
 
     const response = await aiClient.models.generateContent({
