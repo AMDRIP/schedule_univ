@@ -1,4 +1,3 @@
-
 import { Type } from '@google/genai';
 
 
@@ -250,6 +249,13 @@ export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'st
 // Интерфейс для API, предоставляемого через preload.js в Electron
 export interface IElectronAPI {
   getApiKey: () => Promise<string | undefined>;
+  setWindowTitle: (title: string) => Promise<void>;
+  openFile: () => Promise<{ filePath: string; data: string } | null>;
+  saveFile: (filePath: string, data: string) => Promise<{ success: boolean; error?: string }>;
+  saveAsFile: (data: string) => Promise<string | null>;
+  autosave: (data: string) => Promise<void>;
+  onRestoreAutosaveRequest: (callback: () => void) => void;
+  restoreAutosave: () => Promise<{ data: string } | null>;
 }
 
 declare global {

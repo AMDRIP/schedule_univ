@@ -11,14 +11,9 @@ import ConfirmationModal from './components/ConfirmationModal';
 const AppContent: React.FC = () => {
   const [currentRole, setCurrentRole] = useState<Role>(Role.Admin);
   const [isNewProjectWizardOpen, setNewProjectWizardOpen] = useState(false);
-  const [isClearAllDataModalOpen, setClearAllDataModalOpen] = useState(false);
+  const [isNewProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
-  const { clearAllData, runScheduler, clearSchedule } = useStore();
-
-  const handleClearDataConfirm = () => {
-    clearAllData();
-    setClearAllDataModalOpen(false);
-  };
+  const { runScheduler, clearSchedule, startNewProject, handleOpen, handleSave, handleSaveAs } = useStore();
 
   const handleRunScheduler = async (method: 'heuristic' | 'gemini') => {
     if (isScheduling) return;
@@ -47,6 +42,12 @@ const AppContent: React.FC = () => {
   const handleClearSchedule = () => {
       clearSchedule();
   };
+
+  const handleNewProjectConfirm = () => {
+    startNewProject();
+    setNewProjectConfirmOpen(false);
+    setNewProjectWizardOpen(true);
+  };
   
   return (
      <>
@@ -54,8 +55,10 @@ const AppContent: React.FC = () => {
         <Header 
           currentRole={currentRole} 
           onRoleChange={setCurrentRole}
-          onNewProject={() => setNewProjectWizardOpen(true)}
-          onClearData={() => setClearAllDataModalOpen(true)}
+          onNew={() => setNewProjectConfirmOpen(true)}
+          onOpen={handleOpen}
+          onSave={handleSave}
+          onSaveAs={handleSaveAs}
           onRunScheduler={handleRunScheduler}
           onClearSchedule={handleClearSchedule}
           isScheduling={isScheduling}
@@ -68,25 +71,14 @@ const AppContent: React.FC = () => {
           onClose={() => setNewProjectWizardOpen(false)}
         />
       )}
-      {isClearAllDataModalOpen && (
+      {isNewProjectConfirmOpen && (
         <ConfirmationModal
-          isOpen={isClearAllDataModalOpen}
-          onClose={() => setClearAllDataModalOpen(false)}
-          onConfirm={handleClearDataConfirm}
-          title="Очистить все данные проекта?"
-          message={
-            <>
-              <p>Это действие необратимо и приведет к удалению <strong>всех</strong> данных, включая:</p>
-              <ul className="list-disc list-inside mt-2">
-                  <li>Факультеты, кафедры, специальности</li>
-                  <li>Преподавателей, группы, потоки</li>
-                  <li>Дисциплины, аудитории, учебные планы</li>
-                  <li>Составленное расписание и все правила</li>
-              </ul>
-              <p className="mt-2">Рекомендуется сначала сделать резервную копию (Настройки -> Экспорт в JSON).</p>
-            </>
-          }
-          confirmText="УДАЛИТЬ"
+          isOpen={isNewProjectConfirmOpen}
+          onClose={() => setNewProjectConfirmOpen(false)}
+          onConfirm={handleNewProjectConfirm}
+          title="Создать новый проект?"
+          message="Все несохраненные изменения в текущем проекте будут утеряны. Это действие необратимо."
+          confirmText="СОЗДАТЬ"
         />
       )}
     </>

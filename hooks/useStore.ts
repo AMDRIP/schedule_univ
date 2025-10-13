@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
 import { 
     Faculty, Department, Teacher, Group, Stream, Classroom, Subject, Cabinet, TimeSlot, ScheduleEntry, 
@@ -190,6 +189,8 @@ interface StoreState {
   scheduleTemplates: ScheduleTemplate[]; classroomTypes: ClassroomType[];
   subgroups: Subgroup[]; electives: Elective[];
   isGeminiAvailable: boolean;
+  currentFilePath: string | null;
+  lastAutosave: Date | null;
   
   addItem: (dataType: DataType, item: Omit<DataItem, 'id'>) => void;
   updateItem: (dataType: DataType, item: DataItem) => void;
@@ -206,7 +207,12 @@ interface StoreState {
   loadScheduleFromTemplate: (templateId: string) => void;
   runScheduler: (method: 'heuristic' | 'gemini') => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
   clearSchedule: () => void;
-  getFullState: () => Omit<StoreState, 'getFullState' | 'loadFullState' | 'clearAllData' | 'addItem' | 'updateItem' | 'deleteItem' | 'setSchedule' | 'placeUnscheduledItem' | 'updateScheduleEntry' | 'deleteScheduleEntry' | 'addScheduleEntry' | 'updateSettings' | 'propagateWeekSchedule' | 'saveCurrentScheduleAsTemplate' | 'loadScheduleFromTemplate' | 'runScheduler' | 'clearSchedule' | 'removeScheduleEntries'>;
+  startNewProject: () => void;
+  handleOpen: () => Promise<void>;
+  handleSave: () => Promise<void>;
+  handleSaveAs: () => Promise<void>;
+  // FIX: Add missing methods to store state to be available for components.
+  getFullState: () => any;
   loadFullState: (data: any) => void;
   clearAllData: () => void;
 }
@@ -259,6 +265,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [subgroups, setSubgroups] = useState(initialSubgroups);
   const [electives, setElectives] = useState(initialElectives);
   const [isGeminiAvailable, setIsGeminiAvailable] = useState(false);
+  const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
+  const [lastAutosave, setLastAutosave] = useState<Date | null>(null);
 
   useEffect(() => {
     const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
@@ -269,293 +277,27 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   useEffect(() => {
     const checkApiKey = async () => {
-        // Проверяем, запущено ли приложение в Electron
         if (window.electronAPI && typeof window.electronAPI.getApiKey === 'function') {
             try {
                 const apiKey = await window.electronAPI.getApiKey();
-                setIsGeminiAvailable(!!apiKey); // true, если ключ есть и непустой
+                setIsGeminiAvailable(!!apiKey);
             } catch (error) {
                 console.error("Не удалось проверить API-ключ:", error);
                 setIsGeminiAvailable(false);
             }
         } else {
-            // Среда не-Electron (обычный браузер)
             setIsGeminiAvailable(false);
             console.log("Приложение запущено не в среде Electron. Функции ИИ будут отключены.");
         }
     };
-
     checkApiKey();
-  }, []); // Запускается один раз при монтировании
+  }, []);
   
-  const stateSetters: Record<DataType, React.Dispatch<React.SetStateAction<any[]>>> = {
-    faculties: setFaculties, departments: setDepartments, teachers: setTeachers, groups: setGroups,
-    streams: setStreams, classrooms: setClassrooms, subjects: setSubjects, cabinets: setCabinets,
-    timeSlots: setTimeSlots, teacherSubjectLinks: setTeacherSubjectLinks, schedulingRules: setSchedulingRules,
-    productionCalendar: setProductionCalendar, ugs: setUgs, specialties: setSpecialties, 
-    educationalPlans: setEducationalPlans, scheduleTemplates: setScheduleTemplates, classroomTypes: setClassroomTypes,
-    subgroups: setSubgroups, electives: setElectives,
-  };
-
-  const addItem = (dataType: DataType, item: Omit<DataItem, 'id'>) => {
-    const setter = stateSetters[dataType];
-    const newItem = { ...item, id: `${dataType.slice(0, 3)}-${Date.now()}` } as DataItem;
-    setter(prev => [...prev, newItem]);
-  };
-  
-  const updateItem = (dataType: DataType, item: DataItem) => {
-    const setter = stateSetters[dataType];
-    setter(prev => prev.map(i => (i.id === item.id ? item : i)));
-  };
-
-  const deleteItem = (dataType: DataType, id: string) => {
-    // The main recursive function for deletion
-    const performCascadingDelete = (type: DataType, itemId: string) => {
-      // Cascade logic: delete dependencies BEFORE deleting the item itself.
-      switch (type) {
-        case 'faculties':
-          departments.filter(d => d.facultyId === itemId).forEach(d => performCascadingDelete('departments', d.id));
-          break;
-        case 'departments':
-          teachers.filter(t => t.departmentId === itemId).forEach(t => performCascadingDelete('teachers', t.id));
-          groups.filter(g => g.departmentId === itemId).forEach(g => performCascadingDelete('groups', g.id));
-          cabinets.filter(c => c.departmentId === itemId).forEach(c => performCascadingDelete('cabinets', c.id));
-          break;
-        case 'ugs':
-          specialties.filter(s => s.ugsId === itemId).forEach(s => performCascadingDelete('specialties', s.id));
-          break;
-        case 'specialties':
-          groups.filter(g => g.specialtyId === itemId).forEach(g => performCascadingDelete('groups', g.id));
-          educationalPlans.filter(p => p.specialtyId === itemId).forEach(p => performCascadingDelete('educationalPlans', p.id));
-          // Also remove this specialty from any department that lists it.
-          setDepartments(prev => prev.map(d => ({
-            ...d,
-            specialtyIds: d.specialtyIds?.filter(sid => sid !== itemId)
-          })));
-          break;
-        case 'groups':
-          // Remove from main schedule
-          setSchedule(prev => prev.filter(e => e.groupId !== itemId));
-          // Remove from any streams
-          setStreams(prev => prev.map(s => ({
-            ...s,
-            groupIds: s.groupIds.filter(gid => gid !== itemId)
-          })));
-           // Remove subgroups of this group
-          setSubgroups(prev => prev.filter(sg => sg.parentGroupId !== itemId));
-          // Remove electives of this group
-          setElectives(prev => prev.filter(el => el.groupId !== itemId));
-          break;
-        case 'teachers':
-          // Remove from main schedule
-          setSchedule(prev => prev.filter(e => e.teacherId !== itemId));
-          // Remove from links
-          setTeacherSubjectLinks(prev => prev.filter(l => l.teacherId !== itemId));
-          // Remove electives associated with this teacher
-          setElectives(prev => prev.filter(el => el.teacherId !== itemId));
-          // Remove teacher assignments from subgroups
-          setSubgroups(prev => prev.map(sg => ({
-              ...sg,
-              teacherAssignments: sg.teacherAssignments?.filter(a => a.teacherId !== itemId)
-          })));
-          break;
-        case 'subjects':
-          // Remove from main schedule
-          setSchedule(prev => prev.filter(e => e.subjectId !== itemId));
-          // Remove from links
-          setTeacherSubjectLinks(prev => prev.filter(l => l.subjectId !== itemId));
-          // Remove from educational plans
-          setEducationalPlans(prev => prev.map(p => ({
-            ...p,
-            entries: p.entries.filter(e => e.subjectId !== itemId)
-          })));
-          // Remove electives associated with this subject
-          setElectives(prev => prev.filter(el => el.subjectId !== itemId));
-          // Remove teacher assignments from subgroups
-          setSubgroups(prev => prev.map(sg => ({
-              ...sg,
-              teacherAssignments: sg.teacherAssignments?.filter(a => a.subjectId !== itemId)
-          })));
-          break;
-        case 'classroomTypes':
-            if (classrooms.some(c => c.typeId === itemId)) {
-                alert('Этот тип аудитории используется. Сначала измените тип у всех аудиторий, использующих его.');
-                return; // Prevent deletion
-            }
-            break;
-        case 'classrooms':
-          // Remove from main schedule
-          setSchedule(prev => prev.filter(e => e.classroomId !== itemId));
-          // Un-pin classroom from any entity that might reference it
-          setTeachers(prev => prev.map(t => t.pinnedClassroomId === itemId ? { ...t, pinnedClassroomId: '' } : t));
-          setGroups(prev => prev.map(g => g.pinnedClassroomId === itemId ? { ...g, pinnedClassroomId: '' } : g));
-          setSubjects(prev => prev.map(s => s.pinnedClassroomId === itemId ? { ...s, pinnedClassroomId: '' } : s));
-          break;
-        case 'timeSlots':
-          // Remove from main schedule
-          setSchedule(prev => prev.filter(e => e.timeSlotId !== itemId));
-          // Remove from rules
-          setSchedulingRules(prev => prev.filter(r => r.timeSlotId !== itemId));
-          break;
-        default:
-          // No cascade for: streams, cabinets, teacherSubjectLinks, schedulingRules, 
-          // productionCalendar, educationalPlans, scheduleTemplates, subgroups, electives
-          break;
-      }
-
-      // After handling dependencies, delete the item itself.
-      if (stateSetters[type]) {
-        stateSetters[type](prev => prev.filter(i => i.id !== itemId));
-      }
-    };
-    
-    performCascadingDelete(dataType, id);
-  };
-
-  const placeUnscheduledItem = (item: UnscheduledEntry, day: string, timeSlotId: string, weekType: 'even' | 'odd' | 'every') => {
-      const studentCount = item.subgroupId ? subgroups.find(sg => sg.id === item.subgroupId)?.studentCount : groups.find(g => g.id === item.groupId)?.studentCount;
-      const subject = subjects.find(s => s.id === item.subjectId);
-
-      if (!studentCount || !subject) {
-        alert("Группа или дисциплина для занятия не найдена");
-        return;
-      }
-      
-      if (!subject.suitableClassroomTypeIds || subject.suitableClassroomTypeIds.length === 0) {
-          alert(`Для дисциплины "${subject.name}" не указаны подходящие типы аудиторий в справочнике.`);
-          return;
-      }
-
-      const suitableClassroom = classrooms.find(c => {
-        const isOccupied = schedule.some(e => 
-            e.classroomId === c.id &&
-            e.day === day &&
-            e.timeSlotId === timeSlotId &&
-            (e.weekType === weekType || e.weekType === 'every' || weekType === 'every')
-        );
-        if (isOccupied) return false;
-        if (c.capacity < studentCount) return false;
-        
-        return subject.suitableClassroomTypeIds?.includes(c.typeId);
-      });
-
-      if (!suitableClassroom) {
-          alert(`Нет подходящей свободной аудитории для занятия "${subject.name}" с вместимостью ${studentCount}.`);
-          return;
-      }
-      
-      const newEntry: ScheduleEntry = {
-          id: `sched-${Date.now()}-${Math.random()}`,
-          day, timeSlotId, weekType,
-          groupId: item.groupId,
-          subgroupId: item.subgroupId,
-          subjectId: item.subjectId,
-          teacherId: item.teacherId,
-          classroomId: suitableClassroom.id,
-          classType: item.classType,
-          deliveryMode: DeliveryMode.Offline,
-          unscheduledUid: item.uid,
-      };
-      setSchedule(prev => [...prev, newEntry]);
-      // No need to manually remove from unscheduledEntries, useEffect will handle it
-  };
-
-  const addScheduleEntry = (entry: Omit<ScheduleEntry, 'id'>) => {
-    const newEntry = { ...entry, id: `manual-${Date.now()}` };
-    setSchedule(prev => [...prev, newEntry]);
-  };
-
-  const updateScheduleEntry = (updatedEntry: ScheduleEntry) => {
-      setSchedule(prev => prev.map(e => e.id === updatedEntry.id ? updatedEntry : e));
-  };
-  
-  const deleteScheduleEntry = (entryToDelete: ScheduleEntry) => {
-    if (!entryToDelete || typeof entryToDelete.id === 'undefined') return;
-    setSchedule(prevSchedule => prevSchedule.filter(e => e.id !== entryToDelete.id));
-    // No need to manually add to unscheduledEntries, useEffect will handle it
-  };
-  
-  const removeScheduleEntries = (entryIds: string[]) => {
-      if (!entryIds || entryIds.length === 0) return;
-      const idSet = new Set(entryIds);
-      setSchedule(prev => prev.filter(e => !idSet.has(e.id)));
-  };
-
-  const updateSettings = (newSettings: SchedulingSettings) => {
-      setSettings(newSettings);
-  };
-
-  const propagateWeekSchedule = (weekTypeToCopy: 'even' | 'odd') => {
-    if (!settings.semesterStart || !settings.semesterEnd) {
-      alert("Даты начала и конца семестра не установлены в настройках.");
-      return;
-    }
-    const semesterStartDate = new Date(settings.semesterStart + 'T00:00:00');
-    const semesterEndDate = new Date(settings.semesterEnd + 'T00:00:00');
-
-    if (isNaN(semesterStartDate.getTime()) || isNaN(semesterEndDate.getTime())) {
-      alert("Некорректный формат дат семестра в настройках.");
-      return;
-    }
-
-    const templateEntries = schedule.filter(e => 
-        !e.date && (e.weekType === weekTypeToCopy || e.weekType === 'every')
-    );
-
-    const newDatedEntries: ScheduleEntry[] = [];
-    let currentDate = new Date(semesterStartDate);
-
-    while (currentDate <= semesterEndDate) {
-        const currentWeekType = getWeekType(currentDate, semesterStartDate);
-        
-        if (currentWeekType === weekTypeToCopy) {
-            const dayOfWeek = DAYS_OF_WEEK[currentDate.getDay() === 0 ? 6 : currentDate.getDay() - 1];
-            const entriesForThisDay = templateEntries.filter(e => e.day === dayOfWeek);
-
-            for (const templateEntry of entriesForThisDay) {
-                newDatedEntries.push({
-                    ...templateEntry,
-                    id: `prop-${templateEntry.id}-${toYYYYMMDD(currentDate)}-${Math.random()}`,
-                    date: toYYYYMMDD(currentDate),
-                });
-            }
-        }
-        currentDate.setDate(currentDate.getDate() + 1);
-    }
-    
-    const scheduleWithoutOldEntries = schedule.filter(e => {
-        if (!e.date) return true;
-        const entryDate = new Date(e.date + 'T00:00:00');
-        if (entryDate < semesterStartDate || entryDate > semesterEndDate) return true;
-        return getWeekType(entryDate, semesterStartDate) !== weekTypeToCopy;
-    });
-
-    setSchedule([...scheduleWithoutOldEntries, ...newDatedEntries]);
-    alert(`${newDatedEntries.length} занятий было скопировано на все ${weekTypeToCopy === 'even' ? 'чётные' : 'нечётные'} недели семестра.`);
-  };
-
-  const saveCurrentScheduleAsTemplate = (name: string, description: string) => {
-    const newTemplate: Omit<ScheduleTemplate, 'id'> = {
-        name,
-        description,
-        entries: JSON.parse(JSON.stringify(schedule)) // Deep copy
-    };
-    addItem('scheduleTemplates', newTemplate);
-  };
-
-  const loadScheduleFromTemplate = (templateId: string) => {
-    const template = scheduleTemplates.find(t => t.id === templateId);
-    if (template) {
-        setSchedule(JSON.parse(JSON.stringify(template.entries))); // Deep copy
-    } else {
-        alert("Шаблон не найден!");
-    }
-  };
-  
+  // FIX: Removed problematic return type to avoid circular dependency and let TypeScript infer it.
   const getFullState = () => ({
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
-    classroomTypes, isGeminiAvailable, subgroups, electives,
+    classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave
   });
   
   const loadFullState = (data: any) => {
@@ -580,30 +322,262 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setClassroomTypes(data.classroomTypes || initialClassroomTypes);
     setSubgroups(data.subgroups || []);
     setElectives(data.electives || []);
+    setCurrentFilePath(data.currentFilePath || null);
+  };
+  
+  // Autosave and Window Title Effects
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    const interval = setInterval(async () => {
+      const state = getFullState();
+      await window.electronAPI.autosave(JSON.stringify(state));
+      setLastAutosave(new Date());
+    }, 30000); // Autosave every 30 seconds
+    return () => clearInterval(interval);
+  }, [getFullState]);
+
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    const fileName = currentFilePath ? currentFilePath.split(/[\\/]/).pop() : 'Новый проект';
+    window.electronAPI.setWindowTitle(`${fileName} - Система расписаний ВУЗа`);
+  }, [currentFilePath]);
+  
+  // Autosave recovery listener
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    window.electronAPI.onRestoreAutosaveRequest(async () => {
+        if (window.confirm("Обнаружен файл автосохранения. Хотите восстановить его? \n\nВнимание: все текущие несохраненные данные будут утеряны.")) {
+            const result = await window.electronAPI.restoreAutosave();
+            if (result && result.data) {
+                try {
+                    const parsedData = JSON.parse(result.data);
+                    loadFullState(parsedData);
+                     alert("Автосохранение восстановлено. Рекомендуется сохранить проект в новом файле ('Файл -> Сохранить как...').");
+                } catch (e) {
+                    console.error("Failed to parse autosave data:", e);
+                    alert("Не удалось восстановить данные: файл поврежден.");
+                }
+            }
+        }
+    });
+  }, []); // Should only run once
+
+
+  const stateSetters: Record<DataType, React.Dispatch<React.SetStateAction<any[]>>> = {
+    faculties: setFaculties, departments: setDepartments, teachers: setTeachers, groups: setGroups,
+    streams: setStreams, classrooms: setClassrooms, subjects: setSubjects, cabinets: setCabinets,
+    timeSlots: setTimeSlots, teacherSubjectLinks: setTeacherSubjectLinks, schedulingRules: setSchedulingRules,
+    productionCalendar: setProductionCalendar, ugs: setUgs, specialties: setSpecialties, 
+    educationalPlans: setEducationalPlans, scheduleTemplates: setScheduleTemplates, classroomTypes: setClassroomTypes,
+    subgroups: setSubgroups, electives: setElectives,
+  };
+
+  const addItem = (dataType: DataType, item: Omit<DataItem, 'id'>) => {
+    const setter = stateSetters[dataType];
+    const newItem = { ...item, id: `${dataType.slice(0, 3)}-${Date.now()}` } as DataItem;
+    setter(prev => [...prev, newItem]);
+  };
+  
+  const updateItem = (dataType: DataType, item: DataItem) => {
+    const setter = stateSetters[dataType];
+    setter(prev => prev.map(i => (i.id === item.id ? item : i)));
+  };
+
+  const deleteItem = (dataType: DataType, id: string) => {
+    const performCascadingDelete = (type: DataType, itemId: string) => {
+      switch (type) {
+        case 'faculties':
+          departments.filter(d => d.facultyId === itemId).forEach(d => performCascadingDelete('departments', d.id));
+          break;
+        case 'departments':
+          teachers.filter(t => t.departmentId === itemId).forEach(t => performCascadingDelete('teachers', t.id));
+          groups.filter(g => g.departmentId === itemId).forEach(g => performCascadingDelete('groups', g.id));
+          cabinets.filter(c => c.departmentId === itemId).forEach(c => performCascadingDelete('cabinets', c.id));
+          break;
+        case 'ugs':
+          specialties.filter(s => s.ugsId === itemId).forEach(s => performCascadingDelete('specialties', s.id));
+          break;
+        case 'specialties':
+          groups.filter(g => g.specialtyId === itemId).forEach(g => performCascadingDelete('groups', g.id));
+          educationalPlans.filter(p => p.specialtyId === itemId).forEach(p => performCascadingDelete('educationalPlans', p.id));
+          setDepartments(prev => prev.map(d => ({ ...d, specialtyIds: d.specialtyIds?.filter(sid => sid !== itemId) })));
+          break;
+        case 'groups':
+          setSchedule(prev => prev.filter(e => e.groupId !== itemId));
+          setStreams(prev => prev.map(s => ({ ...s, groupIds: s.groupIds.filter(gid => gid !== itemId) })));
+          setSubgroups(prev => prev.filter(sg => sg.parentGroupId !== itemId));
+          setElectives(prev => prev.filter(el => el.groupId !== itemId));
+          break;
+        case 'teachers':
+          setSchedule(prev => prev.filter(e => e.teacherId !== itemId));
+          setTeacherSubjectLinks(prev => prev.filter(l => l.teacherId !== itemId));
+          setElectives(prev => prev.filter(el => el.teacherId !== itemId));
+          setSubgroups(prev => prev.map(sg => ({ ...sg, teacherAssignments: sg.teacherAssignments?.filter(a => a.teacherId !== itemId) })));
+          break;
+        case 'subjects':
+          setSchedule(prev => prev.filter(e => e.subjectId !== itemId));
+          setTeacherSubjectLinks(prev => prev.filter(l => l.subjectId !== itemId));
+          setEducationalPlans(prev => prev.map(p => ({ ...p, entries: p.entries.filter(e => e.subjectId !== itemId) })));
+          setElectives(prev => prev.filter(el => el.subjectId !== itemId));
+          setSubgroups(prev => prev.map(sg => ({ ...sg, teacherAssignments: sg.teacherAssignments?.filter(a => a.subjectId !== itemId) })));
+          break;
+        case 'classroomTypes':
+            if (classrooms.some(c => c.typeId === itemId)) {
+                alert('Этот тип аудитории используется. Сначала измените тип у всех аудиторий, использующих его.');
+                return;
+            }
+            break;
+        case 'classrooms':
+          setSchedule(prev => prev.filter(e => e.classroomId !== itemId));
+          setTeachers(prev => prev.map(t => t.pinnedClassroomId === itemId ? { ...t, pinnedClassroomId: '' } : t));
+          setGroups(prev => prev.map(g => g.pinnedClassroomId === itemId ? { ...g, pinnedClassroomId: '' } : g));
+          setSubjects(prev => prev.map(s => s.pinnedClassroomId === itemId ? { ...s, pinnedClassroomId: '' } : s));
+          break;
+        case 'timeSlots':
+          setSchedule(prev => prev.filter(e => e.timeSlotId !== itemId));
+          setSchedulingRules(prev => prev.filter(r => r.timeSlotId !== itemId));
+          break;
+        default:
+          break;
+      }
+      if (stateSetters[type]) {
+        stateSetters[type](prev => prev.filter(i => i.id !== itemId));
+      }
+    };
+    performCascadingDelete(dataType, id);
+  };
+
+  const placeUnscheduledItem = (item: UnscheduledEntry, day: string, timeSlotId: string, weekType: 'even' | 'odd' | 'every') => {
+      const studentCount = item.subgroupId ? subgroups.find(sg => sg.id === item.subgroupId)?.studentCount : groups.find(g => g.id === item.groupId)?.studentCount;
+      const subject = subjects.find(s => s.id === item.subjectId);
+      if (!studentCount || !subject) {
+        alert("Группа или дисциплина для занятия не найдена");
+        return;
+      }
+      if (!subject.suitableClassroomTypeIds || subject.suitableClassroomTypeIds.length === 0) {
+          alert(`Для дисциплины "${subject.name}" не указаны подходящие типы аудиторий в справочнике.`);
+          return;
+      }
+      const suitableClassroom = classrooms.find(c => {
+        const isOccupied = schedule.some(e => 
+            e.classroomId === c.id && e.day === day && e.timeSlotId === timeSlotId &&
+            (e.weekType === weekType || e.weekType === 'every' || weekType === 'every')
+        );
+        if (isOccupied) return false;
+        if (c.capacity < studentCount) return false;
+        return subject.suitableClassroomTypeIds?.includes(c.typeId);
+      });
+      if (!suitableClassroom) {
+          alert(`Нет подходящей свободной аудитории для занятия "${subject.name}" с вместимостью ${studentCount}.`);
+          return;
+      }
+      const newEntry: ScheduleEntry = {
+          id: `sched-${Date.now()}-${Math.random()}`,
+          day, timeSlotId, weekType,
+          groupId: item.groupId,
+          subgroupId: item.subgroupId,
+          subjectId: item.subjectId,
+          teacherId: item.teacherId,
+          classroomId: suitableClassroom.id,
+          classType: item.classType,
+          deliveryMode: DeliveryMode.Offline,
+          unscheduledUid: item.uid,
+      };
+      setSchedule(prev => [...prev, newEntry]);
+  };
+
+  const addScheduleEntry = (entry: Omit<ScheduleEntry, 'id'>) => {
+    const newEntry = { ...entry, id: `manual-${Date.now()}` };
+    setSchedule(prev => [...prev, newEntry]);
+  };
+
+  const updateScheduleEntry = (updatedEntry: ScheduleEntry) => {
+      setSchedule(prev => prev.map(e => e.id === updatedEntry.id ? updatedEntry : e));
+  };
+  
+  const deleteScheduleEntry = (entryToDelete: ScheduleEntry) => {
+    if (!entryToDelete || typeof entryToDelete.id === 'undefined') return;
+    setSchedule(prevSchedule => prevSchedule.filter(e => e.id !== entryToDelete.id));
+  };
+  
+  const removeScheduleEntries = (entryIds: string[]) => {
+      if (!entryIds || entryIds.length === 0) return;
+      const idSet = new Set(entryIds);
+      setSchedule(prev => prev.filter(e => !idSet.has(e.id)));
+  };
+
+  const updateSettings = (newSettings: SchedulingSettings) => {
+      setSettings(newSettings);
+  };
+
+  const propagateWeekSchedule = (weekTypeToCopy: 'even' | 'odd') => {
+    if (!settings.semesterStart || !settings.semesterEnd) {
+      alert("Даты начала и конца семестра не установлены в настройках.");
+      return;
+    }
+    const semesterStartDate = new Date(settings.semesterStart + 'T00:00:00');
+    const semesterEndDate = new Date(settings.semesterEnd + 'T00:00:00');
+    if (isNaN(semesterStartDate.getTime()) || isNaN(semesterEndDate.getTime())) {
+      alert("Некорректный формат дат семестра в настройках.");
+      return;
+    }
+    const templateEntries = schedule.filter(e => !e.date && (e.weekType === weekTypeToCopy || e.weekType === 'every'));
+    const newDatedEntries: ScheduleEntry[] = [];
+    let currentDate = new Date(semesterStartDate);
+    while (currentDate <= semesterEndDate) {
+        const currentWeekType = getWeekType(currentDate, semesterStartDate);
+        if (currentWeekType === weekTypeToCopy) {
+            const dayOfWeek = DAYS_OF_WEEK[currentDate.getDay() === 0 ? 6 : currentDate.getDay() - 1];
+            const entriesForThisDay = templateEntries.filter(e => e.day === dayOfWeek);
+            for (const templateEntry of entriesForThisDay) {
+                newDatedEntries.push({
+                    ...templateEntry,
+                    id: `prop-${templateEntry.id}-${toYYYYMMDD(currentDate)}-${Math.random()}`,
+                    date: toYYYYMMDD(currentDate),
+                });
+            }
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
+    const scheduleWithoutOldEntries = schedule.filter(e => {
+        if (!e.date) return true;
+        const entryDate = new Date(e.date + 'T00:00:00');
+        if (entryDate < semesterStartDate || entryDate > semesterEndDate) return true;
+        return getWeekType(entryDate, semesterStartDate) !== weekTypeToCopy;
+    });
+    setSchedule([...scheduleWithoutOldEntries, ...newDatedEntries]);
+    alert(`${newDatedEntries.length} занятий было скопировано на все ${weekTypeToCopy === 'even' ? 'чётные' : 'нечётные'} недели семестра.`);
+  };
+
+  const saveCurrentScheduleAsTemplate = (name: string, description: string) => {
+    const newTemplate: Omit<ScheduleTemplate, 'id'> = {
+        name,
+        description,
+        entries: JSON.parse(JSON.stringify(schedule))
+    };
+    addItem('scheduleTemplates', newTemplate);
+  };
+
+  const loadScheduleFromTemplate = (templateId: string) => {
+    const template = scheduleTemplates.find(t => t.id === templateId);
+    if (template) {
+        setSchedule(JSON.parse(JSON.stringify(template.entries)));
+    } else {
+        alert("Шаблон не найден!");
+    }
   };
   
   const clearAllData = () => {
-    setFaculties([]);
-    setDepartments([]);
-    setTeachers([]);
-    setGroups([]);
-    setStreams([]);
-    setClassrooms([]);
-    setSubjects([]);
-    setCabinets([]);
-    setTimeSlots([]);
-    setSchedule([]);
-    setUgs([]);
-    setSpecialties([]);
-    setEducationalPlans([]);
-    setTeacherSubjectLinks([]);
-    setSchedulingRules([]);
-    setProductionCalendar([]);
-    setSettings(getInitialEmptySettings());
-    setScheduleTemplates([]);
-    setClassroomTypes([]);
-    setSubgroups([]);
-    setElectives([]);
+    setFaculties([]); setDepartments([]); setTeachers([]); setGroups([]); setStreams([]);
+    setClassrooms([]); setSubjects([]); setCabinets([]); setTimeSlots([]); setSchedule([]);
+    setUgs([]); setSpecialties([]); setEducationalPlans([]); setTeacherSubjectLinks([]);
+    setSchedulingRules([]); setProductionCalendar([]); setSettings(getInitialEmptySettings());
+    setScheduleTemplates([]); setClassroomTypes([]); setSubgroups([]); setElectives([]);
+    setCurrentFilePath(null);
+  };
+
+  const startNewProject = () => {
+    clearAllData();
   };
 
   const runScheduler = async (method: 'heuristic' | 'gemini') => {
@@ -612,10 +586,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
         subgroups, electives,
     };
-    
     let newSchedule: ScheduleEntry[] = [];
     let unschedulable: UnscheduledEntry[] = [];
-
     if (method === 'heuristic') {
         const result = await generateScheduleWithHeuristics(generationData);
         newSchedule = result.schedule;
@@ -625,17 +597,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             throw new Error("API Gemini недоступен. Убедитесь, что приложение запущено через Electron и API-ключ настроен.");
         }
         newSchedule = await generateScheduleWithGemini(generationData);
-        
-        // Post-process to link Gemini results with unscheduled entries to correctly update the UI
         const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
         const tempUnscheduled = [...allPossibleEntries];
-        
         newSchedule.forEach(schedEntry => {
             const matchIndex = tempUnscheduled.findIndex(unsched => 
-                unsched.groupId === schedEntry.groupId &&
-                unsched.subgroupId === schedEntry.subgroupId &&
-                unsched.subjectId === schedEntry.subjectId &&
-                unsched.classType === schedEntry.classType &&
+                unsched.groupId === schedEntry.groupId && unsched.subgroupId === schedEntry.subgroupId &&
+                unsched.subjectId === schedEntry.subjectId && unsched.classType === schedEntry.classType &&
                 unsched.teacherId === schedEntry.teacherId
             );
             if (matchIndex > -1) {
@@ -643,19 +610,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 tempUnscheduled.splice(matchIndex, 1);
             }
         });
-        // What remains in tempUnscheduled is what Gemini failed to schedule.
         unschedulable = tempUnscheduled;
     }
-      
     if (!Array.isArray(newSchedule)) {
         throw new Error("Алгоритм вернул некорректный формат расписания.");
     }
-
-    const validatedSchedule: ScheduleEntry[] = newSchedule.map((entry: any, index: number) => ({
-        ...entry,
-        id: `gen-${Date.now()}-${index}`
-    }));
-      
+    const validatedSchedule: ScheduleEntry[] = newSchedule.map((entry: any, index: number) => ({ ...entry, id: `gen-${Date.now()}-${index}` }));
     if (window.confirm(`Сгенерировано ${validatedSchedule.length} занятий. Заменить текущее расписание?`)) {
         setSchedule(validatedSchedule);
         return { scheduled: validatedSchedule.length, unscheduled: unschedulable.length, failedEntries: unschedulable };
@@ -669,14 +629,54 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const value = {
+  // --- File Handlers ---
+  const handleSave = async () => {
+    if (!window.electronAPI) return;
+    if (currentFilePath) {
+      const stateString = JSON.stringify(getFullState());
+      await window.electronAPI.saveFile(currentFilePath, stateString);
+    } else {
+      await handleSaveAs();
+    }
+  };
+
+  const handleSaveAs = async () => {
+    if (!window.electronAPI) return;
+    const stateString = JSON.stringify(getFullState());
+    const filePath = await window.electronAPI.saveAsFile(stateString);
+    if (filePath) {
+      setCurrentFilePath(filePath);
+    }
+  };
+  
+  const handleOpen = async () => {
+    if (!window.electronAPI) return;
+    if(window.confirm("Открыть новый проект? Все несохраненные изменения будут утеряны.")){
+        const result = await window.electronAPI.openFile();
+        if (result) {
+            try {
+                const parsedData = JSON.parse(result.data);
+                loadFullState(parsedData);
+                setCurrentFilePath(result.filePath);
+            } catch(e) {
+                alert("Ошибка: Не удалось прочитать файл. Возможно, он поврежден или имеет неверный формат.");
+                console.error("File open parse error:", e);
+            }
+        }
+    }
+  };
+
+
+  const value: StoreState = {
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
-    classroomTypes, isGeminiAvailable, subgroups, electives,
+    classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
     runScheduler, clearSchedule, removeScheduleEntries,
-    getFullState, loadFullState, clearAllData,
+    startNewProject, handleOpen, handleSave, handleSaveAs,
+    // FIX: Expose missing methods through the context provider.
+    getFullState, loadFullState, clearAllData
   };
 
   return React.createElement(StoreContext.Provider, { value: value }, children);

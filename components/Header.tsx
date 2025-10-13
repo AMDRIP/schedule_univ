@@ -6,19 +6,24 @@ import { useStore } from '../hooks/useStore';
 interface HeaderProps {
   currentRole: Role;
   onRoleChange: (role: Role) => void;
-  onNewProject: () => void;
-  onClearData: () => void;
+  onNew: () => void;
+  onOpen: () => void;
+  onSave: () => void;
+  onSaveAs: () => void;
   onRunScheduler: (method: 'heuristic' | 'gemini') => void;
   onClearSchedule: () => void;
   isScheduling: boolean;
 }
 
-const Header: React.FC<HeaderProps> = ({ currentRole, onRoleChange, onNewProject, onClearData, onRunScheduler, onClearSchedule, isScheduling }) => {
+const Header: React.FC<HeaderProps> = ({ 
+    currentRole, onRoleChange, onNew, onOpen, onSave, onSaveAs, 
+    onRunScheduler, onClearSchedule, isScheduling 
+}) => {
   const [isProjectMenuOpen, setProjectMenuOpen] = useState(false);
   const [isSchedulerMenuOpen, setSchedulerMenuOpen] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const schedulerMenuRef = useRef<HTMLDivElement>(null);
-  const { isGeminiAvailable } = useStore();
+  const { isGeminiAvailable, lastAutosave } = useStore();
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -32,6 +37,11 @@ const Header: React.FC<HeaderProps> = ({ currentRole, onRoleChange, onNewProject
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+  
+  const handleMenuClick = (action: () => void) => {
+    action();
+    setProjectMenuOpen(false);
+  };
 
   return (
     <header className="bg-white border-b border-gray-200 p-4 flex justify-between items-center">
@@ -42,6 +52,11 @@ const Header: React.FC<HeaderProps> = ({ currentRole, onRoleChange, onNewProject
         <h1 className="text-2xl font-bold text-gray-800">Система расписаний ВУЗа</h1>
       </div>
       <div className="flex items-center gap-4">
+        {lastAutosave && (
+            <span className="text-xs text-gray-500">
+                Автосохранение: {lastAutosave.toLocaleTimeString()}
+            </span>
+        )}
         <div ref={schedulerMenuRef} className="relative">
           <button
             onClick={() => setSchedulerMenuOpen(prev => !prev)}
@@ -89,26 +104,17 @@ const Header: React.FC<HeaderProps> = ({ currentRole, onRoleChange, onNewProject
             className="flex items-center p-2 border border-gray-300 rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200"
           >
             <FolderIcon className="h-5 w-5 mr-2 text-gray-600" />
-            <span className="text-gray-700 font-medium">Проект</span>
+            <span className="text-gray-700 font-medium">Файл</span>
             <ChevronDownIcon className={`w-5 h-5 ml-1 text-gray-500 transition-transform ${isProjectMenuOpen ? 'rotate-180' : ''}`} />
           </button>
           {isProjectMenuOpen && (
             <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg z-50 border border-gray-200">
               <div className="py-1">
-                <a
-                  href="#"
-                  onClick={(e) => { e.preventDefault(); onNewProject(); setProjectMenuOpen(false); }}
-                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                >
-                  Новый проект...
-                </a>
-                 <a
-                  href="#"
-                  onClick={(e) => { e.preventDefault(); onClearData(); setProjectMenuOpen(false); }}
-                  className="block px-4 py-2 text-sm text-red-600 hover:bg-red-50"
-                >
-                  Очистить все данные...
-                </a>
+                <a href="#" onClick={(e) => { e.preventDefault(); handleMenuClick(onNew); }} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Новый проект...</a>
+                <a href="#" onClick={(e) => { e.preventDefault(); handleMenuClick(onOpen); }} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Открыть...</a>
+                <div className="border-t border-gray-100 my-1"></div>
+                <a href="#" onClick={(e) => { e.preventDefault(); handleMenuClick(onSave); }} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Сохранить</a>
+                <a href="#" onClick={(e) => { e.preventDefault(); handleMenuClick(onSaveAs); }} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Сохранить как...</a>
               </div>
             </div>
           )}
