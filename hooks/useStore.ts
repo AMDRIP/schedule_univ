@@ -4,7 +4,7 @@ import {
     UnscheduledEntry, DataItem, DataType, ClassroomType, ClassType, TeacherSubjectLink, SchedulingRule, 
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
     EducationalPlan, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective,
-    AcademicDegree, AcademicTitle, FieldOfScience
+    AcademicDegree, AcademicTitle, FieldOfScience, BaseItem
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
@@ -89,6 +89,7 @@ const initialSettings: SchedulingSettings = {
     respectProductionCalendar: true,
     useShortenedPreHolidaySchedule: true,
     allowOverbooking: false,
+    showTeacherDetailsInLists: false,
 };
 const initialScheduleTemplates: ScheduleTemplate[] = [];
 
@@ -233,9 +234,9 @@ interface StoreState {
   handleOpen: () => Promise<void>;
   handleSave: () => Promise<void>;
   handleSaveAs: () => Promise<void>;
-  // FIX: Add missing methods to store state to be available for components.
   getFullState: () => any;
   loadFullState: (data: any) => void;
+  mergeFullState: (data: any) => void;
   clearAllData: () => void;
 }
 
@@ -263,6 +264,7 @@ const getInitialEmptySettings = (): SchedulingSettings => ({
     respectProductionCalendar: true,
     useShortenedPreHolidaySchedule: true,
     allowOverbooking: false,
+    showTeacherDetailsInLists: false,
 });
 
 
@@ -322,14 +324,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     initializeApiKey();
   }, []);
   
-  // FIX: Removed problematic return type to avoid circular dependency and let TypeScript infer it.
   const getFullState = () => ({
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
     classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave
   });
   
-  // Use a ref to hold the latest state for the autosave interval to prevent stale closures and incorrect effect re-runs.
   const stateRef = useRef(getFullState());
   useEffect(() => {
       stateRef.current = getFullState();
@@ -350,7 +350,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setTeacherSubjectLinks(data.teacherSubjectLinks || []);
     setSchedulingRules(data.schedulingRules || []);
     setProductionCalendar(data.productionCalendar || []);
-    setSettings(data.settings || getInitialEmptySettings());
+    setSettings({ ...getInitialEmptySettings(), ...(data.settings || {}) });
     setUgs(data.ugs || []);
     setSpecialties(data.specialties || []);
     setEducationalPlans(data.educationalPlans || []);
@@ -359,6 +359,50 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setSubgroups(data.subgroups || []);
     setElectives(data.electives || []);
     setCurrentFilePath(data.currentFilePath || null);
+  };
+
+  const mergeFullState = (data: any) => {
+    const merge = <T extends BaseItem>(
+      setState: React.Dispatch<React.SetStateAction<T[]>>,
+      newData: T[] | undefined
+    ) => {
+      if (!Array.isArray(newData)) return;
+      setState(prev => {
+        const existingMap = new Map(prev.map(item => [item.id, item]));
+        newData.forEach(newItem => {
+          if (newItem && typeof newItem.id !== 'undefined') {
+             existingMap.set(newItem.id, newItem); // Add or overwrite
+          }
+        });
+        return Array.from(existingMap.values());
+      });
+    };
+
+    merge(setFaculties, data.faculties);
+    merge(setDepartments, data.departments);
+    merge(setTeachers, data.teachers);
+    merge(setGroups, data.groups);
+    merge(setStreams, data.streams);
+    merge(setClassrooms, data.classrooms);
+    merge(setSubjects, data.subjects);
+    merge(setCabinets, data.cabinets);
+    merge(setTimeSlots, data.timeSlots);
+    merge(setTimeSlotsShortened, data.timeSlotsShortened);
+    merge(setSchedule, data.schedule);
+    merge(setTeacherSubjectLinks, data.teacherSubjectLinks);
+    merge(setSchedulingRules, data.schedulingRules);
+    merge(setProductionCalendar, data.productionCalendar);
+    merge(setUgs, data.ugs);
+    merge(setSpecialties, data.specialties);
+    merge(setEducationalPlans, data.educationalPlans);
+    merge(setScheduleTemplates, data.scheduleTemplates);
+    merge(setClassroomTypes, data.classroomTypes);
+    merge(setSubgroups, data.subgroups);
+    merge(setElectives, data.electives);
+
+    if (data.settings) {
+      setSettings(prev => ({ ...prev, ...data.settings }));
+    }
   };
   
   // Autosave and Window Title Effects
@@ -761,8 +805,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
     runScheduler, clearSchedule, removeScheduleEntries,
     startNewProject, handleOpen, handleSave, handleSaveAs,
-    // FIX: Expose missing methods through the context provider.
-    getFullState, loadFullState, clearAllData
+    getFullState, loadFullState, clearAllData, mergeFullState
   };
 
   return React.createElement(StoreContext.Provider, { value: value }, children);

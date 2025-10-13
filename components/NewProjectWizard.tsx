@@ -96,7 +96,9 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         semesterEnd: toYYYYMMDD(new Date(new Date().setMonth(new Date().getMonth() + 4))),
         sessionStart: '', sessionEnd: '', practiceStart: '', practiceEnd: '', retakeStart: '', retakeEnd: '',
         defaultBreakMinutes: 15, allowWindows: true, useEvenOddWeekSeparation: true, showDegreeInSchedule: false,
-        respectProductionCalendar: true, useShortenedPreHolidaySchedule: true, allowOverbooking: false
+        respectProductionCalendar: true, useShortenedPreHolidaySchedule: true, allowOverbooking: false,
+        // FIX: Added missing 'showTeacherDetailsInLists' property to match the SchedulingSettings type.
+        showTeacherDetailsInLists: false
     });
     const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([{ id: generateId('ts'), time: '08:30-10:00' }]);
     const [faculties, setFaculties] = useState<Faculty[]>([{ id: generateId('f'), name: '' }]);

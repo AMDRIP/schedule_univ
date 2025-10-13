@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType } from '../types';
+import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType, Teacher, Group } from '../types';
 import { DAYS_OF_WEEK, PRODUCTION_CALENDAR_COLORS } from '../constants';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import ScheduleCell from './ScheduleCell';
@@ -74,7 +74,11 @@ const LoadTemplateModal: React.FC<{templates: ScheduleTemplate[]; onLoad: (id: s
 };
 
 
-const SessionEntryModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = ({ isOpen, onClose }) => {
+const SessionEntryModal: React.FC<{ 
+    isOpen: boolean; 
+    onClose: () => void; 
+    selectedFilter: { type: 'group' | 'teacher', id: string };
+}> = ({ isOpen, onClose, selectedFilter }) => {
     const { groups, teachers, subjects, classrooms, timeSlots, addScheduleEntry, settings } = useStore();
     const [error, setError] = useState('');
     const [formData, setFormData] = useState<Partial<ScheduleEntry>>({});
@@ -82,19 +86,22 @@ const SessionEntryModal: React.FC<{ isOpen: boolean; onClose: () => void; }> = (
     useEffect(() => {
         if (isOpen) {
             setError('');
+            const initialGroupId = (selectedFilter.type === 'group' && selectedFilter.id) ? selectedFilter.id : groups[0]?.id || '';
+            const initialTeacherId = (selectedFilter.type === 'teacher' && selectedFilter.id) ? selectedFilter.id : teachers[0]?.id || '';
+
             setFormData({
                 date: settings.sessionStart || settings.semesterStart || toYYYYMMDD(new Date()),
                 timeSlotId: timeSlots[0]?.id || '',
-                groupId: groups[0]?.id || '',
+                groupId: initialGroupId,
                 subjectId: subjects[0]?.id || '',
-                teacherId: teachers[0]?.id || '',
+                teacherId: initialTeacherId,
                 classroomId: classrooms[0]?.id || '',
                 classType: ClassType.Consultation,
                 deliveryMode: DeliveryMode.Offline,
                 weekType: 'every'
             });
         }
-    }, [isOpen, timeSlots, groups, subjects, teachers, classrooms, settings]);
+    }, [isOpen, timeSlots, groups, subjects, teachers, classrooms, settings, selectedFilter]);
 
 
     const handleChange = (e: React.ChangeEvent<HTMLSelectElement | HTMLInputElement>) => {
@@ -173,7 +180,7 @@ interface ScheduleViewProps {
 
 const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setViewDate }) => {
   const store = useStore();
-  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar } = store;
+  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks } = store;
   const [filterType, setFilterType] = useState<'group' | 'teacher'>('group');
   const [selectedId, setSelectedId] = useState<string>(groups[0]?.id || '');
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
@@ -195,6 +202,24 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   }, [viewDate, settings.semesterStart]);
 
   const effectiveWeekType = settings.useEvenOddWeekSeparation ? weekType : 'every';
+  
+  const teacherDisplayNames = useMemo(() => {
+    if (!settings.showTeacherDetailsInLists) {
+      return new Map(teachers.map(t => [t.id, t.name]));
+    }
+    return new Map(teachers.map(teacher => {
+        const departmentName = departments.find(d => d.id === teacher.departmentId)?.name || 'Б/К';
+        const teacherSubjects = teacherSubjectLinks
+            .filter(link => link.teacherId === teacher.id)
+            .map(link => subjects.find(s => s.id === link.subjectId)?.name)
+            .filter(Boolean)
+            .slice(0, 2)
+            .join(', ');
+        const subjectsText = teacherSubjects ? ` [${teacherSubjects}... ]` : '';
+        return [teacher.id, `${teacher.name} (${departmentName})${subjectsText}`];
+    }));
+  }, [settings.showTeacherDetailsInLists, teachers, departments, teacherSubjectLinks, subjects]);
+
 
   const filterOptions = useMemo(() => {
     return filterType === 'group' ? groups : teachers;
@@ -202,8 +227,13 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
 
   const selectedItemName = useMemo(() => {
       const item = filterOptions.find(o => o.id === selectedId);
-      return item ? ('number' in item ? item.number : item.name) : '';
-  }, [selectedId, filterOptions]);
+      if (!item) return '';
+      if (filterType === 'teacher') {
+          return teacherDisplayNames.get(item.id) || item.name;
+      }
+      // FIX: The `item` is of type `Group` here, which has a `number` property instead of `name`.
+      return (item as Group).number;
+  }, [selectedId, filterOptions, filterType, teacherDisplayNames]);
   
   useEffect(() => {
     if (filterOptions.length > 0 && !filterOptions.find(o => o.id === selectedId)) {
@@ -415,7 +445,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
               {filterOptions.length === 0 && <option>Нет данных</option>}
               {filterOptions.map(option => (
                 <option key={option.id} value={option.id}>
-                  {(option as any).number || option.name}
+                  { filterType === 'teacher' ? teacherDisplayNames.get(option.id) : (option as any).number || option.name }
                 </option>
               ))}
             </select>
@@ -541,7 +571,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
         </div>
       </div>
       {isMethodist && <UnscheduledDeck />}
-      <SessionEntryModal isOpen={isSessionModalOpen} onClose={() => setIsSessionModalOpen(false)} />
+      <SessionEntryModal isOpen={isSessionModalOpen} onClose={() => setIsSessionModalOpen(false)} selectedFilter={{ type: filterType, id: selectedId }} />
       {isSaveTemplateModalOpen && <SaveTemplateModal onClose={() => setIsSaveTemplateModalOpen(false)} onSave={saveCurrentScheduleAsTemplate} />}
       {isLoadTemplateModalOpen && <LoadTemplateModal templates={scheduleTemplates} onClose={() => setIsLoadTemplateModalOpen(false)} onLoad={loadScheduleFromTemplate} />}
     </div>

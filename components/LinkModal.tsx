@@ -1,8 +1,8 @@
 
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useStore } from '../hooks/useStore';
-import { TeacherSubjectLink, ClassType } from '../types';
+import { TeacherSubjectLink, ClassType, Teacher } from '../types';
 
 interface LinkModalProps {
     isOpen: boolean;
@@ -12,13 +12,30 @@ interface LinkModalProps {
 }
 
 const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, initialData }) => {
-    const { teachers, subjects } = useStore();
+    const { teachers, subjects, settings, departments, teacherSubjectLinks } = useStore();
     const firstInputRef = useRef<HTMLSelectElement>(null);
     const [formData, setFormData] = useState<Partial<TeacherSubjectLink>>({
         teacherId: teachers[0]?.id || '',
         subjectId: subjects[0]?.id || '',
         classTypes: [],
     });
+
+    const teacherDisplayNames = useMemo(() => {
+        if (!settings.showTeacherDetailsInLists) {
+            return new Map(teachers.map(t => [t.id, t.name]));
+        }
+        return new Map(teachers.map(teacher => {
+            const departmentName = departments.find(d => d.id === teacher.departmentId)?.name || 'Б/К';
+            const teacherSubjects = teacherSubjectLinks
+                .filter(link => link.teacherId === teacher.id)
+                .map(link => subjects.find(s => s.id === link.subjectId)?.name)
+                .filter(Boolean)
+                .slice(0, 2)
+                .join(', ');
+            const subjectsText = teacherSubjects ? ` [${teacherSubjects}... ]` : '';
+            return [teacher.id, `${teacher.name} (${departmentName})${subjectsText}`];
+        }));
+    }, [settings.showTeacherDetailsInLists, teachers, departments, teacherSubjectLinks, subjects]);
 
     useEffect(() => {
         if (isOpen && firstInputRef.current) {
@@ -85,7 +102,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, initialD
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Преподаватель</label>
                         <select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass} ref={firstInputRef}>
-                            {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                            {teachers.map(t => <option key={t.id} value={t.id}>{teacherDisplayNames.get(t.id)}</option>)}
                         </select>
                     </div>
                     <div>

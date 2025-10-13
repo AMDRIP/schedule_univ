@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, FormOfStudy, Elective, Subgroup, ClassType, AcademicDegree, AcademicTitle, FieldOfScience } from '../types';
+import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, FormOfStudy, Elective, Subgroup, ClassType, AcademicDegree, AcademicTitle, FieldOfScience, Teacher } from '../types';
 import AvailabilityGridEditor from './AvailabilityGridEditor';
 import { PlusIcon, TrashIcon } from './icons';
 import { OKSO_CODES, UGSN_FROM_OKSO } from '../data/codes';
@@ -40,10 +40,27 @@ interface DataModalProps {
 
 const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, dataType }) => {
   const [formData, setFormData] = useState<any>({});
-  const { faculties, departments, groups, ugs, specialties, classrooms, classroomTypes, subjects, teachers } = useStore();
+  const { faculties, departments, groups, ugs, specialties, classrooms, classroomTypes, subjects, teachers, settings, teacherSubjectLinks } = useStore();
   const [selectedCourseForStream, setSelectedCourseForStream] = useState<number | null>(null);
   const [ugsNotFoundMessage, setUgsNotFoundMessage] = useState<string>('');
   const firstInputRef = useRef<HTMLInputElement>(null);
+
+    const teacherDisplayNames = useMemo(() => {
+        if (!settings.showTeacherDetailsInLists) {
+            return new Map(teachers.map(t => [t.id, t.name]));
+        }
+        return new Map(teachers.map(teacher => {
+            const departmentName = departments.find(d => d.id === teacher.departmentId)?.name || 'Б/К';
+            const teacherSubjects = teacherSubjectLinks
+                .filter(link => link.teacherId === teacher.id)
+                .map(link => subjects.find(s => s.id === link.subjectId)?.name)
+                .filter(Boolean)
+                .slice(0, 2)
+                .join(', ');
+            const subjectsText = teacherSubjects ? ` [${teacherSubjects}... ]` : '';
+            return [teacher.id, `${teacher.name} (${departmentName})${subjectsText}`];
+        }));
+    }, [settings.showTeacherDetailsInLists, teachers, departments, teacherSubjectLinks, subjects]);
 
   const getInitialFormData = (type: DataType) => {
     switch (type) {
@@ -269,7 +286,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
           <div><label className="block text-sm font-medium text-gray-700">Кафедра</label><select name="departmentId" value={formData.departmentId} onChange={handleChange} className={defaultInputClass}>{departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
         );
        case 'headTeacherId': return (
-          <div><label className="block text-sm font-medium text-gray-700">Заведующий кафедрой</label><select name="headTeacherId" value={formData.headTeacherId || ''} onChange={handleChange} className={defaultInputClass}><option value="">-- Не назначен --</option>{teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+          <div><label className="block text-sm font-medium text-gray-700">Заведующий кафедрой</label><select name="headTeacherId" value={formData.headTeacherId || ''} onChange={handleChange} className={defaultInputClass}><option value="">-- Не назначен --</option>{teachers.map(t => <option key={t.id} value={t.id}>{teacherDisplayNames.get(t.id)}</option>)}</select></div>
         );
       case 'ugsId': return (
           <div>
@@ -290,7 +307,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
           <div><label className="block text-sm font-medium text-gray-700">Дисциплина</label><select name="subjectId" value={formData.subjectId} onChange={handleChange} className={defaultInputClass}>{subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
         );
       case 'teacherId': return (
-          <div><label className="block text-sm font-medium text-gray-700">Преподаватель</label><select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass}>{teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
+          <div><label className="block text-sm font-medium text-gray-700">Преподаватель</label><select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass}>{teachers.map(t => <option key={t.id} value={t.id}>{teacherDisplayNames.get(t.id)}</option>)}</select></div>
         );
       case 'groupId': return (
           <div><label className="block text-sm font-medium text-gray-700">Группа</label><select name="groupId" value={formData.groupId} onChange={handleChange} className={defaultInputClass}>{groups.map(g => <option key={g.id} value={g.id}>{g.number}</option>)}</select></div>
@@ -429,7 +446,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
                       {subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                     <select value={assignment.teacherId} onChange={e => handleAssignmentChange(index, 'teacherId', e.target.value)} className={defaultInputClass}>
-                      {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                      {teachers.map(t => <option key={t.id} value={t.id}>{teacherDisplayNames.get(t.id)}</option>)}
                     </select>
                     <select value={assignment.classType} onChange={e => handleAssignmentChange(index, 'classType', e.target.value)} className={defaultInputClass}>
                       {[ClassType.Practical, ClassType.Lab, ClassType.Consultation].map(ct => <option key={ct} value={ct}>{ct}</option>)}

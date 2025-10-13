@@ -1,22 +1,63 @@
 
 
-
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { SchedulingSettings } from '../types';
 import { CogIcon, SparklesIcon } from './icons';
 import { exportAllDataAsPdf } from '../services/pdfExporter';
 
+const ImportConfirmModal: React.FC<{
+    onConfirm: (method: 'replace' | 'merge') => void;
+    onCancel: () => void;
+}> = ({ onConfirm, onCancel }) => {
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg">
+                <h3 className="text-lg font-bold text-gray-900">Импорт данных из JSON</h3>
+                <p className="mt-2 text-sm text-gray-600">Выберите, как вы хотите импортировать данные. Это действие необратимо.</p>
+                <div className="mt-4 space-y-3">
+                    <div>
+                        <button
+                            onClick={() => onConfirm('merge')}
+                            className="w-full text-left p-3 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200"
+                        >
+                            <p className="font-semibold text-blue-800">Слияние с текущими данными</p>
+                            <p className="text-xs text-blue-700">Обновить существующие записи и добавить новые. Данные, которых нет в файле, останутся без изменений.</p>
+                        </button>
+                    </div>
+                    <div>
+                        <button
+                            onClick={() => onConfirm('replace')}
+                            className="w-full text-left p-3 bg-red-50 hover:bg-red-100 rounded-lg border border-red-200"
+                        >
+                            <p className="font-semibold text-red-800">Полная замена данных</p>
+                            <p className="text-xs text-red-700">Стереть все текущие данные и загрузить новые из файла. Используется для восстановления из резервной копии.</p>
+                        </button>
+                    </div>
+                </div>
+                <div className="mt-5 flex justify-end">
+                    <button
+                        type="button"
+                        onClick={onCancel}
+                        className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300"
+                    >
+                        Отмена
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const SettingsView: React.FC = () => {
   const store = useStore();
-  const { settings, updateSettings, getFullState, loadFullState, apiKey, updateApiKey } = store;
+  const { settings, updateSettings, getFullState, loadFullState, mergeFullState, apiKey, updateApiKey } = store;
   const [formData, setFormData] = useState<SchedulingSettings>(settings);
   const [isSaved, setIsSaved] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [keyInput, setKeyInput] = useState('');
   const [isKeySaved, setIsKeySaved] = useState(false);
+  const [importTarget, setImportTarget] = useState<File | null>(null);
 
   useEffect(() => {
     setFormData(settings);
@@ -61,11 +102,14 @@ const SettingsView: React.FC = () => {
 
   const handleImportJson = (event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files?.[0];
-      if (!file) return;
-
-      if (!window.confirm("Вы уверены, что хотите импортировать данные? Это перезапишет ВСЕ существующие данные безвозвратно.")) {
-          return;
+      if (file) {
+        setImportTarget(file);
       }
+      if(fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const executeImport = (method: 'replace' | 'merge') => {
+      if (!importTarget) return;
 
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -73,16 +117,20 @@ const SettingsView: React.FC = () => {
               const text = e.target?.result;
               if (typeof text !== 'string') throw new Error("Не удалось прочитать файл");
               const data = JSON.parse(text);
-              loadFullState(data);
+
+              if (method === 'replace') {
+                  loadFullState(data);
+              } else {
+                  mergeFullState(data);
+              }
               alert("Данные успешно импортированы!");
           } catch (error) {
               console.error("Ошибка импорта JSON:", error);
               alert("Ошибка при импорте файла. Убедитесь, что это корректный файл резервной копии.");
           }
       };
-      reader.readAsText(file);
-      // Reset file input
-      if(fileInputRef.current) fileInputRef.current.value = "";
+      reader.readAsText(importTarget);
+      setImportTarget(null);
   };
   
   const handleExportPdf = () => {
@@ -249,6 +297,21 @@ const SettingsView: React.FC = () => {
                       </div>
                     </label>
                </div>
+                 <div>
+                 <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Списки преподавателей
+                  </label>
+                   <label htmlFor="showTeacherDetailsInLists" className="flex items-center cursor-pointer">
+                      <div className="relative">
+                        <input type="checkbox" id="showTeacherDetailsInLists" name="showTeacherDetailsInLists" className="sr-only" checked={formData.showTeacherDetailsInLists} onChange={handleChange} />
+                        <div className={`block w-14 h-8 rounded-full transition ${formData.showTeacherDetailsInLists ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                        <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.showTeacherDetailsInLists ? 'translate-x-6' : ''}`}></div>
+                      </div>
+                      <div className="ml-3 text-gray-700">
+                        {formData.showTeacherDetailsInLists ? 'Включено' : 'Выключено'} (показывать кафедру и предметы в списках)
+                      </div>
+                    </label>
+               </div>
             </div>
 
 
@@ -314,6 +377,12 @@ const SettingsView: React.FC = () => {
           </div>
           <p className="text-xs text-gray-500 mt-3">Используйте JSON для создания резервных копий и переноса данных. PDF подходит для печати и архивации.</p>
        </div>
+       {importTarget && (
+            <ImportConfirmModal 
+                onConfirm={executeImport}
+                onCancel={() => setImportTarget(null)}
+            />
+        )}
     </div>
   );
 };

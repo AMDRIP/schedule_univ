@@ -247,6 +247,7 @@ export interface SchedulingSettings {
   respectProductionCalendar: boolean;
   useShortenedPreHolidaySchedule: boolean;
   allowOverbooking: boolean;
+  showTeacherDetailsInLists: boolean;
 }
 
 export interface ScheduleEntry extends BaseItem {
