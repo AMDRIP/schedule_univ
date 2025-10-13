@@ -731,13 +731,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const tempUnscheduled = [...allPossibleEntries];
         newSchedule.forEach(schedEntry => {
             const matchIndex = tempUnscheduled.findIndex(unsched => 
-                unsched.groupId === schedEntry.groupId && unsched.subgroupId === schedEntry.subgroupId &&
-                unsched.subjectId === schedEntry.subjectId && unsched.classType === schedEntry.classType &&
-                unsched.teacherId === schedEntry.teacherId
+                unsched.groupId === schedEntry.groupId &&
+                (unsched.subgroupId || '') === (schedEntry.subgroupId || '') &&
+                unsched.subjectId === schedEntry.subjectId &&
+                unsched.classType === schedEntry.classType
             );
             if (matchIndex > -1) {
                 schedEntry.unscheduledUid = tempUnscheduled[matchIndex].uid;
                 tempUnscheduled.splice(matchIndex, 1);
+            } else {
+                 console.warn('Gemini-generated entry could not be matched to an educational plan entry:', schedEntry);
             }
         });
         unschedulable = tempUnscheduled;

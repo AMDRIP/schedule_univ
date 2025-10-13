@@ -60,7 +60,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
             const subjectsText = teacherSubjects ? ` [${teacherSubjects}... ]` : '';
             return [teacher.id, `${teacher.name} (${departmentName})${subjectsText}`];
         }));
-    }, [settings.showTeacherDetailsInLists, teachers, departments, teacherSubjectLinks, subjects]);
+    }, [settings, teachers, departments, teacherSubjectLinks, subjects]);
 
   const getInitialFormData = (type: DataType) => {
     switch (type) {

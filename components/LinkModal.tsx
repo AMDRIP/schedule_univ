@@ -35,7 +35,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, initialD
             const subjectsText = teacherSubjects ? ` [${teacherSubjects}... ]` : '';
             return [teacher.id, `${teacher.name} (${departmentName})${subjectsText}`];
         }));
-    }, [settings.showTeacherDetailsInLists, teachers, departments, teacherSubjectLinks, subjects]);
+    }, [settings, teachers, departments, teacherSubjectLinks, subjects]);
 
     useEffect(() => {
         if (isOpen && firstInputRef.current) {

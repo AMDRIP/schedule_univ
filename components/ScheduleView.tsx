@@ -218,7 +218,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
         const subjectsText = teacherSubjects ? ` [${teacherSubjects}... ]` : '';
         return [teacher.id, `${teacher.name} (${departmentName})${subjectsText}`];
     }));
-  }, [settings.showTeacherDetailsInLists, teachers, departments, teacherSubjectLinks, subjects]);
+  }, [settings, teachers, departments, teacherSubjectLinks, subjects]);
 
 
   const filterOptions = useMemo(() => {
@@ -229,9 +229,11 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
       const item = filterOptions.find(o => o.id === selectedId);
       if (!item) return '';
       if (filterType === 'teacher') {
-          return teacherDisplayNames.get(item.id) || item.name;
+          // FIX: Cast `item` to `Teacher` to ensure type safety, as TypeScript's inference
+          // struggles with the dependency between `filterType` and `filterOptions` inside `useMemo`.
+          return teacherDisplayNames.get(item.id) || (item as Teacher).name;
       }
-      // FIX: The `item` is of type `Group` here, which has a `number` property instead of `name`.
+      // The `item` is of type `Group` here, which has a `number` property instead of `name`.
       return (item as Group).number;
   }, [selectedId, filterOptions, filterType, teacherDisplayNames]);
   
@@ -330,7 +332,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
     const selectedItem = filterOptions.find(o => o.id === selectedId);
     if (!selectedItem) return;
     
-    const title = `Расписание для ${filterType === 'group' ? 'группы' : 'преподавателя'}: ${'number' in selectedItem ? selectedItem.number : selectedItem.name}`;
+    const title = `Расписание для ${filterType === 'group' ? 'группы' : 'преподавателя'}: ${'number' in selectedItem ? selectedItem.number : (selectedItem as Teacher).name}`;
     const subtitle = `Неделя: ${weekStart} - ${weekEnd} (${settings.useEvenOddWeekSeparation ? (effectiveWeekType === 'odd' ? 'нечётная' : 'чётная') : 'общая'})`;
 
     try {
@@ -445,7 +447,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
               {filterOptions.length === 0 && <option>Нет данных</option>}
               {filterOptions.map(option => (
                 <option key={option.id} value={option.id}>
-                  { filterType === 'teacher' ? teacherDisplayNames.get(option.id) : (option as any).number || option.name }
+                  { filterType === 'teacher' ? teacherDisplayNames.get(option.id) : (option as any).number || (option as Teacher).name }
                 </option>
               ))}
             </select>
