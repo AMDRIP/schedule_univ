@@ -1,0 +1,5 @@
+@echo off
+echo Building Electron app...
+electron-builder
+echo Build complete.
+pause

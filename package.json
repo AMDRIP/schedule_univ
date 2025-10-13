@@ -1,0 +1,43 @@
+{
+  "name": "schedule-system-app",
+  "version": "1.0.0",
+  "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "author": "AI Assistant",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^28.2.3",
+    "electron-builder": "^24.9.1"
+  },
+  "dependencies": {
+    "@google/genai": "^1.24.0",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-dnd": "^16.0.1",
+    "react-dnd-html5-backend": "^16.0.1"
+  },
+  "build": {
+    "appId": "com.schedule-system.app",
+    "files": [
+      "**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icon.svg"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "icon.svg"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "icon.svg"
+    }
+  }
+}
