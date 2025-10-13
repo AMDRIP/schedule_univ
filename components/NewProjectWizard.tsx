@@ -1,10 +1,11 @@
-
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../hooks/useStore';
 import { SchedulingSettings, TimeSlot, Faculty, Department, UGS, Specialty, ClassroomType, Classroom } from '../types';
 import { toYYYYMMDD } from '../utils/dateUtils';
 import { TrashIcon, PlusIcon, ChevronLeftIcon, ChevronRightIcon, CalendarIcon, CheckCircleIcon } from './icons';
 import DatePicker from './DatePicker';
+import { OKSO_CODES, UGSN_FROM_OKSO } from '../data/codes';
+
 
 interface NewProjectWizardProps {
   isOpen: boolean;
@@ -71,11 +72,14 @@ const MemoizedUgsRow = React.memo(({ u, index, onUpdate, onRemove }: { u: UGS, i
 
 const MemoizedSpecialtyRow = React.memo(({ s, index, onUpdate, onRemove, ugsList }: { s: Specialty, index: number, onUpdate: (index: number, field: keyof Specialty, value: any) => void, onRemove: (index: number) => void, ugsList: UGS[] }) => (
     <div className="grid grid-cols-[1fr,3fr,2fr,auto] gap-2 mb-2">
-        <input type="text" placeholder="Код" value={s.code} onChange={e => onUpdate(index, 'code', e.target.value)} className={defaultInputClass} />
+        <input type="text" list="okso-codes-datalist" placeholder="Код" value={s.code} onChange={e => onUpdate(index, 'code', e.target.value)} className={defaultInputClass} />
+        <datalist id="okso-codes-datalist">
+            {OKSO_CODES.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+        </datalist>
         <input type="text" placeholder="Название специальности" value={s.name} onChange={e => onUpdate(index, 'name', e.target.value)} className={defaultInputClass} />
         <select value={s.ugsId} onChange={e => onUpdate(index, 'ugsId', e.target.value)} className={defaultInputClass}>
             <option value="" disabled>-- УГСН --</option>
-            {ugsList.map(u => u.name && <option key={u.id} value={u.id}>{u.name}</option>)}
+            {ugsList.map(u => u.name && <option key={u.id} value={u.id}>{u.code} {u.name}</option>)}
         </select>
         <button type="button" onClick={() => onRemove(index)} className={smallButtonClass}><TrashIcon className="w-4 h-4" /></button>
     </div>
@@ -137,17 +141,107 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         onClose();
     };
     
-    const updateListItem = <T,>(setList: React.Dispatch<React.SetStateAction<T[]>>, index: number, field: keyof T, value: any) => {
-        setList(prev => prev.map((item, i) => i === index ? { ...item, [field]: value } : item));
-    };
+    // Generic, stable update handlers using useCallback to prevent focus loss
+    const createUpdateHandler = <T,>(setter: React.Dispatch<React.SetStateAction<T[]>>) => 
+        useCallback((index: number, field: keyof T, value: any) => {
+            setter(prev => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
+        }, []);
+    
+    const createAddHandler = <T,>(setter: React.Dispatch<React.SetStateAction<T[]>>, newItemFactory: () => T) =>
+        useCallback(() => {
+            setter(prev => [...prev, newItemFactory()]);
+        }, [newItemFactory]);
 
-    const addListItem = <T,>(setList: React.Dispatch<React.SetStateAction<T[]>>, newItem: T) => {
-        setList(prev => [...prev, newItem]);
-    };
+    const createRemoveHandler = <T,>(setter: React.Dispatch<React.SetStateAction<T[]>>) =>
+        useCallback((index: number) => {
+            setter(prev => prev.filter((_, i) => i !== index));
+        }, []);
+        
+    // TimeSlots
+    const updateTimeSlot = createUpdateHandler(setTimeSlots);
+    const removeTimeSlot = createRemoveHandler(setTimeSlots);
+    const addTimeSlot = createAddHandler(setTimeSlots, () => ({ id: generateId('ts'), time: '' }));
 
-    const removeListItem = <T,>(setList: React.Dispatch<React.SetStateAction<T[]>>, index: number) => {
-        setList(prev => prev.filter((_, i) => i !== index));
-    };
+    // Faculties
+    const updateFaculty = createUpdateHandler(setFaculties);
+    const removeFaculty = createRemoveHandler(setFaculties);
+    const addFaculty = createAddHandler(setFaculties, () => ({ id: generateId('f'), name: '' }));
+
+    // Departments
+    const updateDepartment = createUpdateHandler(setDepartments);
+    const removeDepartment = createRemoveHandler(setDepartments);
+    const addDepartment = useCallback(() => {
+        setDepartments(prev => [...prev, { id: generateId('d'), name: '', facultyId: faculties.find(f => f.name.trim() !== '')?.id || '' }]);
+    }, [faculties]);
+
+    // UGS
+    const updateUgs = createUpdateHandler(setUgs);
+    const removeUgs = createRemoveHandler(setUgs);
+    const addUgs = createAddHandler(setUgs, () => ({ id: generateId('ugs'), code: '', name: '' }));
+
+    // Specialties (with special OKSO logic)
+    const updateSpecialty = useCallback((index: number, field: keyof Specialty, value: any) => {
+        if (field === 'code') {
+            const codeValue = String(value);
+            const matchedOkso = OKSO_CODES.find(o => o.code === codeValue);
+
+            if (matchedOkso) {
+                const ugsPrefix = codeValue.substring(0, 2);
+                const canonicalUgsData = UGSN_FROM_OKSO.find(u => u.code.startsWith(ugsPrefix));
+
+                setUgs(prevUgs => {
+                    let newUgsList = [...prevUgs];
+                    let targetUgsId: string | undefined;
+
+                    if (canonicalUgsData) {
+                        const existingUgs = newUgsList.find(u => u.code === canonicalUgsData.code);
+                        if (existingUgs) {
+                            targetUgsId = existingUgs.id;
+                        } else if (canonicalUgsData.name.trim()) {
+                            const newUgs = { id: generateId('ugs'), code: canonicalUgsData.code, name: canonicalUgsData.name };
+                            targetUgsId = newUgs.id;
+                            newUgsList = [...newUgsList.filter(u => u.name.trim() || u.code.trim()), newUgs];
+                        }
+                    }
+
+                    setSpecialties(prevSpecialties => 
+                        prevSpecialties.map((item, i) => 
+                            i === index ? {
+                                ...item,
+                                code: codeValue,
+                                name: matchedOkso.name,
+                                ugsId: targetUgsId || item.ugsId
+                            } : item
+                        )
+                    );
+                    
+                    return newUgsList;
+                });
+            } else {
+                 setSpecialties(prev => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
+            }
+        } else {
+             setSpecialties(prev => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
+        }
+    }, []);
+    
+    const removeSpecialty = createRemoveHandler(setSpecialties);
+    const addSpecialty = useCallback(() => {
+        setSpecialties(prev => [...prev, { id: generateId('spec'), code: '', name: '', ugsId: ugs.find(u => u.name.trim() !== '')?.id || '' }]);
+    }, [ugs]);
+    
+    // Classroom Types
+    const updateClassroomType = createUpdateHandler(setClassroomTypes);
+    const removeClassroomType = createRemoveHandler(setClassroomTypes);
+    const addClassroomType = createAddHandler(setClassroomTypes, () => ({ id: generateId('ct'), name: '' }));
+
+    // Classrooms
+    const updateClassroom = createUpdateHandler(setClassrooms);
+    const removeClassroom = createRemoveHandler(setClassrooms);
+    const addClassroom = useCallback(() => {
+        setClassrooms(prev => [...prev, { id: generateId('c'), number: '', capacity: 30, typeId: classroomTypes[0]?.id || '' }]);
+    }, [classroomTypes]);
+
     
      const isStepValid = useMemo(() => {
         switch (step) {
@@ -217,8 +311,8 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
                         </div>
                         <div className="pt-4 border-t">
                              <h4 className="font-medium mb-2">Расписание звонков</h4>
-                             {timeSlots.map((ts, index) => <MemoizedTimeSlotRow key={ts.id} ts={ts} index={index} onUpdate={updateListItem.bind(null, setTimeSlots)} onRemove={removeListItem.bind(null, setTimeSlots)} />)}
-                             <button type="button" onClick={() => addListItem(setTimeSlots, { id: generateId('ts'), time: '' })} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить слот</button>
+                             {timeSlots.map((ts, index) => <MemoizedTimeSlotRow key={ts.id} ts={ts} index={index} onUpdate={updateTimeSlot} onRemove={removeTimeSlot} />)}
+                             <button type="button" onClick={addTimeSlot} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить слот</button>
                         </div>
                     </Section>
                    )}
@@ -227,13 +321,18 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
                     <Section title="2. Структура университета">
                         <div>
                             <h4 className="font-medium mb-2">Факультеты</h4>
-                            {faculties.map((f, index) => <MemoizedFacultyRow key={f.id} f={f} index={index} onUpdate={updateListItem.bind(null, setFaculties)} onRemove={removeListItem.bind(null, setFaculties)} /> )}
-                            <button type="button" onClick={() => addListItem(setFaculties, { id: generateId('f'), name: '' })} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить факультет</button>
+                            {faculties.map((f, index) => <MemoizedFacultyRow key={f.id} f={f} index={index} onUpdate={updateFaculty} onRemove={removeFaculty} /> )}
+                            <button type="button" onClick={addFaculty} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить факультет</button>
                         </div>
                         <div className="pt-4 border-t">
                             <h4 className="font-medium mb-2">Кафедры</h4>
-                            {departments.map((d, index) => <MemoizedDepartmentRow key={d.id} d={d} index={index} onUpdate={updateListItem.bind(null, setDepartments)} onRemove={removeListItem.bind(null, setDepartments)} faculties={faculties} /> )}
-                            <button type="button" onClick={() => addListItem(setDepartments, { id: generateId('d'), name: '', facultyId: faculties[0]?.id || ''})} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить кафедру</button>
+                            {!faculties.some(f => f.name.trim() !== '') && (
+                                <p className="text-sm text-yellow-700 bg-yellow-100 p-2 rounded-md mb-2">
+                                    Сначала добавьте хотя бы один факультет, чтобы создавать кафедры.
+                                </p>
+                            )}
+                            {departments.map((d, index) => <MemoizedDepartmentRow key={d.id} d={d} index={index} onUpdate={updateDepartment} onRemove={removeDepartment} faculties={faculties} /> )}
+                            <button type="button" onClick={addDepartment} disabled={!faculties.some(f => f.name.trim() !== '')} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1 disabled:text-gray-400 disabled:cursor-not-allowed disabled:no-underline"><PlusIcon className="w-4 h-4"/>Добавить кафедру</button>
                         </div>
                     </Section>
                    )}
@@ -242,13 +341,14 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
                     <Section title="3. Направления подготовки">
                         <div>
                             <h4 className="font-medium mb-2">УГСН (Укрупненные группы специальностей)</h4>
-                            {ugs.map((u, index) => <MemoizedUgsRow key={u.id} u={u} index={index} onUpdate={updateListItem.bind(null, setUgs)} onRemove={removeListItem.bind(null, setUgs)} />)}
-                            <button type="button" onClick={() => addListItem(setUgs, { id: generateId('ugs'), code: '', name: '' })} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить УГСН</button>
+                            {ugs.map((u, index) => <MemoizedUgsRow key={u.id} u={u} index={index} onUpdate={updateUgs} onRemove={removeUgs} />)}
+                            <button type="button" onClick={addUgs} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить УГСН</button>
                         </div>
                         <div className="pt-4 border-t">
                             <h4 className="font-medium mb-2">Специальности</h4>
-                            {specialties.map((s, index) => <MemoizedSpecialtyRow key={s.id} s={s} index={index} onUpdate={updateListItem.bind(null, setSpecialties)} onRemove={removeListItem.bind(null, setSpecialties)} ugsList={ugs} />)}
-                            <button type="button" onClick={() => addListItem(setSpecialties, { id: generateId('spec'), code: '', name: '', ugsId: ugs[0]?.id || '' })} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить специальность</button>
+                            <p className="text-xs text-gray-500 mb-2">При вводе кода специальности из справочника ОКСО, название и УГСН подставятся автоматически.</p>
+                            {specialties.map((s, index) => <MemoizedSpecialtyRow key={s.id} s={s} index={index} onUpdate={updateSpecialty} onRemove={removeSpecialty} ugsList={ugs} />)}
+                            <button type="button" onClick={addSpecialty} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить специальность</button>
                         </div>
                     </Section>
                    )}
@@ -257,13 +357,13 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
                      <Section title="4. Аудиторный фонд">
                          <div>
                             <h4 className="font-medium mb-2">Типы аудиторий</h4>
-                             {classroomTypes.map((ct, index) => <MemoizedClassroomTypeRow key={ct.id} ct={ct} index={index} onUpdate={updateListItem.bind(null, setClassroomTypes)} onRemove={removeListItem.bind(null, setClassroomTypes)} /> )}
-                             <button type="button" onClick={() => addListItem(setClassroomTypes, { id: generateId('ct'), name: '' })} className="text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить тип</button>
+                             {classroomTypes.map((ct, index) => <MemoizedClassroomTypeRow key={ct.id} ct={ct} index={index} onUpdate={updateClassroomType} onRemove={removeClassroomType} /> )}
+                             <button type="button" onClick={addClassroomType} className="text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить тип</button>
                          </div>
                          <div className="pt-4 border-t">
                             <h4 className="font-medium mb-2">Аудитории</h4>
-                             {classrooms.map((c, index) => <MemoizedClassroomRow key={c.id} c={c} index={index} onUpdate={updateListItem.bind(null, setClassrooms)} onRemove={removeListItem.bind(null, setClassrooms)} types={classroomTypes} /> )}
-                             <button type="button" onClick={() => addListItem(setClassrooms, { id: generateId('c'), number: '', capacity: 30, typeId: classroomTypes[0]?.id || '' })} className="text-sm text-blue-600 hover:underline flex items-center gap-1 mt-2"><PlusIcon className="w-4 h-4"/>Добавить аудиторию</button>
+                             {classrooms.map((c, index) => <MemoizedClassroomRow key={c.id} c={c} index={index} onUpdate={updateClassroom} onRemove={removeClassroom} types={classroomTypes} /> )}
+                             <button type="button" onClick={addClassroom} className="text-sm text-blue-600 hover:underline flex items-center gap-1 mt-2"><PlusIcon className="w-4 h-4"/>Добавить аудиторию</button>
                          </div>
                     </Section>
                    )}

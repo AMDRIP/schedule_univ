@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { StoreProvider, useStore } from './hooks/useStore';
@@ -63,6 +63,10 @@ const AppContent: React.FC = () => {
     setNewProjectWizardOpen(true);
   };
   
+  const handleCloseWizard = useCallback(() => {
+    setNewProjectWizardOpen(false);
+  }, []);
+
   return (
      <>
       <div className="min-h-screen flex flex-col">
@@ -82,7 +86,7 @@ const AppContent: React.FC = () => {
       {isNewProjectWizardOpen && (
         <NewProjectWizard
           isOpen={isNewProjectWizardOpen}
-          onClose={() => setNewProjectWizardOpen(false)}
+          onClose={handleCloseWizard}
         />
       )}
       {isNewProjectConfirmOpen && (
