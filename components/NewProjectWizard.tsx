@@ -23,6 +23,9 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         sessionStart: '', sessionEnd: '', practiceStart: '', practiceEnd: '', retakeStart: '', retakeEnd: '',
         defaultBreakMinutes: 15, allowWindows: true, useEvenOddWeekSeparation: true,
         showDegreeInSchedule: false,
+        // FIX: Added missing properties to satisfy the SchedulingSettings type.
+        respectProductionCalendar: true,
+        useShortenedPreHolidaySchedule: true,
     });
     const [timeSlots, setTimeSlots] = useState<{ id: string; time: string }[]>([{ id: generateId('ts'), time: '08:30-10:00' }]);
     const [faculties, setFaculties] = useState<{ id: string; name: string }[]>([{ id: generateId('f'), name: '' }]);

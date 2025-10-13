@@ -5,7 +5,7 @@ import {
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
     EducationalPlan, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective
 } from '../types';
-import { getWeekType, toYYYYMMDD } from '../utils/dateUtils';
+import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
 import { generateScheduleWithHeuristics } from '../services/heuristicScheduler';
 import { generateScheduleWithGemini } from '../services/geminiService';
@@ -49,6 +49,10 @@ const initialTimeSlots: TimeSlot[] = [
     { id: 'ts1', time: '08:30-10:00' }, { id: 'ts2', time: '10:15-11:45' },
     { id: 'ts3', time: '12:00-13:30' }, { id: 'ts4', time: '14:15-15:45' },
 ];
+const initialTimeSlotsShortened: TimeSlot[] = [
+    { id: 'tss1', time: '08:30-09:50' }, { id: 'tss2', time: '10:00-11:20' },
+    { id: 'tss3', time: '11:30-12:50' }, { id: 'tss4', time: '13:00-14:20' },
+];
 const initialSchedule: ScheduleEntry[] = [];
 const initialTeacherSubjectLinks: TeacherSubjectLink[] = [
     { id: 'l1', teacherId: 't1', subjectId: 'sub1', classTypes: [ClassType.Lecture, ClassType.Practical] },
@@ -69,6 +73,8 @@ const initialSettings: SchedulingSettings = {
     allowWindows: true,
     useEvenOddWeekSeparation: true,
     showDegreeInSchedule: false,
+    respectProductionCalendar: true,
+    useShortenedPreHolidaySchedule: true,
 };
 const initialScheduleTemplates: ScheduleTemplate[] = [];
 
@@ -182,7 +188,7 @@ const generateUnscheduledEntries = (
 interface StoreState {
   faculties: Faculty[]; departments: Department[]; teachers: Teacher[]; groups: Group[];
   streams: Stream[]; classrooms: Classroom[]; subjects: Subject[]; cabinets: Cabinet[];
-  timeSlots: TimeSlot[]; schedule: ScheduleEntry[]; unscheduledEntries: UnscheduledEntry[];
+  timeSlots: TimeSlot[]; timeSlotsShortened: TimeSlot[]; schedule: ScheduleEntry[]; unscheduledEntries: UnscheduledEntry[];
   teacherSubjectLinks: TeacherSubjectLink[]; schedulingRules: SchedulingRule[]; 
   productionCalendar: ProductionCalendarEvent[]; settings: SchedulingSettings;
   ugs: UGS[]; specialties: Specialty[]; educationalPlans: EducationalPlan[];
@@ -196,7 +202,7 @@ interface StoreState {
   updateItem: (dataType: DataType, item: DataItem) => void;
   deleteItem: (dataType: DataType, id: string) => void;
   setSchedule: (newSchedule: ScheduleEntry[]) => void;
-  placeUnscheduledItem: (item: UnscheduledEntry, day: string, timeSlotId: string, weekType: 'even' | 'odd' | 'every') => void;
+  placeUnscheduledItem: (item: UnscheduledEntry, day: string, timeSlotId: string, weekType: 'even' | 'odd' | 'every', date: string) => void;
   updateScheduleEntry: (updatedEntry: ScheduleEntry) => void;
   deleteScheduleEntry: (entry: ScheduleEntry) => void;
   removeScheduleEntries: (entryIds: string[]) => void;
@@ -238,6 +244,8 @@ const getInitialEmptySettings = (): SchedulingSettings => ({
     allowWindows: true,
     useEvenOddWeekSeparation: true,
     showDegreeInSchedule: false,
+    respectProductionCalendar: true,
+    useShortenedPreHolidaySchedule: true,
 });
 
 
@@ -251,6 +259,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [subjects, setSubjects] = useState(initialSubjects);
   const [cabinets, setCabinets] = useState(initialCabinets);
   const [timeSlots, setTimeSlots] = useState(initialTimeSlots);
+  const [timeSlotsShortened, setTimeSlotsShortened] = useState(initialTimeSlotsShortened);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>(initialSchedule);
   const [unscheduledEntries, setUnscheduledEntries] = useState<UnscheduledEntry[]>([]);
   const [ugs, setUgs] = useState(initialUGS);
@@ -295,7 +304,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   // FIX: Removed problematic return type to avoid circular dependency and let TypeScript infer it.
   const getFullState = () => ({
-    faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, schedule, unscheduledEntries,
+    faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
     classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave
   });
@@ -310,6 +319,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setSubjects(data.subjects || []);
     setCabinets(data.cabinets || []);
     setTimeSlots(data.timeSlots || []);
+    setTimeSlotsShortened(data.timeSlotsShortened || []);
     setSchedule(data.schedule || []);
     setTeacherSubjectLinks(data.teacherSubjectLinks || []);
     setSchedulingRules(data.schedulingRules || []);
@@ -366,7 +376,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const stateSetters: Record<DataType, React.Dispatch<React.SetStateAction<any[]>>> = {
     faculties: setFaculties, departments: setDepartments, teachers: setTeachers, groups: setGroups,
     streams: setStreams, classrooms: setClassrooms, subjects: setSubjects, cabinets: setCabinets,
-    timeSlots: setTimeSlots, teacherSubjectLinks: setTeacherSubjectLinks, schedulingRules: setSchedulingRules,
+    timeSlots: setTimeSlots, timeSlotsShortened: setTimeSlotsShortened, teacherSubjectLinks: setTeacherSubjectLinks, schedulingRules: setSchedulingRules,
     productionCalendar: setProductionCalendar, ugs: setUgs, specialties: setSpecialties, 
     educationalPlans: setEducationalPlans, scheduleTemplates: setScheduleTemplates, classroomTypes: setClassroomTypes,
     subgroups: setSubgroups, electives: setElectives,
@@ -434,6 +444,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setSubjects(prev => prev.map(s => s.pinnedClassroomId === itemId ? { ...s, pinnedClassroomId: '' } : s));
           break;
         case 'timeSlots':
+        case 'timeSlotsShortened':
           setSchedule(prev => prev.filter(e => e.timeSlotId !== itemId));
           setSchedulingRules(prev => prev.filter(r => r.timeSlotId !== itemId));
           break;
@@ -447,7 +458,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     performCascadingDelete(dataType, id);
   };
 
-  const placeUnscheduledItem = (item: UnscheduledEntry, day: string, timeSlotId: string, weekType: 'even' | 'odd' | 'every') => {
+  const placeUnscheduledItem = (item: UnscheduledEntry, day: string, timeSlotId: string, weekType: 'even' | 'odd' | 'every', date: string) => {
+      if (settings.respectProductionCalendar) {
+        const dayInfo = productionCalendar.find(e => e.date === date);
+        if (dayInfo && !dayInfo.isWorkDay) {
+          alert(`Нельзя разместить занятие на ${date}, так как это нерабочий день: "${dayInfo.name}".`);
+          return;
+        }
+      }
+
       const studentCount = item.subgroupId ? subgroups.find(sg => sg.id === item.subgroupId)?.studentCount : groups.find(g => g.id === item.groupId)?.studentCount;
       const subject = subjects.find(s => s.id === item.subjectId);
       if (!studentCount || !subject) {
@@ -569,7 +588,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   const clearAllData = () => {
     setFaculties([]); setDepartments([]); setTeachers([]); setGroups([]); setStreams([]);
-    setClassrooms([]); setSubjects([]); setCabinets([]); setTimeSlots([]); setSchedule([]);
+    setClassrooms([]); setSubjects([]); setCabinets([]); setTimeSlots([]); setTimeSlotsShortened([]); setSchedule([]);
     setUgs([]); setSpecialties([]); setEducationalPlans([]); setTeacherSubjectLinks([]);
     setSchedulingRules([]); setProductionCalendar([]); setSettings(getInitialEmptySettings());
     setScheduleTemplates([]); setClassroomTypes([]); setSubgroups([]); setElectives([]);
@@ -582,7 +601,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const runScheduler = async (method: 'heuristic' | 'gemini') => {
     const generationData = {
-        teachers, groups, classrooms, subjects, streams, timeSlots, settings, 
+        teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
         subgroups, electives,
     };
@@ -668,7 +687,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
 
   const value: StoreState = {
-    faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, schedule, unscheduledEntries,
+    faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
     classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings,

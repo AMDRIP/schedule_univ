@@ -47,6 +47,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
         return <DataManager dataType="classroomTypes" title="Управление типами аудиторий" />;
        case 'Расписание звонков':
         return <DataManager dataType="timeSlots" title="Управление расписанием звонков" />;
+      case 'Расписание сокр. звонков':
+        return <DataManager dataType="timeSlotsShortened" title="Управление расписанием сокращенных звонков" />;
       case 'Дисциплины':
         return <DataManager dataType="subjects" title="Управление дисциплинами" />;
       case 'Факультативы':

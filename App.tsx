@@ -13,10 +13,17 @@ const AppContent: React.FC = () => {
   const [isNewProjectWizardOpen, setNewProjectWizardOpen] = useState(false);
   const [isNewProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
-  const { runScheduler, clearSchedule, startNewProject, handleOpen, handleSave, handleSaveAs } = useStore();
+  const { runScheduler, clearSchedule, startNewProject, handleOpen, handleSave, handleSaveAs, settings } = useStore();
 
   const handleRunScheduler = async (method: 'heuristic' | 'gemini') => {
     if (isScheduling) return;
+    
+    if (method === 'heuristic' && settings.respectProductionCalendar) {
+        if (!window.confirm("Внимание: Эвристический планировщик не может в полной мере учитывать производственный календарь и может разместить занятия на нерабочие дни. Рекомендуется использовать ИИ-планировщик (Gemini) для точного учета календаря или проверить результат вручную.\n\nПродолжить генерацию?")) {
+            return;
+        }
+    }
+
     setIsScheduling(true);
     try {
         const result = await runScheduler(method);

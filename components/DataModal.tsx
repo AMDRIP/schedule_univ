@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useMemo } from 'react';
 import { useStore } from '../hooks/useStore';
 import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, FormOfStudy, Elective, Subgroup, ClassType } from '../types';
@@ -269,6 +270,8 @@ const TITLE_MAP: Record<DataType, { single: string }> = {
     subjects: { single: 'дисциплину' },
     cabinets: { single: 'кабинет' },
     timeSlots: { single: 'временной слот' },
+    // FIX: Added 'timeSlotsShortened' to TITLE_MAP to satisfy the DataType record type.
+    timeSlotsShortened: { single: 'сокращенный слот' },
     teacherSubjectLinks: { single: 'привязку' },
     schedulingRules: { single: 'правило' },
     productionCalendar: { single: 'событие' },

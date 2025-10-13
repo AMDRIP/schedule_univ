@@ -60,6 +60,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
         { name: 'Типы аудиторий', icon: <HomeIcon /> },
         { name: 'Кабинеты', icon: <KeyIcon /> },
         { name: 'Расписание звонков', icon: <ClockIcon /> },
+        { name: 'Расписание сокр. звонков', icon: <ClockIcon /> },
         { type: 'divider' },
         { name: 'Привязки преподавателей', icon: <LinkIcon /> },
         { name: 'Правила расписания', icon: <ShieldCheckIcon /> },

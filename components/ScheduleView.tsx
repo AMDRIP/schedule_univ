@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode } from '../types';
-import { DAYS_OF_WEEK } from '../constants';
+import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType } from '../types';
+import { DAYS_OF_WEEK, PRODUCTION_CALENDAR_COLORS } from '../constants';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import ScheduleCell from './ScheduleCell';
 import UnscheduledDeck from './UnscheduledDeck';
@@ -171,7 +171,7 @@ interface ScheduleViewProps {
 
 const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setViewDate }) => {
   const store = useStore();
-  const { schedule, groups, teachers, subjects, classrooms, timeSlots, settings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries } = store;
+  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar } = store;
   const [filterType, setFilterType] = useState<'group' | 'teacher'>('group');
   const [selectedId, setSelectedId] = useState<string>(groups[0]?.id || '');
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
@@ -310,6 +310,9 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
           teachers,
           subjects,
           classrooms,
+          // Add new data for handling shortened days
+          timeSlotsShortened,
+          productionCalendar,
         }, settings);
     } catch(e) {
       console.error("PDF export failed:", e);
@@ -343,6 +346,26 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
       alert("Не удалось сгенерировать TXT файл. Проверьте консоль для подробностей.");
     }
   };
+
+  const displayTimeSlots = useMemo(() => {
+    // Check if there's any pre-holiday day in the current week.
+    const hasPreHolidayInWeek = weekDays.some(date => {
+        if (!settings.useShortenedPreHolidaySchedule) return false;
+        const dateStr = toYYYYMMDD(date);
+        const dayInfo = productionCalendar.find(e => e.date === dateStr);
+        return dayInfo?.type === ProductionCalendarEventType.PreHoliday;
+    });
+
+    // If there are no pre-holidays this week, only show regular time slots.
+    if (!hasPreHolidayInWeek) {
+        return [...timeSlots].sort((a, b) => a.time.localeCompare(b.time));
+    }
+
+    // Otherwise, show all unique time slots (regular + shortened).
+    const allSlots = [...timeSlots, ...timeSlotsShortened];
+    const uniqueSlots = Array.from(new Map(allSlots.map(item => [item.time, item])).values());
+    return uniqueSlots.sort((a, b) => a.time.localeCompare(b.time));
+  }, [timeSlots, timeSlotsShortened, weekDays, productionCalendar, settings.useShortenedPreHolidaySchedule]);
 
 
   const isMethodist = currentRole === Role.Methodist || currentRole === Role.Admin;
@@ -450,10 +473,13 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                 <th className="p-2 border-r text-sm font-semibold text-gray-600 w-32">Время</th>
                 {weekDays.map(date => {
                     const dateStr = toYYYYMMDD(date);
-                    const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() -1];
+                    const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
                     const isToday = dateStr === todayStr;
+                    const dayInfo = productionCalendar.find(e => e.date === dateStr);
+                    const thClass = dayInfo ? PRODUCTION_CALENDAR_COLORS[dayInfo.type].bg : isToday ? 'bg-blue-100' : '';
+                    
                     return (
-                      <th key={dateStr} className={`p-2 border-r text-sm font-semibold text-gray-600 relative group ${isToday ? 'bg-blue-100' : ''}`}>
+                      <th key={dateStr} className={`p-2 border-r text-sm font-semibold text-gray-600 relative group ${thClass}`}>
                         <div className="flex items-center justify-center">
                             <span>{dayName}, {date.getDate()}</span>
                             {isMethodist && (
@@ -472,12 +498,20 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
               </tr>
             </thead>
             <tbody>
-              {timeSlots.map(slot => (
+              {displayTimeSlots.map(slot => (
                 <tr key={slot.id} className="transition-colors hover:bg-gray-50">
                   <td className="p-2 border font-semibold text-center align-top h-32 text-gray-700">{slot.time}</td>
                   {weekDays.map(date => {
                     const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
                     const dateStr = toYYYYMMDD(date);
+                    
+                    const dayInfo = productionCalendar.find(e => e.date === dateStr);
+                    const isPreHoliday = settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
+                    const activeTimeSlots = isPreHoliday ? timeSlotsShortened : timeSlots;
+
+                    if (!activeTimeSlots.some(ts => ts.id === slot.id)) {
+                        return <td key={dateStr} className="p-1 border bg-gray-100"></td>;
+                    }
                     
                     const entry = filteredSchedule.find(e => 
                       e.timeSlotId === slot.id &&
@@ -487,7 +521,8 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                     return (
                       <ScheduleCell 
                         key={dateStr} 
-                        day={dayName} 
+                        day={dayName}
+                        date={dateStr}
                         timeSlotId={slot.id} 
                         entry={entry}
                         weekType={effectiveWeekType}

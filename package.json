@@ -29,15 +29,15 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "icon.svg"
+      "icon": "1631285.ico"
     },
     "mac": {
       "target": "dmg",
-      "icon": "icon.svg"
+      "icon": "1631285.ico"
     },
     "linux": {
       "target": "AppImage",
-      "icon": "icon.svg"
+      "icon": "1631285.ico"
     }
   }
 }

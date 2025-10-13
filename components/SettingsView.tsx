@@ -1,5 +1,6 @@
 
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { SchedulingSettings } from '../types';
@@ -185,6 +186,36 @@ const SettingsView: React.FC = () => {
                       </div>
                       <div className="ml-3 text-gray-700">
                         {formData.showDegreeInSchedule ? 'Включено' : 'Выключено'} (показывать ученую степень рядом с ФИО)
+                      </div>
+                    </label>
+               </div>
+                <div>
+                 <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Производственный календарь
+                  </label>
+                   <label htmlFor="respectProductionCalendar" className="flex items-center cursor-pointer">
+                      <div className="relative">
+                        <input type="checkbox" id="respectProductionCalendar" name="respectProductionCalendar" className="sr-only" checked={formData.respectProductionCalendar} onChange={handleChange} />
+                        <div className={`block w-14 h-8 rounded-full transition ${formData.respectProductionCalendar ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                        <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.respectProductionCalendar ? 'translate-x-6' : ''}`}></div>
+                      </div>
+                      <div className="ml-3 text-gray-700">
+                        {formData.respectProductionCalendar ? 'Включено' : 'Выключено'} (запретить занятия в нерабочие дни)
+                      </div>
+                    </label>
+               </div>
+                 <div>
+                 <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Предпраздничные дни
+                  </label>
+                   <label htmlFor="useShortenedPreHolidaySchedule" className="flex items-center cursor-pointer">
+                      <div className="relative">
+                        <input type="checkbox" id="useShortenedPreHolidaySchedule" name="useShortenedPreHolidaySchedule" className="sr-only" checked={formData.useShortenedPreHolidaySchedule} onChange={handleChange} />
+                        <div className={`block w-14 h-8 rounded-full transition ${formData.useShortenedPreHolidaySchedule ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                        <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.useShortenedPreHolidaySchedule ? 'translate-x-6' : ''}`}></div>
+                      </div>
+                      <div className="ml-3 text-gray-700">
+                        {formData.useShortenedPreHolidaySchedule ? 'Включено' : 'Выключено'} (использовать сокращенные звонки)
                       </div>
                     </label>
                </div>

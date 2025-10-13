@@ -8,24 +8,36 @@ import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon } from 
 interface ScheduleCellProps {
   entry?: ScheduleEntry;
   day: string;
+  date: string; // YYYY-MM-DD
   timeSlotId: string;
   weekType: 'even' | 'odd' | 'every';
   isEditable: boolean;
 }
 
-const ScheduleCell: React.FC<ScheduleCellProps> = ({ entry, day, timeSlotId, weekType, isEditable }) => {
-  const { subjects, teachers, classrooms, groups, subgroups, schedule, placeUnscheduledItem, updateScheduleEntry, deleteScheduleEntry, settings } = useStore();
+const ScheduleCell: React.FC<ScheduleCellProps> = ({ entry, day, date, timeSlotId, weekType, isEditable }) => {
+  const { subjects, teachers, classrooms, groups, subgroups, schedule, placeUnscheduledItem, updateScheduleEntry, deleteScheduleEntry, settings, productionCalendar } = useStore();
   const [isEditingClassroom, setIsEditingClassroom] = useState(false);
   const [isEditingDate, setIsEditingDate] = useState(false);
   const [isEditingDelivery, setIsEditingDelivery] = useState(false);
 
   const [{ isOver, canDrop }, drop] = useDrop(() => ({
     accept: [ItemTypes.SCHEDULE_ENTRY, ItemTypes.UNSCHEDULED_ENTRY],
-    canDrop: () => isEditable && !entry,
+    canDrop: () => {
+       if (isEditable && !entry) {
+            if (settings.respectProductionCalendar) {
+                const dayInfo = productionCalendar.find(e => e.date === date);
+                if (dayInfo && !dayInfo.isWorkDay) {
+                    return false; // Cannot drop on non-working day
+                }
+            }
+            return true;
+        }
+        return false;
+    },
     drop: (item: any, monitor) => {
       const itemType = monitor.getItemType();
       if (itemType === ItemTypes.UNSCHEDULED_ENTRY) {
-          placeUnscheduledItem(item as UnscheduledEntry, day, timeSlotId, weekType);
+          placeUnscheduledItem(item as UnscheduledEntry, day, timeSlotId, weekType, date);
       } else if (itemType === ItemTypes.SCHEDULE_ENTRY) {
         // При перетаскивании события с датой в обычную ячейку - дата сбрасывается
         const updatedEntry: ScheduleEntry = { ...item, day, timeSlotId, weekType, date: undefined };
@@ -36,7 +48,7 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entry, day, timeSlotId, wee
       isOver: !!monitor.isOver(),
       canDrop: !!monitor.canDrop(),
     }),
-  }), [entry, day, timeSlotId, weekType, placeUnscheduledItem, updateScheduleEntry]);
+  }), [entry, day, timeSlotId, weekType, date, placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar]);
 
   const [{ isDragging }, drag] = useDrag(() => ({
     type: ItemTypes.SCHEDULE_ENTRY,

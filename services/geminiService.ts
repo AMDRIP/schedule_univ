@@ -1,6 +1,7 @@
 
 
 
+
 import { GoogleGenAI, Type } from '@google/genai';
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
@@ -15,6 +16,7 @@ interface GenerationData {
   subjects: Subject[];
   streams: Stream[];
   timeSlots: TimeSlot[];
+  timeSlotsShortened: TimeSlot[];
   settings: SchedulingSettings;
   teacherSubjectLinks: TeacherSubjectLink[];
   schedulingRules: SchedulingRule[];
@@ -64,7 +66,7 @@ const getAiClient = async (): Promise<GoogleGenAI | null> => {
 
 export const generateScheduleWithGemini = async (data: GenerationData): Promise<ScheduleEntry[]> => {
   const { 
-    teachers, groups, classrooms, subjects, streams, timeSlots, settings, 
+    teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
     teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
     subgroups, electives
   } = data;
@@ -75,8 +77,10 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
 
     ОБЩИЕ НАСТРОЙКИ:
     - Семестр длится с ${settings.semesterStart} по ${settings.semesterEnd}.
-    - Производственный календарь (нерабочие дни, которые нужно пропустить): ${JSON.stringify(productionCalendar)}
     - "Окна" (свободные пары между занятиями) для студентов и преподавателей ${settings.allowWindows ? 'РАЗРЕШЕНЫ' : 'ЗАПРЕЩЕНЫ. Старайся ставить пары подряд.'}.
+    - УЧЕТ ПРОИЗВОДСТВЕННОГО КАЛЕНДАРЯ: ${settings.respectProductionCalendar ? 'ВКЛЮЧЕН. Ты ОБЯЗАН не ставить занятия в дни, где isWorkDay: false.' : 'ВЫКЛЮЧЕН. Ты можешь игнорировать нерабочие дни.'}
+    - СОКРАЩЕННЫЕ ДНИ: ${settings.useShortenedPreHolidaySchedule ? 'ВКЛЮЧЕНО. В дни с типом "Предпраздничный день" используй `timeSlotsShortened`. В остальные рабочие дни - `timeSlots`.' : 'ВЫКЛЮЧЕНО. Всегда используй `timeSlots`.'}
+    - Производственный календарь: ${JSON.stringify(productionCalendar)}
 
     НОВАЯ СИСТЕМА ПРАВИЛ РАСПИСАНИЯ:
     Это самый важный раздел. Правила задают ограничения и предпочтения. У каждого правила есть 'severity' (серьезность) и 'action' (действие).
@@ -121,7 +125,8 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
     - Справочник типов аудиторий: ${JSON.stringify(classroomTypes)}
     - Аудитории: ${JSON.stringify(classrooms)}
     - Справочник дисциплин: ${JSON.stringify(subjects)}
-    - Временные слоты: ${JSON.stringify(timeSlots)}
+    - Временные слоты (стандартные): ${JSON.stringify(timeSlots)}
+    - Временные слоты (сокращенные, для предпраздничных дней): ${JSON.stringify(timeSlotsShortened)}
     - Дни недели: ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
     - Привязки преподавателей к дисциплинам: ${JSON.stringify(teacherSubjectLinks)}
     - Правила расписания (НОВАЯ СТРУКТУРА): ${JSON.stringify(schedulingRules)}

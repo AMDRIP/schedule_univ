@@ -1,7 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { dejavu_sans_base64 } from '../utils/fonts';
-import { ScheduleEntry, TimeSlot, Group, Teacher, Subject, Classroom, SchedulingSettings } from '../types';
+import { ScheduleEntry, TimeSlot, Group, Teacher, Subject, Classroom, SchedulingSettings, ProductionCalendarEvent, ProductionCalendarEventType } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { useStore } from '../hooks/useStore';
 import { calculateExperience } from '../utils/dateUtils';
@@ -14,10 +14,12 @@ interface ScheduleExportData {
   subtitle: string;
   weekDays: Date[];
   timeSlots: TimeSlot[];
+  timeSlotsShortened: TimeSlot[];
   groups: Group[];
   teachers: Teacher[];
   subjects: Subject[];
   classrooms: Classroom[];
+  productionCalendar: ProductionCalendarEvent[];
 }
 
 function initializeDoc(): jsPDF {
@@ -29,7 +31,7 @@ function initializeDoc(): jsPDF {
 }
 
 export const exportScheduleAsPdf = (data: ScheduleExportData, settings: SchedulingSettings) => {
-  const { schedule, title, subtitle, weekDays, timeSlots, groups, teachers, subjects, classrooms } = data;
+  const { schedule, title, subtitle, weekDays, timeSlots, timeSlotsShortened, groups, teachers, subjects, classrooms, productionCalendar } = data;
   const doc = initializeDoc();
 
   doc.setFontSize(16);
@@ -39,11 +41,25 @@ export const exportScheduleAsPdf = (data: ScheduleExportData, settings: Scheduli
 
   const head = [['Время', ...weekDays.map(d => `${DAYS_OF_WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1]}, ${d.getDate()}`)]];
   
-  const body = timeSlots.map(slot => {
+  const allTimeSlots = [...timeSlots, ...timeSlotsShortened];
+  // FIX: Corrected typo from `allSlots` to `allTimeSlots` and explicitly typed the variable to resolve downstream type errors.
+  const displayTimeSlots: TimeSlot[] = Array.from(new Map(allTimeSlots.map(item => [item.time, item])).values())
+      .sort((a, b) => a.time.localeCompare(b.time));
+
+  const body = displayTimeSlots.map(slot => {
     const row = [slot.time];
     weekDays.forEach(date => {
         const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
         const dateStr = date.toISOString().split('T')[0];
+
+        const dayInfo = productionCalendar.find(e => e.date === dateStr);
+        const isPreHoliday = settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
+        const activeTimeSlots = isPreHoliday ? timeSlotsShortened : timeSlots;
+
+        if (!activeTimeSlots.some(ts => ts.id === slot.id)) {
+            row.push(''); // This slot doesn't exist on this day type
+            return;
+        }
 
         const entry = schedule.find(e => 
             e.timeSlotId === slot.id &&

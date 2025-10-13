@@ -189,6 +189,8 @@ export interface SchedulingSettings {
   allowWindows: boolean;
   useEvenOddWeekSeparation: boolean;
   showDegreeInSchedule: boolean;
+  respectProductionCalendar: boolean;
+  useShortenedPreHolidaySchedule: boolean;
 }
 
 export interface ScheduleEntry extends BaseItem {
@@ -244,7 +246,7 @@ export interface Elective extends BaseItem {
 }
 
 export type DataItem = Faculty | Department | Teacher | Group | Stream | Classroom | Subject | Cabinet | TimeSlot | TeacherSubjectLink | SchedulingRule | ProductionCalendarEvent | UGS | Specialty | EducationalPlan | ScheduleTemplate | ClassroomType | Subgroup | Elective;
-export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'streams' | 'classrooms' | 'subjects' | 'cabinets' | 'timeSlots' | 'teacherSubjectLinks' | 'schedulingRules' | 'productionCalendar' | 'ugs' | 'specialties' | 'educationalPlans' | 'scheduleTemplates' | 'classroomTypes' | 'subgroups' | 'electives';
+export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'streams' | 'classrooms' | 'subjects' | 'cabinets' | 'timeSlots' | 'teacherSubjectLinks' | 'schedulingRules' | 'productionCalendar' | 'ugs' | 'specialties' | 'educationalPlans' | 'scheduleTemplates' | 'classroomTypes' | 'subgroups' | 'electives' | 'timeSlotsShortened';
 
 // Интерфейс для API, предоставляемого через preload.js в Electron
 export interface IElectronAPI {
