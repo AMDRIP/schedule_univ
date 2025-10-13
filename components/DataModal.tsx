@@ -1,6 +1,6 @@
 
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, FormOfStudy, Elective, Subgroup, ClassType } from '../types';
 import AvailabilityGridEditor from './AvailabilityGridEditor';
@@ -270,7 +270,6 @@ const TITLE_MAP: Record<DataType, { single: string }> = {
     subjects: { single: 'дисциплину' },
     cabinets: { single: 'кабинет' },
     timeSlots: { single: 'временной слот' },
-    // FIX: Added 'timeSlotsShortened' to TITLE_MAP to satisfy the DataType record type.
     timeSlotsShortened: { single: 'сокращенный слот' },
     teacherSubjectLinks: { single: 'привязку' },
     schedulingRules: { single: 'правило' },
@@ -297,6 +296,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const [formData, setFormData] = useState<any>({});
   const { faculties, departments, groups, ugs, specialties, classrooms, classroomTypes, subjects, teachers } = useStore();
   const [selectedCourseForStream, setSelectedCourseForStream] = useState<number | null>(null);
+  const firstInputRef = useRef<HTMLInputElement>(null);
 
   const getInitialFormData = (type: DataType) => {
     switch (type) {
@@ -309,6 +309,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'subjects': return { name: '', pinnedClassroomId: '', suitableClassroomTypeIds: [] };
       case 'cabinets': return { number: '', departmentId: departments[0]?.id || '' };
       case 'timeSlots': return { time: '00:00-00:00' };
+      case 'timeSlotsShortened': return { time: '00:00-00:00' };
       case 'productionCalendar': return { date: '', name: '', isWorkDay: false, type: ProductionCalendarEventType.Holiday };
       case 'ugs': return { code: '', name: '' };
       case 'specialties': return { code: '', name: '', ugsId: ugs[0]?.id || '', oksoCode: '' };
@@ -321,6 +322,9 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   };
   
   useEffect(() => {
+    if (isOpen && firstInputRef.current) {
+        setTimeout(() => firstInputRef.current?.focus(), 100); // Timeout for transition
+    }
     const initialData = item || getInitialFormData(dataType);
     if (['teachers', 'groups', 'classrooms'].includes(dataType) && !(initialData as any).availabilityGrid) {
         (initialData as any).availabilityGrid = {};
@@ -338,7 +342,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     } else {
         setSelectedCourseForStream(null);
     }
-  }, [item, dataType]);
+  }, [item, dataType, isOpen]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value, type } = e.target;
@@ -421,7 +425,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const defaultInputClass = "w-full p-2 border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition";
   const showAvailabilityGrid = ['teachers', 'groups', 'classrooms'].includes(dataType);
 
-  const renderDefaultField = (key: string) => {
+  const renderDefaultField = (key: string, isFirst: boolean) => {
     if (key === 'id' || key === 'availabilityGrid' || key === 'entries' || key === 'teacherAssignments') return null;
     
     const labelMap: Record<string, string> = {
@@ -531,7 +535,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
             const isDateField = key === 'date' || key === 'hireDate';
             const inputType = typeof initialData[key] === 'number' ? 'number' : isDateField ? 'date' : 'text';
             return (
-                <div><label className="block text-sm font-medium text-gray-700">{labelMap[key] || key}</label><input type={inputType} name={key} value={formData[key] || ''} onChange={handleChange} className={defaultInputClass} min={key === 'course' ? 1 : undefined}/></div>
+                <div><label className="block text-sm font-medium text-gray-700">{labelMap[key] || key}</label><input type={inputType} name={key} value={formData[key] || ''} onChange={handleChange} className={defaultInputClass} min={key === 'course' ? 1 : undefined} ref={isFirst ? firstInputRef : null} /></div>
             );
     }
   }
@@ -552,7 +556,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
         `}</style>
         <h2 className="text-xl font-bold mb-4 text-gray-900">{modalTitle}</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {Object.keys(getInitialFormData(dataType)).map(key => <div key={key}>{renderDefaultField(key)}</div>)}
+          {Object.keys(getInitialFormData(dataType)).map((key, index) => <div key={key}>{renderDefaultField(key, index === 0)}</div>)}
           
           {dataType === 'subgroups' && (
             <div className="mt-4 pt-4 border-t">

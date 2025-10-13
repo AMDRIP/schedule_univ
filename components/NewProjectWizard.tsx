@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { SchedulingSettings, TimeSlot, Faculty, Department, UGS, Specialty, ClassroomType } from '../types';
@@ -23,7 +24,6 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         sessionStart: '', sessionEnd: '', practiceStart: '', practiceEnd: '', retakeStart: '', retakeEnd: '',
         defaultBreakMinutes: 15, allowWindows: true, useEvenOddWeekSeparation: true,
         showDegreeInSchedule: false,
-        // FIX: Added missing properties to satisfy the SchedulingSettings type.
         respectProductionCalendar: true,
         useShortenedPreHolidaySchedule: true,
     });

@@ -1,5 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
+
+import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { TeacherSubjectLink, ClassType } from '../types';
 
@@ -12,6 +13,7 @@ interface LinkModalProps {
 
 const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, initialData }) => {
     const { teachers, subjects } = useStore();
+    const firstInputRef = useRef<HTMLSelectElement>(null);
     const [formData, setFormData] = useState<Partial<TeacherSubjectLink>>({
         teacherId: teachers[0]?.id || '',
         subjectId: subjects[0]?.id || '',
@@ -19,6 +21,9 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, initialD
     });
 
     useEffect(() => {
+        if (isOpen && firstInputRef.current) {
+            setTimeout(() => firstInputRef.current?.focus(), 100);
+        }
         if (initialData) {
             setFormData({
                 teacherId: initialData.teacherId || teachers[0]?.id || '',
@@ -33,7 +38,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, initialD
                 classTypes: [],
             });
         }
-    }, [initialData, teachers, subjects]);
+    }, [initialData, teachers, subjects, isOpen]);
 
     const handleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
         const { name, value } = e.target;
@@ -64,13 +69,22 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, initialD
     const isSubjectPreset = !!initialData?.subjectId && !initialData?.id;
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md">
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md transform transition-all duration-300 ease-out scale-95 opacity-0 animate-fade-in-scale">
+                 <style>{`
+                  @keyframes fade-in-scale {
+                    from { opacity: 0; transform: scale(0.95); }
+                    to { opacity: 1; transform: scale(1); }
+                  }
+                  .animate-fade-in-scale {
+                    animation: fade-in-scale 0.2s forwards;
+                  }
+                `}</style>
                 <h2 className="text-xl font-bold mb-4 text-gray-900">{isEditing ? 'Редактировать привязку' : 'Добавить привязку'}</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Преподаватель</label>
-                        <select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass}>
+                        <select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass} ref={firstInputRef}>
                             {teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                         </select>
                     </div>

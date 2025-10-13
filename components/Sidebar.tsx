@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Role } from '../types';
 import { useStore } from '../hooks/useStore';
@@ -11,7 +12,6 @@ interface SidebarProps {
 
 interface NavItem {
   name: string;
-  // FIX: Updated icon type to be more specific to allow passing props with cloneElement.
   icon: React.ReactElement<{ className?: string }>;
   disabled?: boolean;
   tooltip?: string;

@@ -1,3 +1,4 @@
+
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { dejavu_sans_base64 } from '../utils/fonts';
@@ -184,7 +185,6 @@ export const exportAllDataAsPdf = (store: ReturnType<typeof useStore>) => {
     addTitle("Аудитории");
     autoTable(doc, {
         head: [['ID', 'Номер', 'Вместимость', 'Тип']],
-        // FIX: The Classroom type has `typeId`, not `type`. Look up the name from `classroomTypes`.
         body: store.classrooms.map(c => [c.id, c.number, c.capacity, store.classroomTypes.find(ct => ct.id === c.typeId)?.name || 'N/A']),
         startY: yPos,
         styles: { font: FONT_NAME, fontSize: 8 },

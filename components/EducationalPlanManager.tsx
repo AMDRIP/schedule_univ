@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useEffect } from 'react';
+
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { Specialty, EducationalPlan, PlanEntry, Subject, AttestationType } from '../types';
 import { PlusIcon, EditIcon, TrashIcon, BookOpenIcon, DocumentSearchIcon } from './icons';
@@ -15,11 +16,15 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
     const { subjects } = useStore();
     const [subjectSelection, setSubjectSelection] = useState<'existing' | 'new'>('existing');
     const [newSubjectName, setNewSubjectName] = useState('');
+    const firstInputRef = useRef<HTMLInputElement>(null);
     const [formData, setFormData] = useState<Omit<PlanEntry, 'subjectId'> & { subjectId?: string }>({
         semester: 1, lectureHours: 0, practiceHours: 0, labHours: 0, attestation: AttestationType.Test, splitForSubgroups: false,
     });
 
     useEffect(() => {
+        if (isOpen && firstInputRef.current) {
+            setTimeout(() => firstInputRef.current?.focus(), 100);
+        }
         if (entry) {
             setFormData(entry);
             setSubjectSelection('existing');
@@ -29,7 +34,7 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
                 semester: 1, lectureHours: 0, practiceHours: 0, labHours: 0, attestation: AttestationType.Test, splitForSubgroups: false,
             });
         }
-    }, [entry, subjects]);
+    }, [entry, subjects, isOpen]);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value, type } = e.target;
@@ -71,7 +76,7 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Дисциплина</label>
                         <div className="flex items-center space-x-4 mt-1">
-                            <label><input type="radio" value="existing" checked={subjectSelection === 'existing'} onChange={() => setSubjectSelection('existing')} /> Существующая</label>
+                            <label><input type="radio" value="existing" checked={subjectSelection === 'existing'} onChange={() => setSubjectSelection('existing')} ref={firstInputRef} /> Существующая</label>
                             <label><input type="radio" value="new" checked={subjectSelection === 'new'} onChange={() => setSubjectSelection('new')} /> Новая</label>
                         </div>
                          {subjectSelection === 'existing' ? (

@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType } from '../types';
@@ -260,7 +261,8 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
         alert(`На этой неделе для ${selectedItemName} нет занятий для очистки.`);
         return;
     }
-    if (window.confirm(`Вы уверены, что хотите удалить все ${idsToClear.length} занятий на этой неделе для ${selectedItemName}?`)) {
+    const confirmationMessage = `Вы уверены, что хотите удалить все ${idsToClear.length} занятий на этой неделе для ${selectedItemName}?`;
+    if (window.confirm(confirmationMessage)) {
         removeScheduleEntries(idsToClear);
     }
   };
@@ -277,7 +279,8 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
         return;
     }
 
-    if (window.confirm(`Вы уверены, что хотите удалить все ${idsToClear.length} занятий за ${date.toLocaleDateString()} для ${selectedItemName}?`)) {
+    const confirmationMessage = `Вы уверены, что хотите удалить все ${idsToClear.length} занятий за ${date.toLocaleDateString()} для ${selectedItemName}?`;
+    if (window.confirm(confirmationMessage)) {
         removeScheduleEntries(idsToClear);
     }
   };
