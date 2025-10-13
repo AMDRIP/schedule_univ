@@ -4,7 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Система составления расписаний</title>
-  <link href="./TWD/output.css" rel="stylesheet">
+  
+  <script>
+    // Dynamically load CSS based on the environment
+    const isElectron = navigator.userAgent.toLowerCase().indexOf('electron') > -1;
+    if (isElectron) {
+      // In Electron, use the local, pre-built CSS file for best performance and offline capability.
+      document.write('<link href="./TWD/output.css" rel="stylesheet">');
+    } else {
+      // In a standard browser, use the Tailwind JIT CDN for easy setup without a build step.
+      // The closing script tag is escaped to prevent parsing errors.
+      document.write('<script src="https://cdn.tailwindcss.com"><\/script>');
+    }
+  </script>
+
 <script type="importmap">
 {
   "imports": {
