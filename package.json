@@ -5,13 +5,18 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder"
+    "prestart": "npm run build:css",
+    "dist": "electron-builder",
+    "predist": "npm run build:css",
+    "build:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css",
+    "watch:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css --watch"
   },
   "author": "AI Assistant",
   "license": "ISC",
   "devDependencies": {
     "electron": "^28.2.3",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "tailwindcss": "^3.4.3"
   },
   "dependencies": {
     "@google/genai": "^1.24.0",
