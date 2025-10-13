@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+
+import React, { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
 import { 
     Faculty, Department, Teacher, Group, Stream, Classroom, Subject, Cabinet, TimeSlot, ScheduleEntry, 
     UnscheduledEntry, DataItem, DataType, ClassroomType, ClassType, TeacherSubjectLink, SchedulingRule, 
@@ -309,6 +310,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave
   });
   
+  // Use a ref to hold the latest state for the autosave interval to prevent stale closures and incorrect effect re-runs.
+  const stateRef = useRef(getFullState());
+  useEffect(() => {
+      stateRef.current = getFullState();
+  });
+  
   const loadFullState = (data: any) => {
     setFaculties(data.faculties || []);
     setDepartments(data.departments || []);
@@ -339,12 +346,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   useEffect(() => {
     if (!window.electronAPI) return;
     const interval = setInterval(async () => {
-      const state = getFullState();
+      const state = stateRef.current; // Read from ref to get the latest state
       await window.electronAPI.autosave(JSON.stringify(state));
       setLastAutosave(new Date());
     }, 30000); // Autosave every 30 seconds
     return () => clearInterval(interval);
-  }, [getFullState]);
+  }, []); // Empty dependency array ensures the effect runs only once
 
   useEffect(() => {
     if (!window.electronAPI) return;
