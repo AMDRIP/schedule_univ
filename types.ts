@@ -191,6 +191,7 @@ export interface SchedulingSettings {
   showDegreeInSchedule: boolean;
   respectProductionCalendar: boolean;
   useShortenedPreHolidaySchedule: boolean;
+  allowOverbooking: boolean;
 }
 
 export interface ScheduleEntry extends BaseItem {

@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType } from '../types';
@@ -516,7 +517,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                         return <td key={dateStr} className="p-1 border bg-gray-100"></td>;
                     }
                     
-                    const entry = filteredSchedule.find(e => 
+                    const entriesForCell = filteredSchedule.filter(e => 
                       e.timeSlotId === slot.id &&
                       ((e.date && e.date === dateStr) || (!e.date && e.day === dayName))
                     );
@@ -527,7 +528,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                         day={dayName}
                         date={dateStr}
                         timeSlotId={slot.id} 
-                        entry={entry}
+                        entries={entriesForCell}
                         weekType={effectiveWeekType}
                         isEditable={isMethodist}
                       />

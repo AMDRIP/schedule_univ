@@ -76,6 +76,7 @@ const initialSettings: SchedulingSettings = {
     showDegreeInSchedule: false,
     respectProductionCalendar: true,
     useShortenedPreHolidaySchedule: true,
+    allowOverbooking: false,
 };
 const initialScheduleTemplates: ScheduleTemplate[] = [];
 
@@ -247,6 +248,7 @@ const getInitialEmptySettings = (): SchedulingSettings => ({
     showDegreeInSchedule: false,
     respectProductionCalendar: true,
     useShortenedPreHolidaySchedule: true,
+    allowOverbooking: false,
 });
 
 
@@ -485,11 +487,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           return;
       }
       const suitableClassroom = classrooms.find(c => {
-        const isOccupied = schedule.some(e => 
+        const occupants = schedule.filter(e => 
             e.classroomId === c.id && e.day === day && e.timeSlotId === timeSlotId &&
             (e.weekType === weekType || e.weekType === 'every' || weekType === 'every')
         );
-        if (isOccupied) return false;
+        if (occupants.length >= (settings.allowOverbooking ? 2 : 1)) {
+            return false;
+        }
         if (c.capacity < studentCount) return false;
         return subject.suitableClassroomTypeIds?.includes(c.typeId);
       });
