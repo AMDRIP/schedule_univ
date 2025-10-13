@@ -258,6 +258,7 @@ export interface IElectronAPI {
   autosave: (data: string) => Promise<void>;
   onRestoreAutosaveRequest: (callback: () => void) => void;
   restoreAutosave: () => Promise<{ data: string } | null>;
+  log: (...args: any[]) => void;
 }
 
 declare global {

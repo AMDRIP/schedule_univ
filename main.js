@@ -9,6 +9,7 @@ const AUTOSAVE_FILE = 'autosave.schd';
 const getAutosavePath = () => path.join(app.getPath('userData'), AUTOSAVE_FILE);
 
 async function createWindow() {
+  console.log('Main process: Creating browser window...');
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -28,15 +29,22 @@ async function createWindow() {
       await fs.access(getAutosavePath());
       // If the file exists, ask the renderer to prompt the user.
       mainWindow.webContents.send('restore-autosave-prompt');
+      console.log('Main process: Autosave file found, sent prompt to renderer.');
     } catch (error) {
       // No autosave file, do nothing.
+      console.log('Main process: No autosave file found.');
     }
   });
-
-  // mainWindow.webContents.openDevTools();
+  
+  // Open DevTools automatically if not in production
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools();
+    console.log('Main process: DevTools opened because app is not packaged.');
+  }
 }
 
 app.whenReady().then(() => {
+  console.log('Main process: App is ready.');
   // --- IPC Handlers ---
 
   // API Key
@@ -47,6 +55,11 @@ app.whenReady().then(() => {
     if (mainWindow) {
       mainWindow.setTitle(title);
     }
+  });
+  
+  // Log from renderer to main process
+  ipcMain.on('log-to-main', (event, ...args) => {
+    console.log('[Renderer]:', ...args);
   });
 
   // Open File
@@ -63,6 +76,7 @@ app.whenReady().then(() => {
     const filePath = filePaths[0];
     try {
       const data = await fs.readFile(filePath, 'utf-8');
+      console.log(`Main process: Opened file ${filePath}`);
       return { filePath, data };
     } catch (error) {
       console.error('Failed to open file:', error);
@@ -75,6 +89,7 @@ app.whenReady().then(() => {
   ipcMain.handle('save-file', async (event, filePath, data) => {
     try {
       await fs.writeFile(filePath, data, 'utf-8');
+      console.log(`Main process: Saved file to ${filePath}`);
       return { success: true };
     } catch (error) {
       console.error('Failed to save file:', error);
@@ -95,6 +110,7 @@ app.whenReady().then(() => {
     }
     try {
       await fs.writeFile(filePath, data, 'utf-8');
+      console.log(`Main process: Saved file as ${filePath}`);
       return filePath;
     } catch (error) {
       console.error('Failed to save file as:', error);
@@ -119,6 +135,7 @@ app.whenReady().then(() => {
       const data = await fs.readFile(autosavePath, 'utf-8');
       // Clean up autosave file after successful read
       await fs.unlink(autosavePath).catch(err => console.error("Could not delete autosave file:", err));
+      console.log('Main process: Autosave restored.');
       return { data };
     } catch (error) {
       console.error('Failed to restore autosave:', error);
@@ -135,6 +152,7 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', function () {
+  console.log('Main process: All windows closed.');
   // Clean up autosave file on normal exit
   fs.unlink(getAutosavePath()).catch(() => {});
   if (process.platform !== 'darwin') app.quit();

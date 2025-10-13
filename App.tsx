@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { StoreProvider, useStore } from './hooks/useStore';
@@ -14,6 +14,13 @@ const AppContent: React.FC = () => {
   const [isNewProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
   const { runScheduler, clearSchedule, startNewProject, handleOpen, handleSave, handleSaveAs, settings } = useStore();
+
+  useEffect(() => {
+    console.log('Renderer process started. AppContent mounted.');
+    if (window.electronAPI?.log) {
+        window.electronAPI.log('Renderer process started and successfully mounted the AppContent component.');
+    }
+  }, []);
 
   const handleRunScheduler = async (method: 'heuristic' | 'gemini') => {
     if (isScheduling) return;

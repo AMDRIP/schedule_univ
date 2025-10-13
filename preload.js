@@ -18,4 +18,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // --- Autosave Recovery ---
   onRestoreAutosaveRequest: (callback) => ipcRenderer.on('restore-autosave-prompt', callback),
   restoreAutosave: () => ipcRenderer.invoke('restore-autosave'),
+  
+  /**
+   * Отправляет сообщение для логирования в консоль основного процесса.
+   * @param {...any} args - Аргументы для логирования.
+   */
+  log: (...args) => ipcRenderer.send('log-to-main', ...args),
 });
