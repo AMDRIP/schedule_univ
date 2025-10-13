@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 
 // Generic props for icons
@@ -195,6 +196,13 @@ export const ChevronLeftIcon: React.FC<IconProps> = (props) => (
   </svg>
 );
 ChevronLeftIcon.displayName = 'ChevronLeftIcon';
+
+export const ChevronRightIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor" {...props}>
+    <path fillRule="evenodd" d="M7.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L10.586 10 7.293 6.707a1 1 0 010-1.414z" clipRule="evenodd" />
+  </svg>
+);
+ChevronRightIcon.displayName = 'ChevronRightIcon';
 
 export const FolderIcon: React.FC<IconProps> = (props) => (
     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" {...props}>
