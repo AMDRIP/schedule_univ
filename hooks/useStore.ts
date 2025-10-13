@@ -1,11 +1,10 @@
-
-
 import React, { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
 import { 
     Faculty, Department, Teacher, Group, Stream, Classroom, Subject, Cabinet, TimeSlot, ScheduleEntry, 
     UnscheduledEntry, DataItem, DataType, ClassroomType, ClassType, TeacherSubjectLink, SchedulingRule, 
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
-    EducationalPlan, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective
+    EducationalPlan, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective,
+    AcademicDegree, AcademicTitle, FieldOfScience
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
@@ -16,10 +15,22 @@ import { generateScheduleWithGemini } from '../services/geminiService';
 const initialFaculties: Faculty[] = [{ id: 'f1', name: 'Факультет информационных технологий' }];
 const initialUGS: UGS[] = [{ id: 'ugs1', code: '09.00.00', name: 'Информатика и вычислительная техника'}];
 const initialSpecialties: Specialty[] = [{ id: 'spec1', code: '09.03.04', name: 'Программная инженерия', ugsId: 'ugs1', oksoCode: '09.03.04' }];
-const initialDepartments: Department[] = [{ id: 'd1', name: 'Кафедра программной инженерии', facultyId: 'f1', specialtyIds: ['spec1'] }];
+const initialDepartments: Department[] = [{ 
+    id: 'd1', 
+    name: 'Кафедра программной инженерии', 
+    facultyId: 'f1', 
+    specialtyIds: ['spec1'],
+    headTeacherId: 't1',
+    address: 'г. Самара, улица Советской Армии, д.141, кабинет 320Е',
+    phone: '8 (846) 933-88-26',
+    email: 'bacanach@sseu.ru, statistika@sseu.ru',
+    vkLink: 'https://vk.com/statistika_sseu',
+    telegramLink: 'https://t.me/statistika_sseu',
+    notes: 'Кафедра является одной из старейших в университете. Она была образована в 1965 году. За время своего существования кафедра подготовила несколько тысяч специалистов в области статистики, которые успешно работают в различных отраслях экономики.'
+}];
 const initialTeachers: Teacher[] = [
-    { id: 't1', name: 'Иванов И.И.', departmentId: 'd1', academicDegree: 'д.т.н., профессор', hireDate: '2010-09-01', regalia: 'Заслуженный деятель науки РФ' }, 
-    { id: 't2', name: 'Петров П.П.', departmentId: 'd1', academicDegree: 'к.п.н., доцент', hireDate: '2018-03-15' }
+    { id: 't1', name: 'Иванов И.И.', departmentId: 'd1', academicDegree: AcademicDegree.Doctor, fieldOfScience: FieldOfScience.Engineering, academicTitle: AcademicTitle.Professor, hireDate: '2010-09-01', regalia: 'Заслуженный деятель науки РФ' }, 
+    { id: 't2', name: 'Петров П.П.', departmentId: 'd1', academicDegree: AcademicDegree.Candidate, fieldOfScience: FieldOfScience.PhysicalMathematical, academicTitle: AcademicTitle.Docent, hireDate: '2018-03-15' }
 ];
 const initialGroups: Group[] = [{ id: 'g1', number: 'ПИ-101', departmentId: 'd1', studentCount: 25, course: 1, specialtyId: 'spec1', formOfStudy: FormOfStudy.FullTime }];
 const initialSubgroups: Subgroup[] = [];
@@ -485,6 +496,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setStreams(prev => prev.map(s => ({ ...s, groupIds: s.groupIds.filter(gid => !groupIds.has(gid)) })));
     setElectives(prev => prev.filter(el => !groupIds.has(el.groupId) && !teacherIds.has(el.teacherId) && !subjectIds.has(el.subjectId)));
     setTeacherSubjectLinks(prev => prev.filter(l => !teacherIds.has(l.teacherId) && !subjectIds.has(l.subjectId)));
+    // Cleanup head of department
+    if (teacherIds.size > 0) {
+        setDepartments(prev => prev.map(d => teacherIds.has(d.headTeacherId || '') ? { ...d, headTeacherId: undefined } : d));
+    }
     setDepartments(prev => prev.map(d => ({ ...d, specialtyIds: d.specialtyIds?.filter(sid => !specialtyIds.has(sid)) })));
     setEducationalPlans(prev => prev.map(p => ({ ...p, entries: p.entries.filter(e => !subjectIds.has(e.subjectId)) })));
     setSubgroups(prev => prev.map(sg => ({ ...sg, teacherAssignments: sg.teacherAssignments?.filter(a => !teacherIds.has(a.teacherId) && !subjectIds.has(a.subjectId)) })));

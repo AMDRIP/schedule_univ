@@ -1,8 +1,6 @@
-
-
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../hooks/useStore';
-import { DataItem, DataType, TeacherSubjectLink } from '../types';
+import { DataItem, DataType, TeacherSubjectLink, AcademicDegree, AcademicTitle, Teacher } from '../types';
 import DataModal from './DataModal';
 import LinkModal from './LinkModal';
 import { EditIcon, TrashIcon, PlusIcon, DocumentSearchIcon, CopyIcon, LinkIcon } from './icons';
@@ -11,6 +9,7 @@ import { calculateExperience } from '../utils/dateUtils';
 interface DataManagerProps {
   dataType: DataType;
   title: string;
+  onNavigate?: (view: string, id: string) => void;
 }
 
 const COLUMN_HEADERS: Record<string, string> = {
@@ -37,6 +36,7 @@ const COLUMN_HEADERS: Record<string, string> = {
   description: 'Описание',
   photoUrl: 'Фото',
   academicDegree: 'Ученая степень',
+  academicTitle: 'Ученое звание',
   regalia: 'Регалии',
   hireDate: 'Дата приема',
   experience: 'Стаж',
@@ -47,10 +47,11 @@ const COLUMN_HEADERS: Record<string, string> = {
   teacherId: 'Преподаватель',
   groupId: 'Группа',
   linkedTeachers: 'Привязанные преподаватели',
+  fullName: 'ФИО',
 };
 
 
-const DataManager: React.FC<DataManagerProps> = ({ dataType, title }) => {
+const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }) => {
   const store = useStore();
   const { addItem, updateItem, deleteItem } = store;
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -143,7 +144,7 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title }) => {
 
   const getColumns = () => {
     if (dataType === 'teachers') {
-      return ['id', 'photoUrl', 'name', 'academicDegree', 'regalia', 'departmentId', 'hireDate', 'experience'];
+      return ['id', 'photoUrl', 'name', 'academicDegree', 'academicTitle', 'departmentId', 'hireDate', 'experience'];
     }
     if (dataType === 'subjects') {
         return ['id', 'name', 'linkedTeachers', 'suitableClassroomTypeIds'];
@@ -182,7 +183,7 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title }) => {
         }
     }
     const baseKeys = Object.keys(data[0]);
-    return baseKeys.filter(key => !['availabilityGrid', 'entries', 'photoUrl', 'academicDegree', 'regalia', 'hireDate', 'teacherAssignments'].includes(key));
+    return baseKeys.filter(key => !['availabilityGrid', 'entries', 'photoUrl', 'regalia', 'hireDate', 'teacherAssignments', 'headTeacherId', 'address', 'phone', 'email', 'vkLink', 'telegramLink', 'notes', 'fieldOfScience'].includes(key));
   };
 
   const columns = getColumns();
@@ -200,6 +201,16 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title }) => {
             .filter(Boolean);
         return [...new Set(teacherNames)].join(', ');
     }
+    
+    if (column === 'academicDegree' && dataType === 'teachers') {
+        const teacher = item as Teacher;
+        if (!teacher.academicDegree) return '—';
+        
+        return teacher.fieldOfScience
+            ? teacher.academicDegree.replace(' наук', ` ${teacher.fieldOfScience} наук`)
+            : teacher.academicDegree;
+    }
+
 
     const value = item[column as keyof DataItem];
     
@@ -280,6 +291,11 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title }) => {
                     <td key={col} className="p-3 text-gray-800 border-b border-gray-200">{renderCell(item, col)}</td>
                   ))}
                   <td className="p-3 text-gray-800 border-b border-gray-200 flex items-center gap-2">
+                    {dataType === 'departments' && onNavigate && (
+                        <button onClick={() => onNavigate('Просмотр кафедры', item.id)} className="text-teal-600 hover:text-teal-800 transition-transform transform hover:scale-110" title="Просмотр">
+                            <DocumentSearchIcon />
+                        </button>
+                    )}
                     {dataType === 'subjects' && (
                         <button onClick={() => handleAddLink(item.id)} className="text-green-600 hover:text-green-800 transition-transform transform hover:scale-110" title="Привязать преподавателя">
                             <LinkIcon />

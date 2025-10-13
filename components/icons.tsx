@@ -246,3 +246,39 @@ export const WifiIcon: React.FC<IconProps> = (props) => (
     </svg>
 );
 WifiIcon.displayName = 'WifiIcon';
+
+export const PhoneIcon: React.FC<IconProps> = (props) => (
+    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+    </svg>
+);
+PhoneIcon.displayName = 'PhoneIcon';
+
+export const MailIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+  </svg>
+);
+MailIcon.displayName = 'MailIcon';
+
+export const LocationMarkerIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+  </svg>
+);
+LocationMarkerIcon.displayName = 'LocationMarkerIcon';
+
+export const VkIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" {...props} role="img" aria-label="VK icon">
+    <path d="M13.125 10.648v2.99h2.14a.273.273 0 0 1 .273.273v1.81a.273.273 0 0 1-.273.273h-2.14v3.63a.273.273 0 0 1-.41.234l-3.326-2.4a.273.273 0 0 1-.137-.234v-5.228a.273.273 0 0 1 .273-.273h3.424a.273.273 0 0 1 .273.273zm-4.03-5.383c0-2.31 1.875-4.185 4.185-4.185h.02c2.31 0 4.185 1.875 4.185 4.185v12.27c0 2.31-1.875 4.185-4.185 4.185h-.02c-2.31 0-4.185-1.875-4.185-4.185z"/>
+  </svg>
+);
+VkIcon.displayName = 'VkIcon';
+
+export const TelegramIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" {...props} role="img" aria-label="Telegram icon">
+    <path d="M21.42 2.58a1.94 1.94 0 0 0-1.22.25L3.84 9.87a1.93 1.93 0 0 0-1.07 3.25l3.87 1.94a.5.5 0 0 1 .26.26l1.94 3.87a1.93 1.93 0 0 0 3.25-1.07l7.04-16.36c.33-.76-.02-1.65-.75-2.17zM8.34 14.1l-2.4-1.2 12.3-9.1-8.5 10.2z"/>
+  </svg>
+);
+TelegramIcon.displayName = 'TelegramIcon';

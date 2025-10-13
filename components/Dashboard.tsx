@@ -10,6 +10,7 @@ import RuleManager from './RuleManager';
 import EducationalPlanManager from './EducationalPlanManager';
 import AcademicCalendarView from './AcademicCalendarView';
 import ProductionCalendarManager from './ProductionCalendarManager';
+import DepartmentView from './DepartmentView';
 import { toYYYYMMDD } from '../utils/dateUtils';
 
 
@@ -19,7 +20,18 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
   const [activeView, setActiveView] = useState('Просмотр расписания');
+  const [viewEntityId, setViewEntityId] = useState<string | null>(null);
   const [viewDate, setViewDate] = useState(toYYYYMMDD(new Date()));
+
+  const handleNavigate = (view: string, id: string) => {
+    setActiveView(view);
+    setViewEntityId(id);
+  };
+
+  const handleSidebarNavigate = (view: string) => {
+      setActiveView(view);
+      setViewEntityId(null);
+  };
 
   const renderContent = () => {
     switch (activeView) {
@@ -32,7 +44,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
       case 'Факультеты':
         return <DataManager dataType="faculties" title="Управление факультетами" />;
       case 'Кафедры':
-        return <DataManager dataType="departments" title="Управление кафедрами" />;
+        return <DataManager dataType="departments" title="Управление кафедрами" onNavigate={handleNavigate} />;
+      case 'Просмотр кафедры':
+        return <DepartmentView departmentId={viewEntityId!} />;
       case 'Преподаватели':
         return <DataManager dataType="teachers" title="Управление преподавателями" />;
       case 'Группы':
@@ -78,7 +92,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      <Sidebar currentRole={currentRole} activeView={activeView} setActiveView={setActiveView} />
+      <Sidebar currentRole={currentRole} activeView={activeView} setActiveView={handleSidebarNavigate} />
       <main className="flex-1 p-6 overflow-y-auto bg-gray-50">
         {renderContent()}
       </main>

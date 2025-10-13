@@ -1,8 +1,6 @@
-
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, FormOfStudy, Elective, Subgroup, ClassType } from '../types';
+import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, FormOfStudy, Elective, Subgroup, ClassType, AcademicDegree, AcademicTitle, FieldOfScience } from '../types';
 import AvailabilityGridEditor from './AvailabilityGridEditor';
 import { PlusIcon, TrashIcon } from './icons';
 import { OKSO_CODES, UGSN_FROM_OKSO } from '../data/codes';
@@ -44,13 +42,14 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const [formData, setFormData] = useState<any>({});
   const { faculties, departments, groups, ugs, specialties, classrooms, classroomTypes, subjects, teachers } = useStore();
   const [selectedCourseForStream, setSelectedCourseForStream] = useState<number | null>(null);
+  const [ugsNotFoundMessage, setUgsNotFoundMessage] = useState<string>('');
   const firstInputRef = useRef<HTMLInputElement>(null);
 
   const getInitialFormData = (type: DataType) => {
     switch (type) {
       case 'faculties': return { name: '' };
-      case 'departments': return { name: '', facultyId: faculties[0]?.id || '', specialtyIds: [] };
-      case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', photoUrl: '', hireDate: '' };
+      case 'departments': return { name: '', facultyId: faculties[0]?.id || '', specialtyIds: [], headTeacherId: '', address: '', phone: '', email: '', vkLink: '', telegramLink: '', notes: '' };
+      case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', fieldOfScience: '', academicTitle: '', photoUrl: '', hireDate: '' };
       case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, availabilityGrid: {}, pinnedClassroomId: '' };
       case 'streams': return { name: '', groupIds: [] };
       case 'classrooms': return { number: '', capacity: 30, typeId: classroomTypes[0]?.id || '', availabilityGrid: {} };
@@ -70,9 +69,13 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   };
   
   useEffect(() => {
-    if (isOpen && firstInputRef.current) {
-        setTimeout(() => firstInputRef.current?.focus(), 100); // Timeout for transition
+    if (isOpen) {
+        setUgsNotFoundMessage('');
+        if (firstInputRef.current) {
+            setTimeout(() => firstInputRef.current?.focus(), 100);
+        }
     }
+
     const initialData = item || getInitialFormData(dataType);
     if (['teachers', 'groups', 'classrooms'].includes(dataType) && !(initialData as any).availabilityGrid) {
         (initialData as any).availabilityGrid = {};
@@ -100,6 +103,47 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
         setFormData((prev: any) => ({ ...prev, [name]: checked }));
         return;
     }
+    
+     // Autocomplete for UGS
+    if (dataType === 'ugs' && name === 'code') {
+        const codeValue = String(value);
+        const matchedUgs = UGSN_FROM_OKSO.find(u => u.code === codeValue);
+        setFormData((prev: any) => ({
+            ...prev,
+            code: codeValue,
+            name: matchedUgs ? matchedUgs.name : prev.name
+        }));
+        return;
+    }
+    
+    // Autocomplete for Specialties
+    if (dataType === 'specialties' && name === 'code') {
+        const codeValue = String(value);
+        const matchedOkso = OKSO_CODES.find(o => o.code === codeValue);
+        
+        let updatedFormData = { ...formData, code: codeValue };
+
+        if (matchedOkso) {
+            updatedFormData.name = matchedOkso.name;
+            const ugsPrefix = codeValue.substring(0, 2);
+            const canonicalUgsData = UGSN_FROM_OKSO.find(u => u.code.startsWith(ugsPrefix));
+            
+            if (canonicalUgsData) {
+                const existingUgs = ugs.find(u => u.code === canonicalUgsData.code);
+                if (existingUgs) {
+                    updatedFormData.ugsId = existingUgs.id;
+                    setUgsNotFoundMessage(''); // Clear any warning
+                } else {
+                    setUgsNotFoundMessage(`Требуемая УГСН "${canonicalUgsData.name}" не найдена. Пожалуйста, сначала добавьте ее в справочник УГСН.`);
+                }
+            }
+        } else {
+             setUgsNotFoundMessage('');
+        }
+        setFormData(updatedFormData);
+        return;
+    }
+
 
     const numericFields = ['capacity', 'studentCount', 'course', 'hoursPerSemester'];
     setFormData((prev: any) => ({ 
@@ -131,14 +175,6 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
         ...prev,
         teacherAssignments: prev.teacherAssignments.filter((_: any, i: number) => i !== index),
     }));
-  };
-
-  const handleUgsChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const selectedCode = e.target.value;
-    const selectedUgs = UGSN_FROM_OKSO.find(u => u.code === selectedCode);
-    if (selectedUgs) {
-      setFormData((prev: any) => ({ ...prev, code: selectedUgs.code, name: selectedUgs.name }));
-    }
   };
   
   const handleGridChange = (newGrid) => {
@@ -174,63 +210,98 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const showAvailabilityGrid = ['teachers', 'groups', 'classrooms'].includes(dataType);
 
   const renderDefaultField = (key: string, isFirst: boolean) => {
-    if (key === 'id' || key === 'availabilityGrid' || key === 'entries' || key === 'teacherAssignments') return null;
+    if (key === 'id' || key === 'availabilityGrid' || key === 'entries' || key === 'teacherAssignments' || key === 'fieldOfScience') return null;
     
     const labelMap: Record<string, string> = {
         name: "ФИО / Название", number: "Номер/Название", time: "Время", capacity: "Вместимость", studentCount: "Кол-во студентов", 
         code: "Код", course: "Курс", oksoCode: "Код ОКСО", description: "Описание", date: "Дата",
-        photoUrl: "URL Фотографии", academicDegree: "Ученая степень", regalia: "Регалии, звания", hireDate: "Дата приема на работу",
-        hoursPerSemester: 'Часы за семестр',
+        photoUrl: "URL Фотографии", regalia: "Регалии, звания", hireDate: "Дата приема на работу",
+        hoursPerSemester: 'Часы за семестр', address: 'Адрес', phone: 'Телефон', email: 'Email', vkLink: 'Ссылка ВКонтакте',
+        telegramLink: 'Ссылка Telegram', notes: 'Заметки',
     };
     
-    if (dataType === 'teachers' && key === 'photoUrl') {
-        return (
-            <div>
-                <label className="block text-sm font-medium text-gray-700">{labelMap[key] || key}</label>
-                <div className="flex items-center gap-2">
-                    <input type='url' name={key} value={formData[key] || ''} onChange={handleChange} placeholder="https://example.com/photo.jpg" className={defaultInputClass} />
-                    {formData.photoUrl && <img src={formData.photoUrl} alt="preview" className="w-10 h-10 rounded-full object-cover flex-shrink-0"/>}
+    if (dataType === 'teachers') {
+        if (key === 'photoUrl') {
+            return (
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">{labelMap[key] || key}</label>
+                    <div className="flex items-center gap-2">
+                        <input type='url' name={key} value={formData[key] || ''} onChange={handleChange} placeholder="https://example.com/photo.jpg" className={defaultInputClass} />
+                        {formData.photoUrl && <img src={formData.photoUrl} alt="preview" className="w-10 h-10 rounded-full object-cover flex-shrink-0"/>}
+                    </div>
                 </div>
-            </div>
-        );
+            );
+        }
+        if (key === 'academicDegree') {
+             return (
+                 <div className="grid grid-cols-2 gap-4">
+                     <div>
+                        <label className="block text-sm font-medium text-gray-700">Ученая степень</label>
+                        <select name="academicDegree" value={formData.academicDegree || ''} onChange={handleChange} className={defaultInputClass}>
+                            <option value="">-- Не указана --</option>
+                            {Object.values(AcademicDegree).map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                     </div>
+                     <div>
+                        <label className="block text-sm font-medium text-gray-700">Отрасль наук</label>
+                        <select name="fieldOfScience" value={formData.fieldOfScience || ''} onChange={handleChange} className={defaultInputClass}>
+                            <option value="">-- Не указана --</option>
+                            {Object.entries(FieldOfScience).map(([key, value]) => <option key={key} value={value}>{value}</option>)}
+                        </select>
+                     </div>
+                 </div>
+             );
+        }
+         if (key === 'academicTitle') {
+             return <div><label className="block text-sm font-medium text-gray-700">Ученое звание</label><select name="academicTitle" value={formData.academicTitle || ''} onChange={handleChange} className={defaultInputClass}><option value="">-- Не указано --</option>{Object.values(AcademicTitle).map(d => <option key={d} value={d}>{d}</option>)}</select></div>
+        }
     }
 
-    if (key === 'description') {
+    if (key === 'description' || key === 'notes') {
         return <div><label className="block text-sm font-medium text-gray-700">{labelMap[key] || key}</label><textarea name={key} value={formData[key] || ''} onChange={handleChange} className={`${defaultInputClass} h-24`}/></div>
     }
 
     switch(key) {
-        case 'facultyId': return (
+      case 'facultyId': return (
           <div><label className="block text-sm font-medium text-gray-700">Факультет</label><select name="facultyId" value={formData.facultyId} onChange={handleChange} className={defaultInputClass}>{faculties.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div>
         );
-        case 'departmentId': return (
+      case 'departmentId': return (
           <div><label className="block text-sm font-medium text-gray-700">Кафедра</label><select name="departmentId" value={formData.departmentId} onChange={handleChange} className={defaultInputClass}>{departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
         );
-        case 'ugsId': return (
-          <div><label className="block text-sm font-medium text-gray-700">УГСН</label><select name="ugsId" value={formData.ugsId} onChange={handleChange} className={defaultInputClass}>{ugs.map(u => <option key={u.id} value={u.id}>{u.code} {u.name}</option>)}</select></div>
+       case 'headTeacherId': return (
+          <div><label className="block text-sm font-medium text-gray-700">Заведующий кафедрой</label><select name="headTeacherId" value={formData.headTeacherId || ''} onChange={handleChange} className={defaultInputClass}><option value="">-- Не назначен --</option>{teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
         );
-        case 'specialtyId': return (
+      case 'ugsId': return (
+          <div>
+              <label className="block text-sm font-medium text-gray-700">УГСН</label>
+              <select name="ugsId" value={formData.ugsId} onChange={handleChange} className={defaultInputClass}>
+                {ugs.map(u => <option key={u.id} value={u.id}>{u.code} {u.name}</option>)}
+              </select>
+               {ugsNotFoundMessage && <p className="text-xs text-red-600 mt-1">{ugsNotFoundMessage}</p>}
+          </div>
+        );
+      case 'specialtyId': return (
           <div><label className="block text-sm font-medium text-gray-700">Специальность</label><select name="specialtyId" value={formData.specialtyId} onChange={handleChange} className={defaultInputClass}>{specialties.map(s => <option key={s.id} value={s.id}>{s.code} {s.name}</option>)}</select></div>
         );
-        case 'parentGroupId': return (
+      case 'parentGroupId': return (
           <div><label className="block text-sm font-medium text-gray-700">Основная группа</label><select name="parentGroupId" value={formData.parentGroupId} onChange={handleChange} className={defaultInputClass}>{groups.map(g => <option key={g.id} value={g.id}>{g.number}</option>)}</select></div>
         );
-        case 'subjectId': return (
+      case 'subjectId': return (
           <div><label className="block text-sm font-medium text-gray-700">Дисциплина</label><select name="subjectId" value={formData.subjectId} onChange={handleChange} className={defaultInputClass}>{subjects.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
         );
-        case 'teacherId': return (
+      case 'teacherId': return (
           <div><label className="block text-sm font-medium text-gray-700">Преподаватель</label><select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass}>{teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
         );
-        case 'groupId': return (
+      case 'groupId': return (
           <div><label className="block text-sm font-medium text-gray-700">Группа</label><select name="groupId" value={formData.groupId} onChange={handleChange} className={defaultInputClass}>{groups.map(g => <option key={g.id} value={g.id}>{g.number}</option>)}</select></div>
         );
-        case 'pinnedClassroomId': return (
+      case 'pinnedClassroomId': return (
            <div><label className="block text-sm font-medium text-gray-700">Закрепленная аудитория</label><select name="pinnedClassroomId" value={formData.pinnedClassroomId} onChange={handleChange} className={defaultInputClass}><option value="">Нет</option>{classrooms.map(c => <option key={c.id} value={c.id}>{c.number} ({classroomTypes.find(ct => ct.id === c.typeId)?.name})</option>)}</select></div>
         );
-        case 'specialtyIds': return (
+      case 'specialtyIds': return (
           <div><label className="block text-sm font-medium text-gray-700">Специальности (Ctrl/Cmd)</label><select multiple name="specialtyIds" value={formData.specialtyIds} onChange={handleMultiSelectChange} className={`${defaultInputClass} h-32`}>{specialties.map(s => <option key={s.id} value={s.id}>{s.code} {s.name}</option>)}</select></div>
         );
-        case 'groupIds': return (
+      case 'groupIds': return (
           <div><label className="block text-sm font-medium text-gray-700">Группы в потоке (Ctrl/Cmd)</label><p className="text-xs text-gray-500 mb-1">Можно выбрать только группы одного курса.</p><select multiple name="groupIds" value={formData.groupIds} onChange={handleMultiSelectChange} className={`${defaultInputClass} h-32`}>{groups.map(g => <option key={g.id} value={g.id} disabled={selectedCourseForStream !== null && g.course !== selectedCourseForStream}>{g.number} ({g.course} курс)</option>)}</select></div>
         );
          case 'suitableClassroomTypeIds': return (
@@ -278,6 +349,30 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
              </datalist>
            </div>
         );
+        case 'code':
+            if (dataType === 'ugs') {
+                return (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700" htmlFor="ugsCode">Код</label>
+                        <input list="ugs-codes" id="ugsCode" name="code" value={formData.code || ''} onChange={handleChange} className={defaultInputClass} ref={isFirst ? firstInputRef : null} />
+                        <datalist id="ugs-codes">
+                           {UGSN_FROM_OKSO.map(u => <option key={u.code} value={u.code}>{u.name}</option>)}
+                        </datalist>
+                    </div>
+                );
+            }
+            if (dataType === 'specialties') {
+                 return (
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700" htmlFor="specialtyCode">Код</label>
+                        <input list="okso-codes" id="specialtyCode" name="code" value={formData.code || ''} onChange={handleChange} className={defaultInputClass} ref={isFirst ? firstInputRef : null} />
+                        <datalist id="okso-codes">
+                            {OKSO_CODES.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+                        </datalist>
+                    </div>
+                );
+            }
+            // Fallthrough for other types
         default:
             const initialData = getInitialFormData(dataType);
             const isDateField = key === 'date' || key === 'hireDate';
@@ -290,9 +385,17 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   
   const modalTitle = `${item ? 'Редактировать' : 'Добавить'} ${TITLE_MAP[dataType]?.single || 'элемент'}`;
 
+  const fields = Object.keys(getInitialFormData(dataType));
+  const half = Math.ceil(fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes'].includes(f)).length / 2);
+
+  const column1Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds'].includes(f)).slice(0, half);
+  const column2Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds'].includes(f)).slice(half);
+  const fullWidthFields = fields.filter(f => ['notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds'].includes(f));
+
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
-      <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto transform transition-all duration-300 ease-out scale-95 opacity-0 animate-fade-in-scale">
+      <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto transform transition-all duration-300 ease-out scale-95 opacity-0 animate-fade-in-scale">
         <style>{`
           @keyframes fade-in-scale {
             from { opacity: 0; transform: scale(0.95); }
@@ -304,7 +407,17 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
         `}</style>
         <h2 className="text-xl font-bold mb-4 text-gray-900">{modalTitle}</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
-          {Object.keys(getInitialFormData(dataType)).map((key, index) => <div key={key}>{renderDefaultField(key, index === 0)}</div>)}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-4">
+              {column1Fields.map((key, index) => <div key={key}>{renderDefaultField(key, index === 0)}</div>)}
+            </div>
+            <div className="space-y-4">
+              {column2Fields.map((key) => <div key={key}>{renderDefaultField(key, false)}</div>)}
+            </div>
+          </div>
+          <div className="space-y-4">
+             {fullWidthFields.map((key) => <div key={key}>{renderDefaultField(key, false)}</div>)}
+          </div>
           
           {dataType === 'subgroups' && (
             <div className="mt-4 pt-4 border-t">

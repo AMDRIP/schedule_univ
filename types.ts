@@ -46,6 +46,48 @@ export enum DeliveryMode {
   Online = 'Онлайн',
 }
 
+export enum AcademicDegree {
+  Candidate = 'Кандидат наук',
+  Doctor = 'Доктор наук',
+}
+
+export enum FieldOfScience {
+  Agricultural = 'сельскохозяйственных',
+  Architectural = 'архитектуры',
+  Biological = 'биологических',
+  Chemical = 'химических',
+  Culturology = 'культурологии',
+  Economic = 'экономических',
+  Engineering = 'технических',
+  Geographical = 'географических',
+  GeologicalMineralogical = 'геолого-минералогических',
+  Historical = 'исторических',
+  ArtHistory = 'искусствоведения',
+  Juridical = 'юридических',
+  Medical = 'медицинских',
+  Pedagogical = 'педагогических',
+  Pharmaceutical = 'фармацевтических',
+  Philological = 'филологических',
+  Philosophical = 'философских',
+  PhysicalMathematical = 'физико-математических',
+  Political = 'политических',
+  Psychological = 'психологических',
+  Sociological = 'социологических',
+  Theology = 'теологии',
+  Veterinary = 'ветеринарных',
+}
+
+
+export enum AcademicTitle {
+  Assistant = 'Ассистент',
+  Teacher = 'Преподаватель',
+  SeniorTeacher = 'Старший преподаватель',
+  Docent = 'Доцент',
+  Professor = 'Профессор',
+  SeniorResearcher = 'Старший научный сотрудник',
+}
+
+
 export interface AvailabilityGrid {
   [day: string]: { [timeSlotId: string]: AvailabilityType };
 }
@@ -57,14 +99,27 @@ export interface BaseItem {
 }
 
 export interface Faculty extends BaseItem { name: string; }
-export interface Department extends BaseItem { name: string; facultyId: string; specialtyIds?: string[]; }
+export interface Department extends BaseItem {
+  name: string;
+  facultyId: string;
+  specialtyIds?: string[];
+  headTeacherId?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  vkLink?: string;
+  telegramLink?: string;
+  notes?: string;
+}
 export interface Teacher extends BaseItem { 
   name: string; 
   departmentId: string; 
   availabilityGrid?: AvailabilityGrid; 
   pinnedClassroomId?: string; 
   regalia?: string;
-  academicDegree?: string;
+  academicDegree?: AcademicDegree;
+  fieldOfScience?: FieldOfScience;
+  academicTitle?: AcademicTitle;
   photoUrl?: string;
   hireDate?: string;
 }
