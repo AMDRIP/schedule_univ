@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "prestart": "npm run build:js && npm run build:css",
-    "dist": "electron-builder",
+    "build": "npm run build:js && npm run build:css",
+    "dist": "npm run build && electron-builder",
     "predist": "npm run build:js && npm run build:css",
     "build:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css",
     "watch:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css --watch",
