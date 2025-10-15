@@ -98,7 +98,14 @@ export interface BaseItem {
   id: string;
 }
 
-export interface Faculty extends BaseItem { name: string; }
+export interface Faculty extends BaseItem {
+  name: string;
+  deanId?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  notes?: string;
+}
 export interface Department extends BaseItem {
   name: string;
   facultyId: string;

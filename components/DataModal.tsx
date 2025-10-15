@@ -64,7 +64,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
 
   const getInitialFormData = (type: DataType) => {
     switch (type) {
-      case 'faculties': return { name: '' };
+      case 'faculties': return { name: '', deanId: '', address: '', phone: '', email: '', notes: '' };
       case 'departments': return { name: '', facultyId: faculties[0]?.id || '', specialtyIds: [], headTeacherId: '', address: '', phone: '', email: '', vkLink: '', telegramLink: '', notes: '' };
       case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', fieldOfScience: '', academicTitle: '', photoUrl: '', hireDate: '' };
       case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, availabilityGrid: {}, pinnedClassroomId: '' };
@@ -281,6 +281,9 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     switch(key) {
       case 'facultyId': return (
           <div><label className="block text-sm font-medium text-gray-700">Факультет</label><select name="facultyId" value={formData.facultyId} onChange={handleChange} className={defaultInputClass}>{faculties.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div>
+        );
+      case 'deanId': return (
+          <div><label className="block text-sm font-medium text-gray-700">Декан</label><select name="deanId" value={formData.deanId || ''} onChange={handleChange} className={defaultInputClass}><option value="">-- Не назначен --</option>{teachers.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></div>
         );
       case 'departmentId': return (
           <div><label className="block text-sm font-medium text-gray-700">Кафедра</label><select name="departmentId" value={formData.departmentId} onChange={handleChange} className={defaultInputClass}>{departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>

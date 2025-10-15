@@ -48,6 +48,10 @@ const COLUMN_HEADERS: Record<string, string> = {
   groupId: 'Группа',
   linkedTeachers: 'Привязанные преподаватели',
   fullName: 'ФИО',
+  deanId: 'Декан',
+  address: 'Адрес',
+  phone: 'Телефон',
+  email: 'Email',
 };
 
 
@@ -143,6 +147,9 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
   };
 
   const getColumns = () => {
+    if (dataType === 'faculties') {
+        return ['id', 'name', 'deanId', 'phone', 'email'];
+    }
     if (dataType === 'teachers') {
       return ['id', 'photoUrl', 'name', 'academicDegree', 'academicTitle', 'departmentId', 'hireDate', 'experience'];
     }
@@ -183,7 +190,7 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
         }
     }
     const baseKeys = Object.keys(data[0]);
-    return baseKeys.filter(key => !['availabilityGrid', 'entries', 'photoUrl', 'regalia', 'hireDate', 'teacherAssignments', 'headTeacherId', 'address', 'phone', 'email', 'vkLink', 'telegramLink', 'notes', 'fieldOfScience'].includes(key));
+    return baseKeys.filter(key => !['availabilityGrid', 'entries', 'photoUrl', 'regalia', 'hireDate', 'teacherAssignments', 'headTeacherId', 'address', 'phone', 'email', 'vkLink', 'telegramLink', 'notes', 'fieldOfScience', 'deanId'].includes(key));
   };
 
   const columns = getColumns();
@@ -221,6 +228,8 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
     switch (column) {
       case 'facultyId':
         return store.faculties.find(f => f.id === value)?.name || 'N/A';
+      case 'deanId':
+        return store.teachers.find(t => t.id === value)?.name || '—';
       case 'departmentId':
         return store.departments.find(d => d.id === value)?.name || 'N/A';
       case 'ugsId':
@@ -291,6 +300,11 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
                     <td key={col} className="p-3 text-gray-800 border-b border-gray-200">{renderCell(item, col)}</td>
                   ))}
                   <td className="p-3 text-gray-800 border-b border-gray-200 flex items-center gap-2">
+                    {dataType === 'faculties' && onNavigate && (
+                        <button onClick={() => onNavigate('Просмотр института/факультета', item.id)} className="text-teal-600 hover:text-teal-800 transition-transform transform hover:scale-110" title="Просмотр">
+                            <DocumentSearchIcon />
+                        </button>
+                    )}
                     {dataType === 'departments' && onNavigate && (
                         <button onClick={() => onNavigate('Просмотр кафедры', item.id)} className="text-teal-600 hover:text-teal-800 transition-transform transform hover:scale-110" title="Просмотр">
                             <DocumentSearchIcon />

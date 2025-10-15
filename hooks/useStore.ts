@@ -12,7 +12,15 @@ import { generateScheduleWithHeuristics } from '../services/heuristicScheduler';
 import { generateScheduleWithGemini } from '../services/geminiService';
 
 // MOCK DATA (Initial State)
-const initialFaculties: Faculty[] = [{ id: 'f1', name: 'Факультет информационных технологий' }];
+const initialFaculties: Faculty[] = [{
+    id: 'f1',
+    name: 'Факультет информационных технологий',
+    deanId: 't1',
+    address: 'г. Самара, Главный корпус, каб. 101',
+    phone: '8 (800) 555-35-35',
+    email: 'fit@university.edu',
+    notes: 'Ведущий факультет в области подготовки IT-специалистов. Основан в 1995 году.'
+}];
 const initialUGS: UGS[] = [{ id: 'ugs1', code: '09.00.00', name: 'Информатика и вычислительная техника'}];
 const initialSpecialties: Specialty[] = [{ id: 'spec1', code: '09.03.04', name: 'Программная инженерия', ugsId: 'ugs1', oksoCode: '09.03.04' }];
 const initialDepartments: Department[] = [{ 
@@ -103,14 +111,12 @@ const generateUnscheduledEntries = (
     electives: Elective[]
 ): UnscheduledEntry[] => {
     const entries: UnscheduledEntry[] = [];
-    const currentSemester = 1; // This should ideally come from settings
+    const currentSemester = 1;
 
     const groupToStreamMap = new Map<string, string>();
-    streams.forEach(stream => {
-        stream.groupIds.forEach(groupId => {
-            groupToStreamMap.set(groupId, stream.id);
-        });
-    });
+    streams.forEach(stream => stream.groupIds.forEach(groupId => groupToStreamMap.set(groupId, stream.id)));
+
+    const processedStreamLectures = new Set<string>(); // key: `${subjectId}-${streamId}`
 
     groups.forEach(group => {
         const plan = educationalPlans.find(p => p.specialtyId === group.specialtyId);
@@ -120,62 +126,82 @@ const generateUnscheduledEntries = (
         const relevantEntries = plan.entries.filter(e => e.semester === currentSemester);
 
         relevantEntries.forEach(planEntry => {
-            const processEntry = (targetGroupId: string, targetSubgroupId: string | undefined, studentCount: number, streamId: string | undefined) => {
-                const classTypes: { type: ClassType; hours: number }[] = [
-                    { type: ClassType.Lecture, hours: planEntry.lectureHours },
-                    { type: ClassType.Practical, hours: planEntry.practiceHours },
-                    { type: ClassType.Lab, hours: planEntry.labHours },
-                ];
+            const streamId = groupToStreamMap.get(group.id);
 
-                classTypes.forEach(({ type, hours }) => {
-                    if (hours <= 0) return;
+            // 1. Handle Lectures
+            if (planEntry.lectureHours > 0) {
+                let teacherId: string | undefined;
+                const numClasses = Math.ceil(planEntry.lectureHours / 2);
 
-                    let teacherId: string | undefined;
-                    const subgroup = targetSubgroupId ? subgroups.find(sg => sg.id === targetSubgroupId) : undefined;
-                    
-                    // 1. Check for a specific teacher assignment in the subgroup
-                    const assignment = subgroup?.teacherAssignments?.find(a => a.subjectId === planEntry.subjectId && a.classType === type);
-
-                    if (assignment) {
-                        teacherId = assignment.teacherId;
-                    } else {
-                        // 2. Fallback to the general list of available teachers
-                        const validTeacherIds = links
-                            .filter(link => link.subjectId === planEntry.subjectId && link.classTypes.includes(type))
-                            .map(link => link.teacherId);
+                if (streamId) {
+                    const streamKey = `${planEntry.subjectId}-${streamId}`;
+                    if (!processedStreamLectures.has(streamKey)) {
+                        processedStreamLectures.add(streamKey);
+                        const stream = streams.find(s => s.id === streamId)!;
+                        const streamGroups = groups.filter(g => stream.groupIds.includes(g.id));
+                        const studentCount = streamGroups.reduce((sum, g) => sum + g.studentCount, 0);
+                        teacherId = links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
                         
-                        if (validTeacherIds.length > 0) {
-                            teacherId = validTeacherIds[0]; // Take the first available
+                        if (teacherId) {
+                            for (let i = 0; i < numClasses; i++) {
+                                entries.push({
+                                    uid: `unsched-${planEntry.subjectId}-${streamId}-${ClassType.Lecture}-${i}`,
+                                    subjectId: planEntry.subjectId, groupId: group.id,
+                                    classType: ClassType.Lecture, teacherId, streamId, studentCount,
+                                });
+                            }
                         }
                     }
-                    
+                } else { // Regular group lecture
+                    teacherId = links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
                     if (teacherId) {
-                        const numClasses = Math.ceil(hours / 2);
-
                         for (let i = 0; i < numClasses; i++) {
-                             const uidSuffix = targetSubgroupId ? `${targetSubgroupId}-${type}-${i}` : `${targetGroupId}-${type}-${i}`;
-                             entries.push({
-                                uid: `unsched-${planEntry.subjectId}-${uidSuffix}`,
-                                subjectId: planEntry.subjectId,
-                                groupId: targetGroupId,
-                                subgroupId: targetSubgroupId,
-                                classType: type,
-                                teacherId: teacherId,
-                                streamId: streamId,
-                                studentCount: studentCount,
+                            entries.push({
+                                uid: `unsched-${planEntry.subjectId}-${group.id}-${ClassType.Lecture}-${i}`,
+                                subjectId: planEntry.subjectId, groupId: group.id,
+                                classType: ClassType.Lecture, teacherId, studentCount: group.studentCount,
                             });
                         }
                     }
-                });
-            };
-
-            if (planEntry.splitForSubgroups && groupSubgroups.length > 0) {
-                 groupSubgroups.forEach(subgroup => {
-                    processEntry(group.id, subgroup.id, subgroup.studentCount, undefined);
-                });
-            } else {
-                 processEntry(group.id, undefined, group.studentCount, groupToStreamMap.get(group.id));
+                }
             }
+            
+            // 2. Handle Practices and Labs
+            const practiceAndLabTypes = [
+                { type: ClassType.Practical, hours: planEntry.practiceHours },
+                { type: ClassType.Lab, hours: planEntry.labHours },
+            ];
+            practiceAndLabTypes.forEach(({ type, hours }) => {
+                if (hours <= 0) return;
+                const numClasses = Math.ceil(hours / 2);
+
+                if (planEntry.splitForSubgroups && groupSubgroups.length > 0) {
+                    groupSubgroups.forEach(subgroup => {
+                        const assignment = subgroup.teacherAssignments?.find(a => a.subjectId === planEntry.subjectId && a.classType === type);
+                        let teacherId = assignment?.teacherId ?? links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
+                        if (teacherId) {
+                            for (let i = 0; i < numClasses; i++) {
+                                entries.push({
+                                    uid: `unsched-${planEntry.subjectId}-${subgroup.id}-${type}-${i}`,
+                                    subjectId: planEntry.subjectId, groupId: group.id, subgroupId: subgroup.id,
+                                    classType: type, teacherId, studentCount: subgroup.studentCount,
+                                });
+                            }
+                        }
+                    });
+                } else { // Whole group for practice/lab
+                    const teacherId = links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
+                    if (teacherId) {
+                        for (let i = 0; i < numClasses; i++) {
+                            entries.push({
+                                uid: `unsched-${planEntry.subjectId}-${group.id}-${type}-${i}`,
+                                subjectId: planEntry.subjectId, groupId: group.id,
+                                classType: type, teacherId, studentCount: group.studentCount,
+                            });
+                        }
+                    }
+                }
+            });
         });
     });
     
@@ -543,6 +569,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // Cleanup head of department
     if (teacherIds.size > 0) {
         setDepartments(prev => prev.map(d => teacherIds.has(d.headTeacherId || '') ? { ...d, headTeacherId: undefined } : d));
+    }
+     // Cleanup dean
+    if (teacherIds.size > 0) {
+        setFaculties(prev => prev.map(f => teacherIds.has(f.deanId || '') ? { ...f, deanId: undefined } : f));
     }
     setDepartments(prev => prev.map(d => ({ ...d, specialtyIds: d.specialtyIds?.filter(sid => !specialtyIds.has(sid)) })));
     setEducationalPlans(prev => prev.map(p => ({ ...p, entries: p.entries.filter(e => !subjectIds.has(e.subjectId)) })));

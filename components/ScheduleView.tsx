@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType, Teacher, Group } from '../types';
+import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType, Teacher, Group, Classroom } from '../types';
 import { DAYS_OF_WEEK, PRODUCTION_CALENDAR_COLORS } from '../constants';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import ScheduleCell from './ScheduleCell';
@@ -77,7 +77,7 @@ const LoadTemplateModal: React.FC<{templates: ScheduleTemplate[]; onLoad: (id: s
 const SessionEntryModal: React.FC<{ 
     isOpen: boolean; 
     onClose: () => void; 
-    selectedFilter: { type: 'group' | 'teacher', id: string };
+    selectedFilter: { type: 'group' | 'teacher' | 'classroom', id: string };
 }> = ({ isOpen, onClose, selectedFilter }) => {
     const { groups, teachers, subjects, classrooms, timeSlots, addScheduleEntry, settings } = useStore();
     const [error, setError] = useState('');
@@ -88,6 +88,8 @@ const SessionEntryModal: React.FC<{
             setError('');
             const initialGroupId = (selectedFilter.type === 'group' && selectedFilter.id) ? selectedFilter.id : groups[0]?.id || '';
             const initialTeacherId = (selectedFilter.type === 'teacher' && selectedFilter.id) ? selectedFilter.id : teachers[0]?.id || '';
+            const initialClassroomId = (selectedFilter.type === 'classroom' && selectedFilter.id) ? selectedFilter.id : classrooms[0]?.id || '';
+
 
             setFormData({
                 date: settings.sessionStart || settings.semesterStart || toYYYYMMDD(new Date()),
@@ -95,7 +97,7 @@ const SessionEntryModal: React.FC<{
                 groupId: initialGroupId,
                 subjectId: subjects[0]?.id || '',
                 teacherId: initialTeacherId,
-                classroomId: classrooms[0]?.id || '',
+                classroomId: initialClassroomId,
                 classType: ClassType.Consultation,
                 deliveryMode: DeliveryMode.Offline,
                 weekType: 'every'
@@ -180,8 +182,8 @@ interface ScheduleViewProps {
 
 const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setViewDate }) => {
   const store = useStore();
-  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks } = store;
-  const [filterType, setFilterType] = useState<'group' | 'teacher'>('group');
+  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks, streams } = store;
+  const [filterType, setFilterType] = useState<'group' | 'teacher' | 'classroom'>('group');
   const [selectedId, setSelectedId] = useState<string>(groups[0]?.id || '');
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
   const [isSaveTemplateModalOpen, setIsSaveTemplateModalOpen] = useState(false);
@@ -222,18 +224,18 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
 
 
   const filterOptions = useMemo(() => {
-    return filterType === 'group' ? groups : teachers;
-  }, [filterType, groups, teachers]);
+    return filterType === 'group' ? groups : filterType === 'teacher' ? teachers : classrooms;
+  }, [filterType, groups, teachers, classrooms]);
 
   const selectedItemName = useMemo(() => {
       const item = filterOptions.find(o => o.id === selectedId);
       if (!item) return '';
       if (filterType === 'teacher') {
-          // FIX: Cast `item` to `Teacher` to ensure type safety, as TypeScript's inference
-          // struggles with the dependency between `filterType` and `filterOptions` inside `useMemo`.
           return teacherDisplayNames.get(item.id) || (item as Teacher).name;
       }
-      // The `item` is of type `Group` here, which has a `number` property instead of `name`.
+      if (filterType === 'classroom') {
+        return (item as Classroom).number;
+      }
       return (item as Group).number;
   }, [selectedId, filterOptions, filterType, teacherDisplayNames]);
   
@@ -263,18 +265,52 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
 
   const filteredSchedule = useMemo(() => {
     if (!selectedId) return [];
-    
-    return schedule.filter(entry => {
-      const filterMatch = filterType === 'group' ? entry.groupId === selectedId : entry.teacherId === selectedId;
-      if (!filterMatch) return false;
 
-      if (entry.date) {
-        return entry.date >= weekStart && entry.date <= weekEnd;
-      } else {
+    const isEntryInCurrentWeek = (entry: ScheduleEntry) => {
+        if (entry.date) {
+            return entry.date >= weekStart && entry.date <= weekEnd;
+        }
         return entry.weekType === 'every' || entry.weekType === effectiveWeekType;
+    };
+    
+    let entries = schedule.filter(entry => {
+      if (!isEntryInCurrentWeek(entry)) return false;
+
+      if (filterType === 'group') {
+        // Also include stream lectures for this group
+        const groupStream = streams.find(s => s.groupIds.includes(selectedId));
+        if (groupStream && entry.classType === ClassType.Lecture) {
+            return groupStream.groupIds.includes(entry.groupId);
+        }
+        return entry.groupId === selectedId;
       }
+      if (filterType === 'teacher') return entry.teacherId === selectedId;
+      if (filterType === 'classroom') return entry.classroomId === selectedId;
+      return false;
     });
-  }, [schedule, filterType, selectedId, effectiveWeekType, weekStart, weekEnd]);
+
+    // For stream lectures in group view, ensure we only show one card
+    if (filterType === 'group') {
+        const uniqueEntries = new Map<string, ScheduleEntry>();
+        const streamLectures = new Set<string>();
+
+        for(const entry of entries) {
+            const stream = streams.find(s => s.groupIds.includes(entry.groupId));
+            if (entry.classType === ClassType.Lecture && stream) {
+                const key = `${entry.day}-${entry.timeSlotId}-${entry.weekType}-${entry.date}-${entry.subjectId}`;
+                if (streamLectures.has(key)) continue;
+                streamLectures.add(key);
+                uniqueEntries.set(entry.id, entry);
+            } else {
+                uniqueEntries.set(entry.id, entry);
+            }
+        }
+        return Array.from(uniqueEntries.values());
+    }
+
+    return entries;
+
+  }, [schedule, filterType, selectedId, effectiveWeekType, weekStart, weekEnd, streams]);
   
   const handleDateSelect = (date: Date) => {
     setViewDate(toYYYYMMDD(date));
@@ -326,13 +362,26 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   
   const handleExportPdf = () => {
     if (!selectedId) {
-      alert("Выберите группу или преподавателя для экспорта.");
+      alert("Выберите группу, преподавателя или аудиторию для экспорта.");
       return;
     }
     const selectedItem = filterOptions.find(o => o.id === selectedId);
     if (!selectedItem) return;
     
-    const title = `Расписание для ${filterType === 'group' ? 'группы' : 'преподавателя'}: ${'number' in selectedItem ? selectedItem.number : (selectedItem as Teacher).name}`;
+    let itemTitle = '';
+    let itemType = '';
+    if (filterType === 'group') {
+        itemType = 'группы';
+        itemTitle = (selectedItem as Group).number;
+    } else if (filterType === 'teacher') {
+        itemType = 'преподавателя';
+        itemTitle = (selectedItem as Teacher).name;
+    } else {
+        itemType = 'аудитории';
+        itemTitle = (selectedItem as Classroom).number;
+    }
+
+    const title = `Расписание для ${itemType}: ${itemTitle}`;
     const subtitle = `Неделя: ${weekStart} - ${weekEnd} (${settings.useEvenOddWeekSeparation ? (effectiveWeekType === 'odd' ? 'нечётная' : 'чётная') : 'общая'})`;
 
     try {
@@ -432,11 +481,12 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
 
             <select
               value={filterType}
-              onChange={(e) => setFilterType(e.target.value as 'group' | 'teacher')}
+              onChange={(e) => setFilterType(e.target.value as 'group' | 'teacher' | 'classroom')}
               className="p-2 border rounded-md bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="group">По группе</option>
               <option value="teacher">По преподавателю</option>
+              <option value="classroom">По аудитории</option>
             </select>
             <select
               value={selectedId}

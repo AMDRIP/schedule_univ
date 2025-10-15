@@ -12,6 +12,7 @@ import AcademicCalendarView from './AcademicCalendarView';
 import ProductionCalendarManager from './ProductionCalendarManager';
 import DepartmentView from './DepartmentView';
 import { toYYYYMMDD } from '../utils/dateUtils';
+import FacultyView from './FacultyView';
 
 
 interface DashboardProps {
@@ -42,7 +43,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
       case 'Составление расписания':
         return <AutoScheduler />;
       case 'Факультеты':
-        return <DataManager dataType="faculties" title="Управление факультетами" />;
+        return <DataManager dataType="faculties" title="Управление факультетами" onNavigate={handleNavigate} />;
+      case 'Просмотр института/факультета':
+        return <FacultyView facultyId={viewEntityId!} onNavigate={handleNavigate} />;
       case 'Кафедры':
         return <DataManager dataType="departments" title="Управление кафедрами" onNavigate={handleNavigate} />;
       case 'Просмотр кафедры':
