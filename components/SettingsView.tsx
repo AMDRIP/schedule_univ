@@ -1,5 +1,3 @@
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { SchedulingSettings } from '../types';
@@ -133,9 +131,9 @@ const SettingsView: React.FC = () => {
       setImportTarget(null);
   };
   
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     try {
-      exportAllDataAsPdf(store);
+      await exportAllDataAsPdf(store);
     } catch(e) {
       console.error(e);
       alert("Не удалось сгенерировать PDF. Подробности в консоли.");

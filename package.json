@@ -5,18 +5,20 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "prestart": "npm run build:css",
+    "prestart": "npm run build:js && npm run build:css",
     "dist": "electron-builder",
-    "predist": "npm run build:css",
+    "predist": "npm run build:js && npm run build:css",
     "build:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css",
-    "watch:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css --watch"
+    "watch:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css --watch",
+    "build:js": "node esbuild.config.js"
   },
   "author": "AI Assistant",
   "license": "ISC",
   "devDependencies": {
     "electron": "^28.2.3",
     "electron-builder": "^24.9.1",
-    "tailwindcss": "^3.4.3"
+    "tailwindcss": "^3.4.3",
+    "esbuild": "^0.21.4"
   },
   "dependencies": {
     "@google/genai": "^1.24.0",
@@ -30,7 +32,13 @@
   "build": {
     "appId": "com.schedule-system.app",
     "files": [
-      "**/*"
+      "main.js",
+      "preload.js",
+      "index.html",
+      "dist/",
+      "TWD/output.css",
+      "icon.svg",
+      "1631285.ico"
     ],
     "win": {
       "target": "nsis",

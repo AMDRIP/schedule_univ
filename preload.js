@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFile: (filePath, data) => ipcRenderer.invoke('save-file', filePath, data),
   saveAsFile: (data) => ipcRenderer.invoke('save-as-file', data),
   autosave: (data) => ipcRenderer.invoke('autosave', data),
+  savePdfFile: (data, defaultPath) => ipcRenderer.invoke('save-pdf-file', data, defaultPath),
 
   // --- Autosave Recovery ---
   onRestoreAutosaveRequest: (callback) => ipcRenderer.on('restore-autosave-prompt', callback),

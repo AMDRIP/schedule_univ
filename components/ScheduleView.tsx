@@ -1,5 +1,3 @@
-
-
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType, Teacher, Group, Classroom } from '../types';
@@ -360,7 +358,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
       return formatted.charAt(0).toUpperCase() + formatted.slice(1);
   };
   
-  const handleExportPdf = () => {
+  const handleExportPdf = async () => {
     if (!selectedId) {
       alert("Выберите группу, преподавателя или аудиторию для экспорта.");
       return;
@@ -385,7 +383,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
     const subtitle = `Неделя: ${weekStart} - ${weekEnd} (${settings.useEvenOddWeekSeparation ? (effectiveWeekType === 'odd' ? 'нечётная' : 'чётная') : 'общая'})`;
 
     try {
-        exportScheduleAsPdf({
+        await exportScheduleAsPdf({
           schedule: filteredSchedule,
           title,
           subtitle,

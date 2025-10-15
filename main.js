@@ -125,6 +125,29 @@ app.whenReady().then(() => {
     }
   });
 
+  // Save PDF File
+  ipcMain.handle('save-pdf-file', async (event, data, defaultPath) => {
+    if (!mainWindow) return null;
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Сохранить PDF',
+      defaultPath: defaultPath,
+      filters: [{ name: 'PDF Documents', extensions: ['pdf'] }],
+    });
+    if (canceled || !filePath) {
+      return null;
+    }
+    try {
+      // Data arrives as a Uint8Array-like object from renderer, convert to Buffer
+      await fs.writeFile(filePath, Buffer.from(data));
+      console.log(`Main process: Saved PDF to ${filePath}`);
+      return filePath;
+    } catch (error) {
+      console.error('Failed to save PDF file:', error);
+      dialog.showErrorBox('Ошибка сохранения PDF', `Не удалось сохранить файл: ${error.message}`);
+      return null;
+    }
+  });
+
   // Autosave
   ipcMain.handle('autosave', async (event, data) => {
     try {

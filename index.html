@@ -4,39 +4,25 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Система составления расписаний</title>
-  
-  <script>
-    // Dynamically load CSS based on the environment
-    const isElectron = navigator.userAgent.toLowerCase().indexOf('electron') > -1;
-    if (isElectron) {
-      // In Electron, use the local, pre-built CSS file for best performance and offline capability.
-      document.write('<link href="./TWD/output.css" rel="stylesheet">');
-    } else {
-      // In a standard browser, use the Tailwind JIT CDN for easy setup without a build step.
-      // The closing script tag is escaped to prevent parsing errors.
-      document.write('<script src="https://cdn.tailwindcss.com"><\/script>');
-    }
-  </script>
-
+  <link href="./TWD/output.css" rel="stylesheet">
 <script type="importmap">
 {
   "imports": {
     "react": "https://aistudiocdn.com/react@^19.2.0",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
     "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.24.0",
     "react-dnd": "https://aistudiocdn.com/react-dnd@^16.0.1",
     "react-dnd-html5-backend": "https://aistudiocdn.com/react-dnd-html5-backend@^16.0.1",
-    "jspdf": "https://aistudiocdn.com/jspdf@^2.5.1",
-    "jspdf-autotable": "https://aistudiocdn.com/jspdf-autotable@^3.8.2",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.25.0",
+    "jspdf": "https://aistudiocdn.com/jspdf@^3.0.3",
+    "jspdf-autotable": "https://aistudiocdn.com/jspdf-autotable@^5.0.2",
     "tailwindcss": "https://aistudiocdn.com/tailwindcss@^4.1.14"
   }
 }
 </script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body class="bg-gray-100 antialiased">
   <div id="root"></div>
-  <script type="text/babel" data-type="module" src="./index.tsx"></script>
+  <script src="./dist/bundle.js"></script>
 </body>
 </html>

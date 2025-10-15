@@ -1,4 +1,3 @@
-
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { dejavu_sans_base64 } from '../utils/fonts';
@@ -31,7 +30,7 @@ function initializeDoc(): jsPDF {
     return doc;
 }
 
-export const exportScheduleAsPdf = (data: ScheduleExportData, settings: SchedulingSettings) => {
+export const exportScheduleAsPdf = async (data: ScheduleExportData, settings: SchedulingSettings) => {
   const { schedule, title, subtitle, weekDays, timeSlots, timeSlotsShortened, groups, teachers, subjects, classrooms, productionCalendar } = data;
   const doc = initializeDoc();
 
@@ -103,10 +102,15 @@ export const exportScheduleAsPdf = (data: ScheduleExportData, settings: Scheduli
     },
   });
 
-  doc.save('schedule.pdf');
+  if (window.electronAPI?.savePdfFile) {
+    const pdfOutput = doc.output('arraybuffer');
+    await window.electronAPI.savePdfFile(pdfOutput, 'schedule.pdf');
+  } else {
+    doc.save('schedule.pdf');
+  }
 };
 
-export const exportAllDataAsPdf = (store: ReturnType<typeof useStore>) => {
+export const exportAllDataAsPdf = async (store: ReturnType<typeof useStore>) => {
     const doc = initializeDoc();
     let yPos = 15;
     const addTitle = (title: string) => {
@@ -204,5 +208,11 @@ export const exportAllDataAsPdf = (store: ReturnType<typeof useStore>) => {
         styles: { font: FONT_NAME, fontSize: 8 },
     });
 
-    doc.save(`full_data_report_${new Date().toISOString().slice(0, 10)}.pdf`);
+    if (window.electronAPI?.savePdfFile) {
+        const pdfOutput = doc.output('arraybuffer');
+        const defaultName = `full_data_report_${new Date().toISOString().slice(0, 10)}.pdf`;
+        await window.electronAPI.savePdfFile(pdfOutput, defaultName);
+    } else {
+        doc.save(`full_data_report_${new Date().toISOString().slice(0, 10)}.pdf`);
+    }
 };

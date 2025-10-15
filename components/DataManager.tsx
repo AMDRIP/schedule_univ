@@ -174,7 +174,6 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
 
     if (!data || data.length === 0) {
         switch(dataType) {
-            case 'faculties': return ['id', 'name'];
             case 'departments': return ['id', 'name', 'facultyId', 'specialtyIds'];
             case 'streams': return ['id', 'name', 'groupIds'];
             case 'cabinets': return ['id', 'number', 'departmentId'];

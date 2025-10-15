@@ -16,6 +16,7 @@ interface IElectronAPI {
   onRestoreAutosaveRequest: (callback: () => void) => void;
   restoreAutosave: () => Promise<{ data: string } | null>;
   log: (...args: any[]) => void;
+  savePdfFile: (data: ArrayBuffer, defaultPath: string) => Promise<string | null>;
 }
 
 declare global {
