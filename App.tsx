@@ -7,12 +7,14 @@ import Dashboard from './components/Dashboard';
 import Header from './components/Header';
 import NewProjectWizard from './components/NewProjectWizard';
 import ConfirmationModal from './components/ConfirmationModal';
+import UpdateNotification from './components/UpdateNotification';
 
 const AppContent: React.FC = () => {
   const [currentRole, setCurrentRole] = useState<Role>(Role.Admin);
   const [isNewProjectWizardOpen, setNewProjectWizardOpen] = useState(false);
   const [isNewProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
+  const [updateDownloaded, setUpdateDownloaded] = useState(false);
   const { runScheduler, clearSchedule, startNewProject, handleOpen, handleSave, handleSaveAs, settings } = useStore();
 
   useEffect(() => {
@@ -20,7 +22,19 @@ const AppContent: React.FC = () => {
     if (window.electronAPI?.log) {
         window.electronAPI.log('Renderer process started and successfully mounted the AppContent component.');
     }
+    
+    // Listen for update events from the main process
+    if (window.electronAPI?.onUpdateDownloaded) {
+        window.electronAPI.onUpdateDownloaded(() => {
+            console.log("Update downloaded signal received in renderer.");
+            setUpdateDownloaded(true);
+        });
+    }
   }, []);
+  
+  const handleRestartForUpdate = () => {
+    window.electronAPI?.restartApp();
+  };
 
   const handleRunScheduler = async (method: 'heuristic' | 'gemini') => {
     if (isScheduling) return;
@@ -98,6 +112,9 @@ const AppContent: React.FC = () => {
           message="Все несохраненные изменения в текущем проекте будут утеряны. Это действие необратимо."
           confirmText="СОЗДАТЬ"
         />
+      )}
+      {updateDownloaded && (
+        <UpdateNotification onRestart={handleRestartForUpdate} />
       )}
     </>
   );

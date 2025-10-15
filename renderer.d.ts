@@ -17,6 +17,11 @@ interface IElectronAPI {
   restoreAutosave: () => Promise<{ data: string } | null>;
   log: (...args: any[]) => void;
   savePdfFile: (data: ArrayBuffer, defaultPath: string) => Promise<string | null>;
+  
+  // Auto Updater API
+  onUpdateAvailable: (callback: () => void) => void;
+  onUpdateDownloaded: (callback: () => void) => void;
+  restartApp: () => void;
 }
 
 declare global {

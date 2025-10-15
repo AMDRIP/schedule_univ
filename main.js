@@ -1,6 +1,12 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const { autoUpdater } = require('electron-updater');
+const log = require('electron-log');
+
+// --- Updater Configuration ---
+log.transports.file.level = 'info';
+autoUpdater.logger = log;
 
 let mainWindow;
 let userApiKey = process.env.API_KEY; // Initialize from env var, can be updated by user
@@ -35,6 +41,8 @@ async function createWindow() {
       // No autosave file, do nothing.
       console.log('Main process: No autosave file found.');
     }
+    // Check for updates once the window is ready
+    autoUpdater.checkForUpdatesAndNotify();
   });
   
   // Open DevTools automatically if not in production
@@ -169,6 +177,23 @@ app.whenReady().then(() => {
     } catch (error) {
       console.error('Failed to restore autosave:', error);
       return null;
+    }
+  });
+
+  // --- Auto-updater IPC ---
+  ipcMain.on('restart-app', () => {
+    autoUpdater.quitAndInstall();
+  });
+  
+  autoUpdater.on('update-available', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('update-available');
+    }
+  });
+  
+  autoUpdater.on('update-downloaded', () => {
+    if (mainWindow) {
+      mainWindow.webContents.send('update-downloaded');
     }
   });
 

@@ -1,13 +1,13 @@
 {
   "name": "schedule-system-app",
-  "version": "1.0.0",
+  "version": "319.1610.25",
   "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "prestart": "npm run build:js && npm run build:css",
     "build": "npm run build:js && npm run build:css",
-    "dist": "npm run build && electron-builder",
+    "dist": "npm run build && electron-builder --publish always",
     "predist": "npm run build:js && npm run build:css",
     "build:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css",
     "watch:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css --watch",
@@ -23,6 +23,8 @@
   },
   "dependencies": {
     "@google/genai": "^1.24.0",
+    "electron-log": "^5.1.5",
+    "electron-updater": "^6.2.1",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^3.8.2",
     "react": "^19.2.0",
@@ -32,6 +34,13 @@
   },
   "build": {
     "appId": "com.schedule-system.app",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "AMDRIP",
+        "repo": "schedule_univ"
+      }
+    ],
     "files": [
       "main.js",
       "preload.js",
@@ -39,7 +48,8 @@
       "dist/",
       "TWD/output.css",
       "icon.svg",
-      "1631285.ico"
+      "1631285.ico",
+      "CHANGELOG.md"
     ],
     "win": {
       "target": "nsis",

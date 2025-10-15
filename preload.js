@@ -32,4 +32,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @param {...any} args - Аргументы для логирования.
    */
   log: (...args) => ipcRenderer.send('log-to-main', ...args),
+
+  // --- Auto Updater API ---
+  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (_event, ...args) => callback(...args)),
+  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (_event, ...args) => callback(...args)),
+  restartApp: () => ipcRenderer.send('restart-app'),
 });
