@@ -12,6 +12,12 @@ export interface ClassroomType extends BaseItem {
   name: string;
 }
 
+export interface ClassroomTag extends BaseItem {
+  name: string;
+  icon: string;
+  color: string;
+}
+
 export enum ClassType {
   Lecture = 'Лекция',
   Practical = 'Практика',
@@ -141,7 +147,7 @@ export interface Group extends BaseItem {
   pinnedClassroomId?: string;
 }
 export interface Stream extends BaseItem { name: string; groupIds: string[]; }
-export interface Classroom extends BaseItem { number: string; capacity: number; typeId: string; availabilityGrid?: AvailabilityGrid; }
+export interface Classroom extends BaseItem { number: string; capacity: number; typeId: string; availabilityGrid?: AvailabilityGrid; tagIds?: string[]; }
 export interface Cabinet extends BaseItem { number: string; departmentId: string; }
 export interface TimeSlot extends BaseItem { time: string; }
 export interface Subject extends BaseItem {
@@ -309,5 +315,5 @@ export interface Elective extends BaseItem {
   hoursPerSemester: number;
 }
 
-export type DataItem = Faculty | Department | Teacher | Group | Stream | Classroom | Subject | Cabinet | TimeSlot | TeacherSubjectLink | SchedulingRule | ProductionCalendarEvent | UGS | Specialty | EducationalPlan | ScheduleTemplate | ClassroomType | Subgroup | Elective;
-export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'streams' | 'classrooms' | 'subjects' | 'cabinets' | 'timeSlots' | 'teacherSubjectLinks' | 'schedulingRules' | 'productionCalendar' | 'ugs' | 'specialties' | 'educationalPlans' | 'scheduleTemplates' | 'classroomTypes' | 'subgroups' | 'electives' | 'timeSlotsShortened';
+export type DataItem = Faculty | Department | Teacher | Group | Stream | Classroom | Subject | Cabinet | TimeSlot | TeacherSubjectLink | SchedulingRule | ProductionCalendarEvent | UGS | Specialty | EducationalPlan | ScheduleTemplate | ClassroomType | Subgroup | Elective | ClassroomTag;
+export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'streams' | 'classrooms' | 'subjects' | 'cabinets' | 'timeSlots' | 'teacherSubjectLinks' | 'schedulingRules' | 'productionCalendar' | 'ugs' | 'specialties' | 'educationalPlans' | 'scheduleTemplates' | 'classroomTypes' | 'subgroups' | 'electives' | 'timeSlotsShortened' | 'classroomTags';

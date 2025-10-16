@@ -18,10 +18,16 @@ interface IElectronAPI {
   log: (...args: any[]) => void;
   savePdfFile: (data: ArrayBuffer, defaultPath: string) => Promise<string | null>;
   
-  // Auto Updater API
+  // Auto Updater and App Settings API
+  getAutoUpdateSetting: () => Promise<boolean>;
+  setAutoUpdateSetting: (enabled: boolean) => Promise<void>;
+  checkForUpdates: () => Promise<void>;
   onUpdateAvailable: (callback: () => void) => void;
   onUpdateDownloaded: (callback: () => void) => void;
   restartApp: () => void;
+
+  // Initial Project Load
+  onLoadInitialProject: (callback: (project: { filePath: string, data: string }) => void) => void;
 }
 
 declare global {

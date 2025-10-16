@@ -1,6 +1,7 @@
 {
   "name": "schedule-system-app",
-  "version": "402.1710.2025",
+  "version": "504.1710.2025",
+  "releaseType": "релиз",
   "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
   "main": "main.js",
   "scripts": {
@@ -13,7 +14,7 @@
     "watch:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css --watch",
     "build:js": "node esbuild.config.js"
   },
-  "author": "AI Assistant",
+  "author": "Дмитрий Власов",
   "license": "ISC",
   "devDependencies": {
     "electron": "^28.2.3",
@@ -33,6 +34,7 @@
     "react-dnd-html5-backend": "^16.0.1"
   },
   "build": {
+    "productName": "Расписание ВУЗ",
     "appId": "com.schedule-system.app",
     "publish": [
       {

@@ -4,7 +4,7 @@ import {
     UnscheduledEntry, DataItem, DataType, ClassroomType, ClassType, TeacherSubjectLink, SchedulingRule, 
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
     EducationalPlan, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective,
-    AcademicDegree, AcademicTitle, FieldOfScience, BaseItem
+    AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
@@ -50,10 +50,15 @@ const initialClassroomTypes: ClassroomType[] = [
     { id: 'ct3', name: 'Лаборатория' },
     { id: 'ct4', name: 'Компьютерный класс' },
 ];
+const initialClassroomTags: ClassroomTag[] = [
+    { id: 'tag-proj', name: 'Проектор', icon: 'VideoCameraIcon', color: 'blue' },
+    { id: 'tag-comp', name: 'Компьютеры', icon: 'DesktopComputerIcon', color: 'green' },
+    { id: 'tag-board', name: 'Интерактивная доска', icon: 'PresentationChartBarIcon', color: 'indigo' },
+];
 const initialClassrooms: Classroom[] = [
-    { id: 'c1', number: '101', capacity: 60, typeId: 'ct1' },
+    { id: 'c1', number: '101', capacity: 60, typeId: 'ct1', tagIds: ['tag-proj'] },
     { id: 'c2', number: '202', capacity: 30, typeId: 'ct2' },
-    { id: 'c3', number: '303-PC', capacity: 20, typeId: 'ct4' },
+    { id: 'c3', number: '303-PC', capacity: 20, typeId: 'ct4', tagIds: ['tag-comp', 'tag-board'] },
 ];
 const initialSubjects: Subject[] = [
     { id: 'sub1', name: 'Основы программирования', suitableClassroomTypeIds: ['ct2', 'ct4'] },
@@ -233,7 +238,7 @@ interface StoreState {
   teacherSubjectLinks: TeacherSubjectLink[]; schedulingRules: SchedulingRule[]; 
   productionCalendar: ProductionCalendarEvent[]; settings: SchedulingSettings;
   ugs: UGS[]; specialties: Specialty[]; educationalPlans: EducationalPlan[];
-  scheduleTemplates: ScheduleTemplate[]; classroomTypes: ClassroomType[];
+  scheduleTemplates: ScheduleTemplate[]; classroomTypes: ClassroomType[]; classroomTags: ClassroomTag[];
   subgroups: Subgroup[]; electives: Elective[];
   isGeminiAvailable: boolean;
   currentFilePath: string | null;
@@ -319,6 +324,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [settings, setSettings] = useState(initialSettings);
   const [scheduleTemplates, setScheduleTemplates] = useState(initialScheduleTemplates);
   const [classroomTypes, setClassroomTypes] = useState(initialClassroomTypes);
+  const [classroomTags, setClassroomTags] = useState(initialClassroomTags);
   const [subgroups, setSubgroups] = useState(initialSubgroups);
   const [electives, setElectives] = useState(initialElectives);
   const [isGeminiAvailable, setIsGeminiAvailable] = useState(false);
@@ -422,7 +428,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const getFullState = () => ({
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
-    classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave
+    classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave
   });
   
   const stateRef = useRef(getFullState());
@@ -451,6 +457,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setEducationalPlans(data.educationalPlans || []);
     setScheduleTemplates(data.scheduleTemplates || []);
     setClassroomTypes(data.classroomTypes || initialClassroomTypes);
+    setClassroomTags(data.classroomTags || initialClassroomTags);
     setSubgroups(data.subgroups || []);
     setElectives(data.electives || []);
     setCurrentFilePath(data.currentFilePath || null);
@@ -492,6 +499,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     merge(setEducationalPlans, data.educationalPlans);
     merge(setScheduleTemplates, data.scheduleTemplates);
     merge(setClassroomTypes, data.classroomTypes);
+    merge(setClassroomTags, data.classroomTags);
     merge(setSubgroups, data.subgroups);
     merge(setElectives, data.electives);
 
@@ -536,6 +544,24 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
     });
   }, []); // Should only run once
+  
+  // Listener for loading the last project on startup
+    useEffect(() => {
+        if (window.electronAPI?.onLoadInitialProject) {
+            window.electronAPI.onLoadInitialProject((project) => {
+                if (project && project.data) {
+                    try {
+                        const parsedData = JSON.parse(project.data);
+                        loadFullState(parsedData);
+                        setCurrentFilePath(project.filePath);
+                        console.log("Loaded last saved project:", project.filePath);
+                    } catch (e) {
+                        console.error("Failed to parse last saved project data:", e);
+                    }
+                }
+            });
+        }
+    }, []);
 
 
   const stateSetters: Record<DataType, React.Dispatch<React.SetStateAction<any[]>>> = {
@@ -544,7 +570,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     timeSlots: setTimeSlots, timeSlotsShortened: setTimeSlotsShortened, teacherSubjectLinks: setTeacherSubjectLinks, schedulingRules: setSchedulingRules,
     productionCalendar: setProductionCalendar, ugs: setUgs, specialties: setSpecialties, 
     educationalPlans: setEducationalPlans, scheduleTemplates: setScheduleTemplates, classroomTypes: setClassroomTypes,
-    subgroups: setSubgroups, electives: setElectives,
+    classroomTags: setClassroomTags, subgroups: setSubgroups, electives: setElectives,
   };
 
   const addItem = (dataType: DataType, item: Omit<DataItem, 'id'>) => {
@@ -624,6 +650,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const classroomIds = getSet('classrooms');
     const specialtyIds = getSet('specialties');
     const timeSlotIds = new Set([...getSet('timeSlots'), ...getSet('timeSlotsShortened')]);
+    const classroomTagIds = getSet('classroomTags');
     
     setSchedule(prev => prev.filter(e => 
         !groupIds.has(e.groupId) &&
@@ -651,6 +678,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setTeachers(prev => prev.map(t => classroomIds.has(t.pinnedClassroomId || '') ? { ...t, pinnedClassroomId: '' } : t));
     setGroups(prev => prev.map(g => classroomIds.has(g.pinnedClassroomId || '') ? { ...g, pinnedClassroomId: '' } : g));
     setSubjects(prev => prev.map(s => classroomIds.has(s.pinnedClassroomId || '') ? { ...s, pinnedClassroomId: '' } : s));
+
+    // Cleanup classroom tags
+    if(classroomTagIds.size > 0) {
+      setClassrooms(prev => prev.map(c => ({ ...c, tagIds: c.tagIds?.filter(tagId => !classroomTagIds.has(tagId)) })));
+    }
   };
 
 
@@ -750,30 +782,64 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       alert("Некорректный формат дат семестра в настройках.");
       return;
     }
-    const templateEntries = schedule.filter(e => !e.date && (e.weekType === weekTypeToCopy || e.weekType === 'every'));
+    
+    // --- BUG FIX LOGIC ---
+    // 1. Get a fresh pool of all possible entries and filter out those already scheduled.
+    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+    const scheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
+    const availableUnscheduledEntries = allPossibleEntries.filter(e => !scheduledUids.has(e.uid));
+
+    // 2. Find template entries that originated from the unscheduled pool.
+    const templateEntries = schedule.filter(e => 
+      !e.date && 
+      e.unscheduledUid && 
+      (e.weekType === weekTypeToCopy || e.weekType === 'every')
+    );
+    
     const newDatedEntries: ScheduleEntry[] = [];
     let currentDate = new Date(semesterStartDate);
+
     while (currentDate <= semesterEndDate) {
         const currentWeekType = getWeekType(currentDate, semesterStartDate);
         if (currentWeekType === weekTypeToCopy) {
             const dayOfWeek = DAYS_OF_WEEK[currentDate.getDay() === 0 ? 6 : currentDate.getDay() - 1];
             const entriesForThisDay = templateEntries.filter(e => e.day === dayOfWeek);
+
             for (const templateEntry of entriesForThisDay) {
-                newDatedEntries.push({
-                    ...templateEntry,
-                    id: `prop-${templateEntry.id}-${toYYYYMMDD(currentDate)}-${Math.random()}`,
-                    date: toYYYYMMDD(currentDate),
-                });
+                // 3. Find a matching unscheduled entry to "consume" for this new slot.
+                const matchingUnscheduledIndex = availableUnscheduledEntries.findIndex(unsched =>
+                    unsched.subjectId === templateEntry.subjectId &&
+                    unsched.groupId === templateEntry.groupId &&
+                    (unsched.subgroupId || null) === (templateEntry.subgroupId || null) &&
+                    unsched.classType === templateEntry.classType &&
+                    unsched.teacherId === templateEntry.teacherId
+                );
+
+                if (matchingUnscheduledIndex > -1) {
+                    // 4. "Consume" the entry from the available pool so it can't be used again in this operation.
+                    const consumedEntry = availableUnscheduledEntries.splice(matchingUnscheduledIndex, 1)[0];
+
+                    newDatedEntries.push({
+                        ...templateEntry,
+                        id: `prop-${consumedEntry.uid}-${toYYYYMMDD(currentDate)}`,
+                        date: toYYYYMMDD(currentDate),
+                        unscheduledUid: consumedEntry.uid, // Assign the newly consumed UID
+                    });
+                } else {
+                    console.warn(`Could not find an available unscheduled entry to propagate for template:`, templateEntry);
+                }
             }
         }
         currentDate.setDate(currentDate.getDate() + 1);
     }
+
     const scheduleWithoutOldEntries = schedule.filter(e => {
         if (!e.date) return true;
         const entryDate = new Date(e.date + 'T00:00:00');
         if (entryDate < semesterStartDate || entryDate > semesterEndDate) return true;
         return getWeekType(entryDate, semesterStartDate) !== weekTypeToCopy;
     });
+
     setSchedule([...scheduleWithoutOldEntries, ...newDatedEntries]);
     alert(`${newDatedEntries.length} занятий было скопировано на все ${weekTypeToCopy === 'even' ? 'чётные' : 'нечётные'} недели семестра.`);
   };
@@ -801,7 +867,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setClassrooms([]); setSubjects([]); setCabinets([]); setTimeSlots([]); setTimeSlotsShortened([]); setSchedule([]);
     setUgs([]); setSpecialties([]); setEducationalPlans([]); setTeacherSubjectLinks([]);
     setSchedulingRules([]); setProductionCalendar([]); setSettings(getInitialEmptySettings());
-    setScheduleTemplates([]); setClassroomTypes([]); setSubgroups([]); setElectives([]);
+    setScheduleTemplates([]); setClassroomTypes([]); setClassroomTags([]); setSubgroups([]); setElectives([]);
     setCurrentFilePath(null);
   };
 
@@ -908,7 +974,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const value: StoreState = {
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
-    classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey, unscheduledTimeHorizon,
+    classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey, unscheduledTimeHorizon,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings, updateApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
     runScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon,

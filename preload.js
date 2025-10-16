@@ -33,8 +33,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   log: (...args) => ipcRenderer.send('log-to-main', ...args),
 
-  // --- Auto Updater API ---
+  // --- Auto Updater and App Settings API ---
+  getAutoUpdateSetting: () => ipcRenderer.invoke('get-auto-update-setting'),
+  setAutoUpdateSetting: (enabled) => ipcRenderer.invoke('set-auto-update-setting', enabled),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (_event, ...args) => callback(...args)),
   onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (_event, ...args) => callback(...args)),
   restartApp: () => ipcRenderer.send('restart-app'),
+
+  // --- Initial Project Load ---
+  onLoadInitialProject: (callback) => ipcRenderer.on('load-initial-project', (_event, project) => callback(project)),
 });

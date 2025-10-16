@@ -56,6 +56,7 @@ const SettingsView: React.FC = () => {
   const [keyInput, setKeyInput] = useState('');
   const [isKeySaved, setIsKeySaved] = useState(false);
   const [importTarget, setImportTarget] = useState<File | null>(null);
+  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true);
 
   useEffect(() => {
     setFormData(settings);
@@ -64,6 +65,14 @@ const SettingsView: React.FC = () => {
   useEffect(() => {
     setKeyInput(apiKey);
   }, [apiKey]);
+  
+  useEffect(() => {
+    if (window.electronAPI?.getAutoUpdateSetting) {
+        window.electronAPI.getAutoUpdateSetting().then(enabled => {
+            setAutoUpdateEnabled(enabled);
+        });
+    }
+  }, []);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value, type, checked } = e.target;
@@ -87,6 +96,17 @@ const SettingsView: React.FC = () => {
         setTimeout(() => setIsKeySaved(false), 3000);
     });
   };
+
+  const handleAutoUpdateToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const enabled = e.target.checked;
+    setAutoUpdateEnabled(enabled);
+    window.electronAPI?.setAutoUpdateSetting(enabled);
+  };
+  
+  const handleCheckForUpdates = () => {
+    window.electronAPI?.checkForUpdates();
+  };
+
 
   const handleExportJson = () => {
       const state = getFullState();
@@ -364,6 +384,34 @@ const SettingsView: React.FC = () => {
             )}
         </div>
       </div>
+
+       <div className="pt-8 border-t">
+          <div className="flex items-center mb-4">
+              <CogIcon className="h-8 w-8 text-green-600 mr-3" />
+              <h3 className="text-xl font-bold text-gray-800">Обновления приложения</h3>
+          </div>
+          <div className="space-y-4">
+              <div>
+                  <label htmlFor="autoUpdateEnabled" className="flex items-center cursor-pointer">
+                      <div className="relative">
+                          <input type="checkbox" id="autoUpdateEnabled" name="autoUpdateEnabled" className="sr-only" checked={autoUpdateEnabled} onChange={handleAutoUpdateToggle} />
+                          <div className={`block w-14 h-8 rounded-full transition ${autoUpdateEnabled ? 'bg-green-600' : 'bg-gray-300'}`}></div>
+                          <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${autoUpdateEnabled ? 'translate-x-6' : ''}`}></div>
+                      </div>
+                      <div className="ml-3 text-gray-700">
+                          Автоматически проверять наличие обновлений при запуске
+                      </div>
+                  </label>
+              </div>
+              <button
+                  type="button"
+                  onClick={handleCheckForUpdates}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-lg transition-colors"
+              >
+                  Проверить обновления сейчас
+              </button>
+          </div>
+       </div>
 
        <div className="pt-8 border-t">
           <h3 className="text-xl font-bold text-gray-800 mb-4">Управление данными</h3>

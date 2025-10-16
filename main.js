@@ -8,6 +8,33 @@ const log = require('electron-log');
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
 
+// --- App Settings Management ---
+const SETTINGS_FILE = 'app-settings.json';
+const getSettingsPath = () => path.join(app.getPath('userData'), SETTINGS_FILE);
+let appSettings = {
+    autoUpdateEnabled: true,
+    lastProjectPath: null,
+};
+
+async function loadAppSettings() {
+    try {
+        const data = await fs.readFile(getSettingsPath(), 'utf-8');
+        appSettings = { ...appSettings, ...JSON.parse(data) };
+        console.log('Main process: App settings loaded.');
+    } catch (error) {
+        console.log('Main process: Could not load app settings, using defaults.');
+    }
+}
+
+async function saveAppSettings() {
+    try {
+        await fs.writeFile(getSettingsPath(), JSON.stringify(appSettings, null, 2), 'utf-8');
+    } catch (error) {
+        console.error('Main process: Failed to save app settings:', error);
+    }
+}
+
+
 let mainWindow;
 let userApiKey = process.env.API_KEY; // Initialize from env var, can be updated by user
 
@@ -41,8 +68,27 @@ async function createWindow() {
       // No autosave file, do nothing.
       console.log('Main process: No autosave file found.');
     }
-    // Check for updates once the window is ready
-    autoUpdater.checkForUpdatesAndNotify();
+    // Check for updates if enabled
+    if (appSettings.autoUpdateEnabled) {
+        console.log('Main process: Auto-update enabled, checking for updates...');
+        autoUpdater.checkForUpdatesAndNotify();
+    } else {
+        console.log('Main process: Auto-update disabled.');
+    }
+
+    // Load last project
+    if (appSettings.lastProjectPath) {
+        try {
+            await fs.access(appSettings.lastProjectPath);
+            const data = await fs.readFile(appSettings.lastProjectPath, 'utf-8');
+            console.log(`Main process: Loading last project from ${appSettings.lastProjectPath}`);
+            mainWindow.webContents.send('load-initial-project', { filePath: appSettings.lastProjectPath, data });
+        } catch (error) {
+            console.warn(`Main process: Could not load last project from ${appSettings.lastProjectPath}:`, error.message);
+            appSettings.lastProjectPath = null;
+            await saveAppSettings();
+        }
+    }
   });
   
   // Open DevTools automatically if not in production
@@ -52,7 +98,8 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await loadAppSettings();
   console.log('Main process: App is ready.');
   // --- IPC Handlers ---
 
@@ -104,6 +151,8 @@ app.whenReady().then(() => {
     try {
       await fs.writeFile(filePath, data, 'utf-8');
       console.log(`Main process: Saved file to ${filePath}`);
+      appSettings.lastProjectPath = filePath;
+      await saveAppSettings();
       return { success: true };
     } catch (error) {
       console.error('Failed to save file:', error);
@@ -125,6 +174,8 @@ app.whenReady().then(() => {
     try {
       await fs.writeFile(filePath, data, 'utf-8');
       console.log(`Main process: Saved file as ${filePath}`);
+      appSettings.lastProjectPath = filePath;
+      await saveAppSettings();
       return filePath;
     } catch (error) {
       console.error('Failed to save file as:', error);
@@ -180,21 +231,50 @@ app.whenReady().then(() => {
     }
   });
 
-  // --- Auto-updater IPC ---
+  // --- Auto-updater IPC and App Settings ---
+  ipcMain.handle('get-auto-update-setting', () => appSettings.autoUpdateEnabled);
+  ipcMain.handle('set-auto-update-setting', async (event, enabled) => {
+    appSettings.autoUpdateEnabled = enabled;
+    await saveAppSettings();
+    console.log(`Main process: Auto-update setting changed to: ${enabled}`);
+  });
+  ipcMain.handle('check-for-updates', () => {
+    console.log('Main process: Manual update check triggered.');
+    autoUpdater.checkForUpdates();
+  });
+  
   ipcMain.on('restart-app', () => {
     autoUpdater.quitAndInstall();
   });
   
-  autoUpdater.on('update-available', () => {
+  autoUpdater.on('update-available', (info) => {
     if (mainWindow) {
+        dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'Найдено обновление',
+            message: `Доступна новая версия ${info.version}. Загрузка начнется в фоновом режиме.`
+        });
       mainWindow.webContents.send('update-available');
     }
+  });
+
+   autoUpdater.on('update-not-available', (info) => {
+    dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'Проверка обновлений',
+        message: 'У вас установлена последняя версия приложения.'
+    });
   });
   
   autoUpdater.on('update-downloaded', () => {
     if (mainWindow) {
       mainWindow.webContents.send('update-downloaded');
     }
+  });
+
+  autoUpdater.on('error', (err) => {
+    log.error('Update error:', err);
+    dialog.showErrorBox('Ошибка обновления', `Не удалось проверить или загрузить обновление: ${err.message}`);
   });
 
 

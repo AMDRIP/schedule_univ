@@ -4,6 +4,7 @@ import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, 
 import AvailabilityGridEditor from './AvailabilityGridEditor';
 import { PlusIcon, TrashIcon } from './icons';
 import { OKSO_CODES, UGSN_FROM_OKSO } from '../data/codes';
+import { iconNames } from './IconMap';
 
 
 const TITLE_MAP: Record<DataType, { single: string }> = {
@@ -27,6 +28,8 @@ const TITLE_MAP: Record<DataType, { single: string }> = {
     classroomTypes: { single: 'тип аудитории' },
     subgroups: { single: 'подгруппу' },
     electives: { single: 'факультатив' },
+    // FIX: Added 'classroomTags' to satisfy the Record<DataType, ...> type.
+    classroomTags: { single: 'тег аудитории' },
 };
 
 
@@ -81,6 +84,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'classroomTypes': return { name: '' };
       case 'subgroups': return { name: '', parentGroupId: groups[0]?.id || '', studentCount: 12, teacherAssignments: [] };
       case 'electives': return { name: '', subjectId: subjects[0]?.id || '', teacherId: teachers[0]?.id || '', groupId: groups[0]?.id || '', hoursPerSemester: 32 };
+      case 'classroomTags': return { name: '', icon: 'BookmarkIcon', color: 'gray' };
       default: return {};
     }
   };
@@ -276,6 +280,29 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
 
     if (key === 'description' || key === 'notes') {
         return <div><label className="block text-sm font-medium text-gray-700">{labelMap[key] || key}</label><textarea name={key} value={formData[key] || ''} onChange={handleChange} className={`${defaultInputClass} h-24`}/></div>
+    }
+
+    if (dataType === 'classroomTags') {
+        if (key === 'icon') {
+            return (
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">Иконка</label>
+                    <select name="icon" value={formData.icon || ''} onChange={handleChange} className={defaultInputClass}>
+                        {iconNames.map(iconName => <option key={iconName} value={iconName}>{iconName}</option>)}
+                    </select>
+                </div>
+            );
+        }
+        if (key === 'color') {
+            return (
+                <div>
+                    <label className="block text-sm font-medium text-gray-700">Цвет</label>
+                    <select name="color" value={formData.color || ''} onChange={handleChange} className={defaultInputClass}>
+                        {['gray', 'red', 'yellow', 'green', 'blue', 'indigo', 'purple', 'pink'].map(color => <option key={color} value={color}>{color}</option>)}
+                    </select>
+                </div>
+            );
+        }
     }
 
     switch(key) {

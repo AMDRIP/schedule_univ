@@ -1,4 +1,5 @@
 
+
 import React from 'react';
 import { Role } from '../types';
 import { useStore } from '../hooks/useStore';
@@ -58,6 +59,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
         { name: 'Потоки', icon: <UserGroupIcon /> },
         { name: 'Аудитории', icon: <HomeIcon /> },
         { name: 'Типы аудиторий', icon: <HomeIcon /> },
+        { name: 'Теги аудиторий', icon: <BookmarkIcon /> },
         { name: 'Кабинеты', icon: <KeyIcon /> },
         { name: 'Расписание звонков', icon: <ClockIcon /> },
         { name: 'Расписание сокр. звонков', icon: <ClockIcon /> },

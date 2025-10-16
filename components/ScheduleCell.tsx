@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { useDrop, useDrag } from 'react-dnd';
 import { useStore } from '../hooks/useStore';
-import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode } from '../types';
+import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag } from '../types';
 import { CLASS_TYPE_COLORS, ItemTypes, DAYS_OF_WEEK } from '../constants';
 import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon } from './icons';
+import { renderIcon } from './IconMap';
 
 interface ScheduleEntryCardProps {
   entry: ScheduleEntry;
@@ -11,7 +12,7 @@ interface ScheduleEntryCardProps {
 }
 
 const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable }) => {
-  const { subjects, teachers, classrooms, groups, subgroups, schedule, updateScheduleEntry, deleteScheduleEntry, settings } = useStore();
+  const { subjects, teachers, classrooms, groups, subgroups, schedule, updateScheduleEntry, deleteScheduleEntry, settings, classroomTags } = useStore();
   const [isEditingClassroom, setIsEditingClassroom] = useState(false);
   const [isEditingDate, setIsEditingDate] = useState(false);
   const [isEditingDelivery, setIsEditingDelivery] = useState(false);
@@ -82,6 +83,8 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   
   const teacher = teachers.find(t => t.id === entry.teacherId);
   const classroom = classrooms.find(c => c.id === entry.classroomId);
+  const tags: (ClassroomTag | undefined)[] = useMemo(() => classroom?.tagIds?.map(tagId => classroomTags.find(t => t.id === tagId)).filter(Boolean) || [], [classroom, classroomTags]);
+
 
   if (!subject || !teacher || !classroom) {
     return (
@@ -128,7 +131,7 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
       <div className="mt-1">
         <p className="truncate" title={teacherName}>{teacherName}</p>
         <div className="font-semibold flex items-center justify-between">
-          <div className="flex items-center">
+          <div className="flex items-center gap-1">
             {isEditingClassroom ? (
                  <select value={entry.classroomId} onChange={handleClassroomChange} onBlur={() => setIsEditingClassroom(false)} className="w-full text-xs border-gray-400 rounded" autoFocus>
                     <option value={classroom.id}>Ауд. {classroom.number}</option>
@@ -137,6 +140,7 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
             ) : (
                 <>
                 <span className="truncate">Ауд. {classroom.number}</span>
+                 {tags.map(tag => tag && renderIcon(tag.icon, { key: tag.id, className: `w-3.5 h-3.5 text-gray-600`, title: tag.name }))}
                 {isEditable && <button onClick={() => setIsEditingClassroom(true)} className="ml-1 opacity-0 group-hover:opacity-100 text-blue-600 hover:text-blue-800"><EditIcon className="w-3 h-3"/></button>}
                 </>
             )}
