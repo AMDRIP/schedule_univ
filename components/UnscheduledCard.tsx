@@ -22,13 +22,31 @@ const UnscheduledCard: React.FC<UnscheduledCardProps> = ({ entry }) => {
 
   const subject = subjects.find(s => s.id === entry.subjectId);
   const teacher = teachers.find(t => t.id === entry.teacherId);
-  const group = groups.find(g => g.id === entry.groupId);
-  const subgroup = subgroups.find(sg => sg.id === entry.subgroupId);
+  
+  const getGroupName = () => {
+      if(entry.subgroupId) {
+          const group = groups.find(g => g.id === entry.groupId);
+          const subgroup = subgroups.find(sg => sg.id === entry.subgroupId);
+          return `${group?.number} (${subgroup?.name})`;
+      }
+      if(entry.groupIds && entry.groupIds.length > 0) {
+          const groupNumbers = entry.groupIds.map(gid => groups.find(g => g.id === gid)?.number).filter(Boolean);
+          if (groupNumbers.length > 2) {
+              return `${groupNumbers.slice(0, 2).join(', ')} и еще ${groupNumbers.length - 2}`;
+          }
+          return groupNumbers.join(', ');
+      }
+      if(entry.groupId) {
+          return groups.find(g => g.id === entry.groupId)?.number;
+      }
+      return 'N/A';
+  };
 
-  if (!subject || !teacher || !group) return null;
+  const groupName = getGroupName();
+
+  if (!subject || !teacher || !groupName) return null;
 
   const colorClass = CLASS_TYPE_COLORS[entry.classType] || 'bg-gray-100 border-gray-300';
-  const groupName = subgroup ? `${group.number} (${subgroup.name})` : group.number;
   
   return (
     <div

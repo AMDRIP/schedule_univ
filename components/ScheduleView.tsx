@@ -2,10 +2,10 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType, Teacher, Group, Classroom } from '../types';
 import { DAYS_OF_WEEK, PRODUCTION_CALENDAR_COLORS } from '../constants';
-import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
+import { getWeekType, toYYYYMMDD, getWeekDays, getWeekNumber } from '../utils/dateUtils';
 import ScheduleCell from './ScheduleCell';
 import UnscheduledDeck from './UnscheduledDeck';
-import { PlusIcon, ChevronDownIcon, BookmarkIcon, DocumentDownloadIcon, TrashIcon, DocumentTextIcon } from './icons';
+import { PlusIcon, ChevronDownIcon, BookmarkIcon, DocumentDownloadIcon, TrashIcon, DocumentTextIcon, ChevronLeftIcon, ChevronRightIcon } from './icons';
 import DatePicker from './DatePicker';
 import { exportScheduleAsPdf } from '../services/pdfExporter';
 import { exportScheduleAsTxt } from '../services/textExporter';
@@ -198,6 +198,10 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   const weekStart = useMemo(() => toYYYYMMDD(weekDays[0]), [weekDays]);
   const weekEnd = useMemo(() => toYYYYMMDD(weekDays[5]), [weekDays]);
   
+  const weekNumber = useMemo(() => {
+    return getWeekNumber(new Date(viewDate));
+  }, [viewDate]);
+
   const weekType = useMemo(() => {
     return getWeekType(new Date(viewDate), new Date(settings.semesterStart));
   }, [viewDate, settings.semesterStart]);
@@ -272,48 +276,34 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
         return entry.weekType === 'every' || entry.weekType === effectiveWeekType;
     };
     
-    let entries = schedule.filter(entry => {
+    return schedule.filter(entry => {
       if (!isEntryInCurrentWeek(entry)) return false;
 
       if (filterType === 'group') {
-        // Also include stream lectures for this group
-        const groupStream = streams.find(s => s.groupIds.includes(selectedId));
-        if (groupStream && entry.classType === ClassType.Lecture) {
-            return groupStream.groupIds.includes(entry.groupId);
-        }
-        return entry.groupId === selectedId;
+        return entry.groupId === selectedId || (entry.groupIds || []).includes(selectedId);
       }
       if (filterType === 'teacher') return entry.teacherId === selectedId;
       if (filterType === 'classroom') return entry.classroomId === selectedId;
       return false;
     });
 
-    // For stream lectures in group view, ensure we only show one card
-    if (filterType === 'group') {
-        const uniqueEntries = new Map<string, ScheduleEntry>();
-        const streamLectures = new Set<string>();
-
-        for(const entry of entries) {
-            const stream = streams.find(s => s.groupIds.includes(entry.groupId));
-            if (entry.classType === ClassType.Lecture && stream) {
-                const key = `${entry.day}-${entry.timeSlotId}-${entry.weekType}-${entry.date}-${entry.subjectId}`;
-                if (streamLectures.has(key)) continue;
-                streamLectures.add(key);
-                uniqueEntries.set(entry.id, entry);
-            } else {
-                uniqueEntries.set(entry.id, entry);
-            }
-        }
-        return Array.from(uniqueEntries.values());
-    }
-
-    return entries;
-
-  }, [schedule, filterType, selectedId, effectiveWeekType, weekStart, weekEnd, streams]);
+  }, [schedule, filterType, selectedId, effectiveWeekType, weekStart, weekEnd]);
   
   const handleDateSelect = (date: Date) => {
     setViewDate(toYYYYMMDD(date));
     setIsDatePickerOpen(false);
+  };
+
+  const handlePrevWeek = () => {
+    const date = new Date(viewDate);
+    date.setDate(date.getDate() - 7);
+    setViewDate(toYYYYMMDD(date));
+  };
+
+  const handleNextWeek = () => {
+    const date = new Date(viewDate);
+    date.setDate(date.getDate() + 7);
+    setViewDate(toYYYYMMDD(date));
   };
   
   const handleCopyWeek = (type: 'even' | 'odd') => {
@@ -465,19 +455,31 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
         <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
           <h2 className="text-2xl font-bold text-gray-800">Просмотр расписания</h2>
           <div className="flex items-center flex-wrap gap-2 sm:gap-4">
-            <div ref={datePickerRef} className="relative">
-                <button 
-                  onClick={() => setIsDatePickerOpen(!isDatePickerOpen)} 
-                  className="w-64 bg-blue-600 text-white font-semibold py-2 px-4 rounded-md flex justify-between items-center hover:bg-blue-700 transition"
-                >
-                  <span>{getFormattedDate()}</span>
-                  <ChevronDownIcon className={`w-5 h-5 transition-transform ${isDatePickerOpen ? 'rotate-180' : ''}`} />
+            <div className="flex items-center gap-1">
+                <button onClick={handlePrevWeek} title="Предыдущая неделя" className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 transition-colors">
+                    <ChevronLeftIcon className="w-5 h-5" />
                 </button>
-                {isDatePickerOpen && <DatePicker selectedDate={new Date(viewDate)} onSelect={handleDateSelect} onClose={() => setIsDatePickerOpen(false)} />}
+                <div ref={datePickerRef} className="relative">
+                    <button 
+                      onClick={() => setIsDatePickerOpen(!isDatePickerOpen)} 
+                      className="w-64 bg-blue-600 text-white font-semibold py-2 px-4 rounded-md flex justify-between items-center hover:bg-blue-700 transition"
+                    >
+                      <span>{getFormattedDate()}</span>
+                      <ChevronDownIcon className={`w-5 h-5 transition-transform ${isDatePickerOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {isDatePickerOpen && <DatePicker selectedDate={new Date(viewDate)} onSelect={handleDateSelect} onClose={() => setIsDatePickerOpen(false)} />}
+                </div>
+                 <button onClick={handleNextWeek} title="Следующая неделя" className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 transition-colors">
+                    <ChevronRightIcon className="w-5 h-5" />
+                </button>
             </div>
             
+            <span className="px-3 py-2 text-sm rounded-md font-semibold bg-gray-100 text-gray-800" title="Номер недели в году">
+              {weekNumber}-я неделя
+            </span>
+            
             {settings.useEvenOddWeekSeparation && (
-              <span className={`px-3 py-1 text-sm rounded-md font-semibold ${weekType === 'odd' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+              <span className={`px-3 py-2 text-sm rounded-md font-semibold ${weekType === 'odd' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
                   {weekType === 'odd' ? 'Нечётная' : 'Чётная'}
               </span>
             )}

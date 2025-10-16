@@ -5,15 +5,17 @@ import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag, 
 import { CLASS_TYPE_COLORS, ItemTypes, DAYS_OF_WEEK, COLOR_MAP } from '../constants';
 import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon } from './icons';
 import { renderIcon } from './IconMap';
+import { getWeekType } from '../utils/dateUtils';
 
 interface ScheduleEntryCardProps {
   entry: ScheduleEntry;
   isEditable: boolean;
   colorBy: 'type' | 'teacher' | 'subject';
+  cellDate: string;
 }
 
-const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable, colorBy }) => {
-  const { subjects, teachers, classrooms, groups, subgroups, schedule, updateScheduleEntry, deleteScheduleEntry, settings, classroomTags } = useStore();
+const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable, colorBy, cellDate }) => {
+  const { subjects, teachers, classrooms, groups, subgroups, streams, schedule, updateScheduleEntry, deleteScheduleEntry, settings, classroomTags } = useStore();
   const [isEditingClassroom, setIsEditingClassroom] = useState(false);
   const [isEditingDate, setIsEditingDate] = useState(false);
   const [isEditingDelivery, setIsEditingDelivery] = useState(false);
@@ -33,15 +35,24 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     }
   };
 
-  const group = useMemo(() => groups.find(g => g.id === entry.groupId), [entry, groups]);
+  const getInvolvedGroups = useMemo(() => {
+    if (entry.groupIds) {
+        return groups.filter(g => entry.groupIds!.includes(g.id));
+    }
+    if (entry.groupId) {
+        const group = groups.find(g => g.id === entry.groupId);
+        return group ? [group] : [];
+    }
+    return [];
+  }, [entry, groups]);
+
   const subject = useMemo(() => subjects.find(s => s.id === entry.subjectId), [entry, subjects]);
   const subgroup = useMemo(() => entry.subgroupId ? subgroups.find(sg => sg.id === entry.subgroupId) : undefined, [entry, subgroups]);
 
   const studentCount = useMemo(() => {
     if (subgroup) return subgroup.studentCount;
-    if (group) return group.studentCount;
-    return 0;
-  }, [group, subgroup]);
+    return getInvolvedGroups.reduce((sum, g) => sum + g.studentCount, 0);
+  }, [getInvolvedGroups, subgroup]);
 
   const availableClassrooms = useMemo(() => {
     if (!subject?.suitableClassroomTypeIds || studentCount === 0) return [];
@@ -88,10 +99,42 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   
   const isUndesirable = useMemo(() => {
     const teacherAvailability = teacher?.availabilityGrid?.[entry.day]?.[entry.timeSlotId];
-    const groupAvailability = group?.availabilityGrid?.[entry.day]?.[entry.timeSlotId];
+    const groupAvailabilities = getInvolvedGroups.map(g => g.availabilityGrid?.[entry.day]?.[entry.timeSlotId]);
 
-    return teacherAvailability === AvailabilityType.Undesirable || groupAvailability === AvailabilityType.Undesirable;
-  }, [entry, teacher, group]);
+    return teacherAvailability === AvailabilityType.Undesirable || groupAvailabilities.some(a => a === AvailabilityType.Undesirable);
+  }, [entry, teacher, getInvolvedGroups]);
+
+  const isConflicting = useMemo(() => {
+    if (!entry.teacherId || !entry.timeSlotId) return false;
+
+    const entryDate = entry.date || cellDate;
+    if (!entryDate) return false;
+
+    // Find all entries for this teacher that fall on the same concrete date and time slot
+    const entriesAtSameTime = schedule.filter(otherEntry => {
+        if (otherEntry.id === entry.id) return false;
+        if (otherEntry.teacherId !== entry.teacherId) return false;
+        if (otherEntry.timeSlotId !== entry.timeSlotId) return false;
+
+        // Determine the concrete date of the other entry for comparison
+        if (otherEntry.date) {
+            return otherEntry.date === entryDate;
+        } else {
+            // otherEntry is a template. Check if it applies on entryDate.
+            const d = new Date(entryDate + 'T00:00:00');
+            const dayName = DAYS_OF_WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1];
+            if (otherEntry.day !== dayName) return false;
+
+            const semesterStart = new Date(settings.semesterStart);
+            const week = getWeekType(d, semesterStart);
+            const effectiveWeek = settings.useEvenOddWeekSeparation ? week : 'every';
+
+            return otherEntry.weekType === 'every' || otherEntry.weekType === effectiveWeek;
+        }
+    });
+
+    return entriesAtSameTime.length > 0;
+  }, [entry, cellDate, schedule, settings]);
 
 
   if (!subject || !teacher || !classroom) {
@@ -105,7 +148,8 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   
   let colorClass = 'bg-gray-100 border-gray-300';
   let borderClass = '';
-  const warningClass = isUndesirable ? 'ring-2 ring-red-400 ring-offset-1' : '';
+  const warningClass = isUndesirable ? 'ring-2 ring-yellow-400 ring-offset-1' : '';
+  const conflictClass = isConflicting ? 'ring-2 ring-offset-1 ring-red-600' : '';
 
   if (settings.showScheduleColors) {
       switch (colorBy) {
@@ -136,10 +180,30 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   const teacherName = (settings.showDegreeInSchedule && teacher.academicDegree)
       ? `${teacher.name}, ${teacher.academicDegree}`
       : teacher.name;
-  const groupName = subgroup ? `${group?.number} (${subgroup.name})` : group?.number;
+
+  const getGroupName = () => {
+    if (entry.streamId) {
+        return streams.find(s => s.id === entry.streamId)?.name || 'Поток';
+    }
+    if (subgroup) {
+        const parentGroup = groups.find(g => g.id === entry.groupId);
+        return `${parentGroup?.number} (${subgroup.name})`;
+    }
+    if (entry.groupIds) {
+        const groupNumbers = entry.groupIds.map(gid => groups.find(g => g.id === gid)?.number).filter(Boolean);
+        if(groupNumbers.length > 2) return `${groupNumbers.slice(0, 2).join(', ')} и еще ${groupNumbers.length - 2}`;
+        return groupNumbers.join(', ');
+    }
+    if (entry.groupId) {
+        return groups.find(g => g.id === entry.groupId)?.number;
+    }
+    return 'N/A';
+  };
+
+  const groupName = getGroupName();
 
   return (
-    <div ref={isEditable ? drag as any : null} className={`p-1.5 rounded-md text-xs cursor-grab relative group transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${colorClass} ${borderClass} ${warningClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
+    <div ref={isEditable ? drag as any : null} className={`p-1.5 rounded-md text-xs cursor-grab relative group transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${colorClass} ${borderClass} ${warningClass} ${conflictClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
       <div>
         <p className="font-bold truncate">{subject.name}</p>
         <p>{entry.classType}</p>
@@ -229,14 +293,14 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
       // Check for Forbidden slots
       if (!settings.allowManualOverrideOfForbidden) {
           const teacher = teachers.find(t => t.id === item.teacherId);
-          const group = groups.find(g => g.id === item.groupId);
+          const involvedGroupIds = item.groupIds || (item.groupId ? [item.groupId] : []);
+          const involvedGroups = groups.filter(g => involvedGroupIds.includes(g.id));
 
           const teacherAvailability = teacher?.availabilityGrid?.[day]?.[timeSlotId];
-          const groupAvailability = group?.availabilityGrid?.[day]?.[timeSlotId];
+          if(teacherAvailability === AvailabilityType.Forbidden) return false;
 
-          if (teacherAvailability === AvailabilityType.Forbidden || groupAvailability === AvailabilityType.Forbidden) {
-              return false;
-          }
+          const groupForbidden = involvedGroups.some(g => g.availabilityGrid?.[day]?.[timeSlotId] === AvailabilityType.Forbidden);
+          if(groupForbidden) return false;
       }
 
       const itemType = monitor.getItemType();
@@ -274,7 +338,7 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
     <td ref={isEditable ? drop as any : null} className={`p-1 border align-top transition-colors ${cellBgClass}`}>
       <div className="h-full flex flex-col gap-1">
         {entries.map(entry => (
-          <ScheduleEntryCard key={entry.id} entry={entry} isEditable={isEditable} colorBy={colorBy} />
+          <ScheduleEntryCard key={entry.id} entry={entry} isEditable={isEditable} colorBy={colorBy} cellDate={date} />
         ))}
       </div>
     </td>

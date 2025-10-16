@@ -70,27 +70,20 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
         return entry.weekType === 'every' || entry.weekType === effectiveWeekType;
     });
 
-    const groupToStream = new Map<string, Stream>();
-    streams.forEach(s => s.groupIds.forEach(gid => groupToStream.set(gid, s)));
-
     relevantSchedule.forEach(entry => {
         const dayIndex = DAYS_OF_WEEK.indexOf(entry.day);
         if (dayIndex === -1 && !entry.date) return;
         const date = entry.date || toYYYYMMDD(weekDays[dayIndex]);
         
-        const stream = groupToStream.get(entry.groupId);
-        if (stream) {
-            stream.groupIds.forEach(gid => {
-                const key = `${gid}-${date}-${entry.timeSlotId}`;
-                map.set(key, entry);
-            });
-        } else {
-            const key = `${entry.groupId}-${date}-${entry.timeSlotId}`;
+        const involvedGroupIds = entry.groupIds || (entry.groupId ? [entry.groupId] : []);
+        
+        involvedGroupIds.forEach(gid => {
+            const key = `${gid}-${date}-${entry.timeSlotId}`;
             map.set(key, entry);
-        }
+        });
     });
     return map;
-  }, [schedule, weekStart, weekEnd, effectiveWeekType, weekDays, streams]);
+  }, [schedule, weekStart, weekEnd, effectiveWeekType, weekDays]);
 
   const handleDateSelect = (date: Date) => {
     setCurrentDate(toYYYYMMDD(date));

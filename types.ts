@@ -278,13 +278,15 @@ export interface HeuristicConfig {
 export interface ScheduleEntry extends BaseItem {
   day: string;
   timeSlotId: string;
-  groupId: string;
+  groupId?: string; // Is now optional
+  groupIds?: string[]; // For multi-group/partial stream lectures
   subgroupId?: string;
   subjectId: string;
   teacherId: string;
   classroomId: string;
   classType: ClassType;
   weekType: WeekType;
+  streamId?: string;
   deliveryMode: DeliveryMode;
   unscheduledUid?: string;
   date?: string; // For one-off events like exams
@@ -293,11 +295,11 @@ export interface ScheduleEntry extends BaseItem {
 export interface UnscheduledEntry {
   uid: string;
   subjectId: string;
-  groupId: string;
+  groupId?: string; // Is now optional
+  groupIds?: string[]; // For multi-group/partial stream lectures
   subgroupId?: string;
   classType: ClassType;
   teacherId: string;
-  // Heuristic-specific properties
   streamId?: string;
   studentCount: number;
 }

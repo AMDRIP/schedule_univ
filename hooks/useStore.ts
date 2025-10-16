@@ -124,7 +124,7 @@ const generateUnscheduledEntries = (
     const groupToStreamMap = new Map<string, string>();
     streams.forEach(stream => stream.groupIds.forEach(groupId => groupToStreamMap.set(groupId, stream.id)));
 
-    const processedStreamLectures = new Set<string>(); // key: `${subjectId}-${streamId}`
+    const processedGroupLectures = new Set<string>(); // key: `${subjectId}-${groupId}` to track handled groups
 
     groups.forEach(group => {
         const plan = educationalPlans.find(p => p.specialtyId === group.specialtyId);
@@ -134,44 +134,57 @@ const generateUnscheduledEntries = (
         const relevantEntries = plan.entries.filter(e => e.semester === currentSemester);
 
         relevantEntries.forEach(planEntry => {
-            const streamId = groupToStreamMap.get(group.id);
+            let teacherId: string | undefined;
 
             // 1. Handle Lectures
-            if (planEntry.lectureHours > 0) {
-                let teacherId: string | undefined;
+            if (planEntry.lectureHours > 0 && !processedGroupLectures.has(`${planEntry.subjectId}-${group.id}`)) {
                 const numClasses = Math.ceil(planEntry.lectureHours / 2);
+                const streamId = groupToStreamMap.get(group.id);
 
+                let lectureGroups: Group[] = [group];
+                
+                // If in a stream, find all other groups in that stream with the same lecture
                 if (streamId) {
-                    const streamKey = `${planEntry.subjectId}-${streamId}`;
-                    if (!processedStreamLectures.has(streamKey)) {
-                        processedStreamLectures.add(streamKey);
-                        const stream = streams.find(s => s.id === streamId)!;
-                        const streamGroups = groups.filter(g => stream.groupIds.includes(g.id));
-                        const studentCount = streamGroups.reduce((sum, g) => sum + g.studentCount, 0);
-                        teacherId = links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
-                        
-                        if (teacherId) {
-                            for (let i = 0; i < numClasses; i++) {
-                                entries.push({
-                                    uid: `unsched-${planEntry.subjectId}-${streamId}-${ClassType.Lecture}-${i}`,
-                                    subjectId: planEntry.subjectId, groupId: group.id,
-                                    classType: ClassType.Lecture, teacherId, streamId, studentCount,
-                                });
+                    const stream = streams.find(s => s.id === streamId)!;
+                    const otherStreamGroups = groups.filter(g => stream.groupIds.includes(g.id) && g.id !== group.id);
+
+                    otherStreamGroups.forEach(otherGroup => {
+                        const otherPlan = educationalPlans.find(p => p.specialtyId === otherGroup.specialtyId);
+                        if (otherPlan && otherPlan.entries.some(e => e.semester === currentSemester && e.subjectId === planEntry.subjectId && e.lectureHours > 0)) {
+                            lectureGroups.push(otherGroup);
+                        }
+                    });
+                }
+                
+                teacherId = links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
+                if (teacherId) {
+                    const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
+                    const groupIds = lectureGroups.map(g => g.id);
+                    
+                    for (let i = 0; i < numClasses; i++) {
+                        const entry: UnscheduledEntry = {
+                            uid: `unsched-${planEntry.subjectId}-${groupIds.join('_')}-${ClassType.Lecture}-${i}`,
+                            subjectId: planEntry.subjectId,
+                            classType: ClassType.Lecture,
+                            teacherId,
+                            studentCount,
+                        };
+                        if (lectureGroups.length > 1) {
+                            entry.groupIds = groupIds;
+                            // Check if this is a full stream lecture
+                            const stream = streams.find(s => s.id === streamId);
+                            if(stream && stream.groupIds.length === groupIds.length){
+                                entry.streamId = streamId;
                             }
+                        } else {
+                            entry.groupId = group.id;
                         }
-                    }
-                } else { // Regular group lecture
-                    teacherId = links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
-                    if (teacherId) {
-                        for (let i = 0; i < numClasses; i++) {
-                            entries.push({
-                                uid: `unsched-${planEntry.subjectId}-${group.id}-${ClassType.Lecture}-${i}`,
-                                subjectId: planEntry.subjectId, groupId: group.id,
-                                classType: ClassType.Lecture, teacherId, studentCount: group.studentCount,
-                            });
-                        }
+                        entries.push(entry);
                     }
                 }
+                
+                // Mark all participating groups as processed for this subject's lecture
+                lectureGroups.forEach(g => processedGroupLectures.add(`${planEntry.subjectId}-${g.id}`));
             }
             
             // 2. Handle Practices and Labs
@@ -186,7 +199,7 @@ const generateUnscheduledEntries = (
                 if (planEntry.splitForSubgroups && groupSubgroups.length > 0) {
                     groupSubgroups.forEach(subgroup => {
                         const assignment = subgroup.teacherAssignments?.find(a => a.subjectId === planEntry.subjectId && a.classType === type);
-                        let teacherId = assignment?.teacherId ?? links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
+                        teacherId = assignment?.teacherId ?? links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
                         if (teacherId) {
                             for (let i = 0; i < numClasses; i++) {
                                 entries.push({
@@ -198,7 +211,7 @@ const generateUnscheduledEntries = (
                         }
                     });
                 } else { // Whole group for practice/lab
-                    const teacherId = links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
+                    teacherId = links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
                     if (teacherId) {
                         for (let i = 0; i < numClasses; i++) {
                             entries.push({
@@ -359,7 +372,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
     }
     
-    const getEntryKey = (e: UnscheduledEntry) => `${e.subjectId}-${e.groupId}-${e.subgroupId || ''}-${e.classType}`;
+    const getEntryKey = (e: UnscheduledEntry) => `${e.subjectId}-${e.groupId || ''}-${(e.groupIds || []).join('_')}-${e.subgroupId || ''}-${e.classType}`;
 
     const totalDemand = new Map<string, number>();
     allPossibleEntries.forEach(entry => {
@@ -660,7 +673,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const classroomTagIds = getSet('classroomTags');
     
     setSchedule(prev => prev.filter(e => 
-        !groupIds.has(e.groupId) &&
+        !groupIds.has(e.groupId || '') &&
+        !(e.groupIds || []).some(gid => groupIds.has(gid)) &&
         !teacherIds.has(e.teacherId) &&
         !subjectIds.has(e.subjectId) &&
         !classroomIds.has(e.classroomId) &&
@@ -702,9 +716,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
       }
 
-      const studentCount = item.subgroupId ? subgroups.find(sg => sg.id === item.subgroupId)?.studentCount : groups.find(g => g.id === item.groupId)?.studentCount;
       const subject = subjects.find(s => s.id === item.subjectId);
-      if (!studentCount || !subject) {
+      if (!item.studentCount || !subject) {
         alert("Группа или дисциплина для занятия не найдена");
         return;
       }
@@ -735,12 +748,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (occupants.length >= (settings.allowOverbooking ? 2 : 1)) {
             return false;
         }
-        if (c.capacity < studentCount) return false;
+        if (c.capacity < item.studentCount) return false;
         return subject.suitableClassroomTypeIds?.includes(c.typeId);
       });
 
       if (!suitableClassroom) {
-          alert(`Нет подходящей свободной аудитории для занятия "${subject.name}" с вместимостью ${studentCount}.`);
+          alert(`Нет подходящей свободной аудитории для занятия "${subject.name}" с вместимостью ${item.studentCount}.`);
           return;
       }
       const newEntry: ScheduleEntry = {
@@ -750,7 +763,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           weekType: 'every', // A dated entry is absolute
           date: date, // Set the specific date for the entry
           groupId: item.groupId,
+          groupIds: item.groupIds,
           subgroupId: item.subgroupId,
+          streamId: item.streamId,
           subjectId: item.subjectId,
           teacherId: item.teacherId,
           classroomId: suitableClassroom.id,
@@ -836,7 +851,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 // 3. Find a matching available entry from our pool to "consume".
                 const matchingUnscheduledIndex = availablePool.findIndex(unsched =>
                     unsched.subjectId === templateEntry.subjectId &&
-                    unsched.groupId === templateEntry.groupId &&
+                    (unsched.groupId === templateEntry.groupId || (unsched.groupIds || []).join(',') === (templateEntry.groupIds || []).join(',')) &&
                     (unsched.subgroupId || null) === (templateEntry.subgroupId || null) &&
                     unsched.classType === templateEntry.classType &&
                     unsched.teacherId === templateEntry.teacherId
@@ -941,7 +956,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 const startDate = new Date(config.timeFrame.start + 'T00:00:00');
                 const endDate = new Date(config.timeFrame.end + 'T00:00:00');
                  if (entryDate >= startDate && entryDate <= endDate) {
-                     if (config.target?.type === 'group' && entry.groupId === config.target.id) return false;
+                     if (config.target?.type === 'group') {
+                        if(entry.groupId === config.target.id) return false;
+                        if(entry.groupIds?.includes(config.target.id)) return false;
+                     }
                      if (config.target?.type === 'teacher' && entry.teacherId === config.target.id) return false;
                      if (config.target?.type === 'classroom' && entry.classroomId === config.target.id) return false;
                  }
@@ -974,7 +992,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const tempUnscheduled = [...allPossibleEntries];
     newSchedule.forEach(schedEntry => {
         const matchIndex = tempUnscheduled.findIndex(unsched => 
-            unsched.groupId === schedEntry.groupId &&
+            (unsched.groupId === schedEntry.groupId || (unsched.groupIds || []).join(',') === (schedEntry.groupIds || []).join(',')) &&
             (unsched.subgroupId || '') === (schedEntry.subgroupId || '') &&
             unsched.subjectId === schedEntry.subjectId &&
             unsched.classType === schedEntry.classType

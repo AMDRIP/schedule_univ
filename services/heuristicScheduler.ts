@@ -42,7 +42,7 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
     const groupToStreamMap = new Map<string, string>();
     streams.forEach(stream => stream.groupIds.forEach(groupId => groupToStreamMap.set(groupId, stream.id)));
 
-    const processedStreamLectures = new Set<string>(); // key: `${subjectId}-${streamId}`
+    const processedGroupLectures = new Set<string>(); // key: `${subjectId}-${groupId}` to track handled groups
 
     groups.forEach(group => {
         const plan = educationalPlans.find(p => p.specialtyId === group.specialtyId);
@@ -52,44 +52,57 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
         const relevantEntries = plan.entries.filter(e => e.semester === currentSemester);
 
         relevantEntries.forEach(planEntry => {
-            const streamId = groupToStreamMap.get(group.id);
+            let teacherId: string | undefined;
 
-            // 1. Handle Lectures
-            if (planEntry.lectureHours > 0) {
-                let teacherId: string | undefined;
+             // 1. Handle Lectures
+            if (planEntry.lectureHours > 0 && !processedGroupLectures.has(`${planEntry.subjectId}-${group.id}`)) {
                 const numClasses = Math.ceil(planEntry.lectureHours / 2);
+                const streamId = groupToStreamMap.get(group.id);
 
+                let lectureGroups: Group[] = [group];
+                
+                // If in a stream, find all other groups in that stream with the same lecture
                 if (streamId) {
-                    const streamKey = `${planEntry.subjectId}-${streamId}`;
-                    if (!processedStreamLectures.has(streamKey)) {
-                        processedStreamLectures.add(streamKey);
-                        const stream = streams.find(s => s.id === streamId)!;
-                        const streamGroups = groups.filter(g => stream.groupIds.includes(g.id));
-                        const studentCount = streamGroups.reduce((sum, g) => sum + g.studentCount, 0);
-                        teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
-                        
-                        if (teacherId) {
-                            for (let i = 0; i < numClasses; i++) {
-                                entries.push({
-                                    uid: `unsched-${planEntry.subjectId}-${streamId}-${ClassType.Lecture}-${i}`,
-                                    subjectId: planEntry.subjectId, groupId: group.id,
-                                    classType: ClassType.Lecture, teacherId, streamId, studentCount,
-                                });
+                    const stream = streams.find(s => s.id === streamId)!;
+                    const otherStreamGroups = groups.filter(g => stream.groupIds.includes(g.id) && g.id !== group.id);
+
+                    otherStreamGroups.forEach(otherGroup => {
+                        const otherPlan = educationalPlans.find(p => p.specialtyId === otherGroup.specialtyId);
+                        if (otherPlan && otherPlan.entries.some(e => e.semester === currentSemester && e.subjectId === planEntry.subjectId && e.lectureHours > 0)) {
+                            lectureGroups.push(otherGroup);
+                        }
+                    });
+                }
+                
+                teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
+                if (teacherId) {
+                    const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
+                    const groupIds = lectureGroups.map(g => g.id);
+                    
+                    for (let i = 0; i < numClasses; i++) {
+                        const entry: UnscheduledEntry = {
+                            uid: `unsched-${planEntry.subjectId}-${groupIds.join('_')}-${ClassType.Lecture}-${i}`,
+                            subjectId: planEntry.subjectId,
+                            classType: ClassType.Lecture,
+                            teacherId,
+                            studentCount,
+                        };
+                        if (lectureGroups.length > 1) {
+                            entry.groupIds = groupIds;
+                            // Check if this is a full stream lecture
+                            const stream = streams.find(s => s.id === streamId);
+                            if(stream && stream.groupIds.length === groupIds.length){
+                                entry.streamId = streamId;
                             }
+                        } else {
+                            entry.groupId = group.id;
                         }
-                    }
-                } else { // Regular group lecture
-                    teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
-                    if (teacherId) {
-                        for (let i = 0; i < numClasses; i++) {
-                            entries.push({
-                                uid: `unsched-${planEntry.subjectId}-${group.id}-${ClassType.Lecture}-${i}`,
-                                subjectId: planEntry.subjectId, groupId: group.id,
-                                classType: ClassType.Lecture, teacherId, studentCount: group.studentCount,
-                            });
-                        }
+                        entries.push(entry);
                     }
                 }
+                
+                // Mark all participating groups as processed for this subject's lecture
+                lectureGroups.forEach(g => processedGroupLectures.add(`${planEntry.subjectId}-${g.id}`));
             }
             
             // 2. Handle Practices and Labs
@@ -104,7 +117,7 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
                 if (planEntry.splitForSubgroups && groupSubgroups.length > 0) {
                     groupSubgroups.forEach(subgroup => {
                         const assignment = subgroup.teacherAssignments?.find(a => a.subjectId === planEntry.subjectId && a.classType === type);
-                        let teacherId = assignment?.teacherId ?? teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
+                        teacherId = assignment?.teacherId ?? teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
                         if (teacherId) {
                             for (let i = 0; i < numClasses; i++) {
                                 entries.push({
@@ -116,7 +129,7 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
                         }
                     });
                 } else { // Whole group for practice/lab
-                    const teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
+                    teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
                     if (teacherId) {
                         for (let i = 0; i < numClasses; i++) {
                             entries.push({
@@ -180,7 +193,10 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
              const startDate = new Date(timeFrame.start + 'T00:00:00');
              const endDate = new Date(timeFrame.end + 'T00:00:00');
              if (entryDate >= startDate && entryDate <= endDate) {
-                 if (target.type === 'group' && entry.groupId === target.id) return false;
+                if (target.type === 'group') {
+                    if(entry.groupId === target.id) return false;
+                    if(entry.groupIds?.includes(target.id)) return false;
+                 }
                  if (target.type === 'teacher' && entry.teacherId === target.id) return false;
                  if (target.type === 'classroom' && entry.classroomId === target.id) return false;
              }
@@ -192,9 +208,10 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         if (!entry.date) return; // Only consider dated entries for conflict checking
         const bookingKey = `${entry.date}-${entry.timeSlotId}`;
         resourceBookings.get(`teacher-${entry.teacherId}`)?.add(bookingKey);
-        resourceBookings.get(`group-${entry.groupId}`)?.add(bookingKey);
-        if(entry.subgroupId) { // Also book the parent group
-             resourceBookings.get(`group-${entry.groupId}`)?.add(bookingKey);
+        if(entry.groupIds) {
+            entry.groupIds.forEach(gid => resourceBookings.get(`group-${gid}`)?.add(bookingKey));
+        } else if (entry.groupId) {
+            resourceBookings.get(`group-${entry.groupId}`)?.add(bookingKey);
         }
         resourceBookings.get(`classroom-${entry.classroomId}`)?.add(bookingKey);
     });
@@ -206,7 +223,9 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
 
     if (target) {
         classPool = classPool.filter(entry => {
-            if (target.type === 'group') return entry.groupId === target.id;
+            if (target.type === 'group') {
+                return entry.groupId === target.id || (entry.groupIds || []).includes(target.id);
+            }
             if (target.type === 'teacher') return entry.teacherId === target.id;
             return true; // Classroom target is a preference, not a filter
         });
@@ -233,10 +252,10 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         let bestSlots: { date: Date, timeSlotId: string, classroom: Classroom, cost: number }[] = [];
         const TOP_N_CANDIDATES = 5;
         
-        const parentGroup = groups.find(g => g.id === entryToPlace.groupId);
-        if (!parentGroup) { unschedulable.push(entryToPlace); continue; }
-        const involvedGroups = entryToPlace.streamId ? data.groups.filter(g => data.streams.find(s => s.id === entryToPlace.streamId)?.groupIds.includes(g.id)) : [parentGroup];
-        if (involvedGroups.length === 0) { unschedulable.push(entryToPlace); continue; }
+        const involvedGroupIds = entryToPlace.groupIds || (entryToPlace.groupId ? [entryToPlace.groupId] : []);
+        if (involvedGroupIds.length === 0) { unschedulable.push(entryToPlace); continue; }
+        const involvedGroups = groups.filter(g => involvedGroupIds.includes(g.id));
+        if (involvedGroups.length !== involvedGroupIds.length) { unschedulable.push(entryToPlace); continue; }
         
         const subject = subjects.find(s => s.id === entryToPlace.subjectId);
         if (!subject) { unschedulable.push(entryToPlace); continue; }
@@ -277,24 +296,24 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             const bookingKey = `${toYYYYMMDD(chosenSlot.date)}-${chosenSlot.timeSlotId}`;
             const dayName = DAYS_OF_WEEK[chosenSlot.date.getDay() === 0 ? 6 : chosenSlot.date.getDay() - 1];
 
-            const groupsToCreateEntriesFor = entryToPlace.streamId ? involvedGroups : [parentGroup];
-            groupsToCreateEntriesFor.forEach(group => {
-                 newSchedule.push({
-                    id: `sched-h-${group.id}-${Math.random()}`,
-                    day: dayName,
-                    date: toYYYYMMDD(chosenSlot.date),
-                    timeSlotId: chosenSlot.timeSlotId,
-                    classroomId: chosenSlot.classroom.id,
-                    groupId: entryToPlace.subgroupId ? entryToPlace.groupId : group.id,
-                    subgroupId: entryToPlace.subgroupId,
-                    subjectId: entryToPlace.subjectId,
-                    teacherId: entryToPlace.teacherId,
-                    classType: entryToPlace.classType,
-                    deliveryMode: DeliveryMode.Offline,
-                    unscheduledUid: entryToPlace.uid,
-                    weekType: 'every' // Dated entries don't need week separation
-                });
-            });
+            const newEntry: ScheduleEntry = {
+                id: `sched-h-${entryToPlace.uid}-${Math.random()}`,
+                day: dayName,
+                date: toYYYYMMDD(chosenSlot.date),
+                timeSlotId: chosenSlot.timeSlotId,
+                classroomId: chosenSlot.classroom.id,
+                groupId: entryToPlace.groupId,
+                groupIds: entryToPlace.groupIds,
+                subgroupId: entryToPlace.subgroupId,
+                streamId: entryToPlace.streamId,
+                subjectId: entryToPlace.subjectId,
+                teacherId: entryToPlace.teacherId,
+                classType: entryToPlace.classType,
+                deliveryMode: DeliveryMode.Offline,
+                unscheduledUid: entryToPlace.uid,
+                weekType: 'every' // Dated entries don't need week separation
+            };
+            newSchedule.push(newEntry);
 
             resourceBookings.get(`teacher-${entryToPlace.teacherId}`)?.add(bookingKey);
             resourceBookings.get(`classroom-${chosenSlot.classroom.id}`)?.add(bookingKey);
@@ -313,11 +332,11 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
 const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData): number => {
     let score = 0;
     const { groups, subjects, teachers, teacherSubjectLinks } = data;
-    const group = groups.find(g => g.id === entry.groupId);
+    const group = groups.find(g => g.id === (entry.groupId || entry.groupIds?.[0]));
     const subject = subjects.find(s => s.id === entry.subjectId);
     const teacher = teachers.find(t => t.id === entry.teacherId);
 
-    if (entry.streamId) score += 200;
+    if (entry.streamId || (entry.groupIds && entry.groupIds.length > 1)) score += 200;
     if (entry.classType === ClassType.Lab) score += 100;
     if (entry.classType === ClassType.Elective) score -= 50;
     if (entry.subgroupId) score += 50;
@@ -335,11 +354,12 @@ const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData): numb
 };
 
 const doesConditionApply = (condition: RuleCondition, entry: UnscheduledEntry): boolean => {
+    const groupIds = entry.groupIds || (entry.groupId ? [entry.groupId] : []);
     switch (condition.entityType) {
         case 'teacher':
             return condition.entityIds.includes(entry.teacherId);
         case 'group':
-            return condition.entityIds.includes(entry.groupId);
+            return groupIds.some(gid => condition.entityIds.includes(gid));
         case 'subject':
             if (condition.entityIds.includes(entry.subjectId)) {
                 return !condition.classType || condition.classType === entry.classType;
@@ -375,7 +395,9 @@ const calculateSlotCost = (
         const sched = [...data.schedule, ...newSchedule];
         return sched.find(e => {
             if (`${e.date}-${e.timeSlotId}` !== key) return false;
-            if (involvedGroups.some(g => resourceFn(g) === `group-${e.groupId}`)) return true;
+            const entryGroupIds = e.groupIds || (e.groupId ? [e.groupId] : []);
+            const involvedGroupIds = involvedGroups.map(g => g.id);
+            if (entryGroupIds.some(gid => involvedGroupIds.includes(gid))) return true;
             return false;
         });
     }
@@ -475,9 +497,10 @@ const calculateSlotCost = (
                 if (rule.param !== undefined) {
                     const dayBookings = [...data.schedule, ...newSchedule].filter(e => e.date === dateStr);
                     let count = dayBookings.filter(booking => {
+                        const bookingGroupIds = booking.groupIds || (booking.groupId ? [booking.groupId] : []);
                         switch (conditionA.entityType) {
                             case 'teacher': return conditionA.entityIds.includes(booking.teacherId);
-                            case 'group': return conditionA.entityIds.includes(booking.groupId);
+                            case 'group': return bookingGroupIds.some(gid => conditionA.entityIds.includes(gid));
                             case 'subject': return conditionA.entityIds.includes(booking.subjectId) && (!conditionA.classType || conditionA.classType === booking.classType);
                             default: return false;
                         }
