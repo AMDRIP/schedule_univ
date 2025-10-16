@@ -239,6 +239,7 @@ interface StoreState {
   currentFilePath: string | null;
   lastAutosave: Date | null;
   apiKey: string;
+  unscheduledTimeHorizon: 'semester' | 'week' | 'twoWeeks';
   
   addItem: (dataType: DataType, item: Omit<DataItem, 'id'>) => void;
   updateItem: (dataType: DataType, item: DataItem) => void;
@@ -254,6 +255,7 @@ interface StoreState {
   propagateWeekSchedule: (weekTypeToCopy: 'even' | 'odd') => void;
   saveCurrentScheduleAsTemplate: (name: string, description: string) => void;
   loadScheduleFromTemplate: (templateId: string) => void;
+  setUnscheduledTimeHorizon: (horizon: 'semester' | 'week' | 'twoWeeks') => void;
   runScheduler: (method: 'heuristic' | 'gemini') => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
   clearSchedule: () => void;
   startNewProject: () => void;
@@ -322,13 +324,79 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [apiKey, setApiKey] = useState('');
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
   const [lastAutosave, setLastAutosave] = useState<Date | null>(null);
+  const [unscheduledTimeHorizon, setUnscheduledTimeHorizon] = useState<'semester' | 'week' | 'twoWeeks'>('semester');
 
   useEffect(() => {
     const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
     const scheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
-    const newUnscheduled = allPossibleEntries.filter(e => !scheduledUids.has(e.uid));
+    const allUnscheduledForSemester = allPossibleEntries.filter(e => !scheduledUids.has(e.uid));
+
+    if (unscheduledTimeHorizon === 'semester') {
+      setUnscheduledEntries(allUnscheduledForSemester);
+      return;
+    }
+
+    let weeksInSemester = 16;
+    if (settings.semesterStart && settings.semesterEnd) {
+      const start = new Date(settings.semesterStart);
+      const end = new Date(settings.semesterEnd);
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start) {
+        weeksInSemester = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 7));
+      }
+    }
+    
+    const getEntryKey = (e: UnscheduledEntry) => `${e.subjectId}-${e.groupId}-${e.subgroupId || ''}-${e.classType}`;
+
+    const totalDemand = new Map<string, number>();
+    allPossibleEntries.forEach(entry => {
+        const key = getEntryKey(entry);
+        totalDemand.set(key, (totalDemand.get(key) || 0) + 1);
+    });
+
+    const scheduledCount = new Map<string, number>();
+    allPossibleEntries.forEach(entry => {
+        if (scheduledUids.has(entry.uid)) {
+            const key = getEntryKey(entry);
+            scheduledCount.set(key, (scheduledCount.get(key) || 0) + 1);
+        }
+    });
+
+    const unscheduledGroups = new Map<string, UnscheduledEntry[]>();
+    allUnscheduledForSemester.forEach(entry => {
+        const key = getEntryKey(entry);
+        if (!unscheduledGroups.has(key)) unscheduledGroups.set(key, []);
+        unscheduledGroups.get(key)!.push(entry);
+    });
+
+    const horizonWeeks = unscheduledTimeHorizon === 'week' ? 1 : 2;
+    const newUnscheduled: UnscheduledEntry[] = [];
+
+    unscheduledGroups.forEach((unscheduledList, key) => {
+        const demand = totalDemand.get(key) || 0;
+        if (demand === 0) return;
+
+        const classesPerWeek = demand / weeksInSemester;
+        const goalForHorizon = Math.ceil(classesPerWeek * horizonWeeks);
+        if (goalForHorizon <= 0) return;
+
+        const numScheduled = scheduledCount.get(key) || 0;
+        const progressInCurrentGoal = numScheduled % goalForHorizon;
+        
+        let numToShow = 0;
+        // If a full "goal" block was just completed, show 0 for this cycle.
+        // This makes the count decrease as expected.
+        if (numScheduled > 0 && progressInCurrentGoal === 0) {
+            numToShow = 0;
+        } else {
+            // Otherwise, show the remaining items to complete the current goal.
+            numToShow = goalForHorizon - progressInCurrentGoal;
+        }
+        
+        newUnscheduled.push(...unscheduledList.slice(0, numToShow));
+    });
+
     setUnscheduledEntries(newUnscheduled);
-  }, [groups, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives]);
+  }, [groups, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives, unscheduledTimeHorizon, settings.semesterStart, settings.semesterEnd]);
 
   useEffect(() => {
     const initializeApiKey = async () => {
@@ -833,10 +901,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const value: StoreState = {
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
-    classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey,
+    classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey, unscheduledTimeHorizon,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings, updateApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
-    runScheduler, clearSchedule, removeScheduleEntries,
+    runScheduler, clearSchedule, removeScheduleEntries, setUnscheduledTimeHorizon,
     startNewProject, handleOpen, handleSave, handleSaveAs,
     getFullState, loadFullState, clearAllData, mergeFullState
   };
