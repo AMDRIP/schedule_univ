@@ -12,12 +12,13 @@ interface HeaderProps {
   onSaveAs: () => void;
   onRunScheduler: (method: 'heuristic' | 'gemini') => void;
   onClearSchedule: () => void;
+  onResetSchedule: () => void;
   isScheduling: boolean;
 }
 
 const Header: React.FC<HeaderProps> = ({ 
     currentRole, onRoleChange, onNew, onOpen, onSave, onSaveAs, 
-    onRunScheduler, onClearSchedule, isScheduling 
+    onRunScheduler, onClearSchedule, onResetSchedule, isScheduling 
 }) => {
   const [isProjectMenuOpen, setProjectMenuOpen] = useState(false);
   const [isSchedulerMenuOpen, setSchedulerMenuOpen] = useState(false);
@@ -86,6 +87,13 @@ const Header: React.FC<HeaderProps> = ({
                   Запустить с помощью AI (Gemini)
                 </a>
                 <div className="border-t border-gray-100 my-1"></div>
+                 <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); onResetSchedule(); setSchedulerMenuOpen(false); }}
+                  className="block px-4 py-2 text-sm text-orange-600 hover:bg-orange-50"
+                >
+                  Сбросить состояние...
+                </a>
                  <a
                   href="#"
                   onClick={(e) => { e.preventDefault(); onClearSchedule(); setSchedulerMenuOpen(false); }}

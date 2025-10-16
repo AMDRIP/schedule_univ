@@ -15,7 +15,7 @@ const AppContent: React.FC = () => {
   const [isNewProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
-  const { runScheduler, clearSchedule, startNewProject, handleOpen, handleSave, handleSaveAs, settings } = useStore();
+  const { runScheduler, clearSchedule, resetSchedule, startNewProject, handleOpen, handleSave, handleSaveAs, settings } = useStore();
 
   useEffect(() => {
     console.log('Renderer process started. AppContent mounted.');
@@ -71,6 +71,10 @@ const AppContent: React.FC = () => {
       clearSchedule();
   };
 
+  const handleResetSchedule = () => {
+      resetSchedule();
+  };
+
   const handleNewProjectConfirm = () => {
     startNewProject();
     setNewProjectConfirmOpen(false);
@@ -93,6 +97,7 @@ const AppContent: React.FC = () => {
           onSaveAs={handleSaveAs}
           onRunScheduler={handleRunScheduler}
           onClearSchedule={handleClearSchedule}
+          onResetSchedule={handleResetSchedule}
           isScheduling={isScheduling}
         />
         <Dashboard currentRole={currentRole} />

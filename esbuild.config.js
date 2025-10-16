@@ -5,13 +5,15 @@ const fs = require('fs');
 
 const distDir = 'dist';
 
-// Create dist directory if it doesn't exist
-if (!fs.existsSync(distDir)) {
-    fs.mkdirSync(distDir);
-}
-
 async function build() {
     try {
+        // Clean dist directory before building
+        if (fs.existsSync(distDir)) {
+            fs.rmSync(distDir, { recursive: true, force: true });
+        }
+        // Create dist directory
+        fs.mkdirSync(distDir);
+
         await esbuild.build({
             entryPoints: ['index.tsx'],
             bundle: true,

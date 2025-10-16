@@ -258,6 +258,7 @@ interface StoreState {
   setUnscheduledTimeHorizon: (horizon: 'semester' | 'week' | 'twoWeeks') => void;
   runScheduler: (method: 'heuristic' | 'gemini') => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
   clearSchedule: () => void;
+  resetSchedule: () => void;
   startNewProject: () => void;
   handleOpen: () => Promise<void>;
   handleSave: () => Promise<void>;
@@ -854,6 +855,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return { scheduled: 0, unscheduled: 0, failedEntries: [] };
   };
 
+  const resetSchedule = () => {
+    if (window.confirm("Вы уверены, что хотите сбросить состояние расписания? \n\nЭто действие вернет все размещенные занятия в список нераспределенных. Рекомендуется использовать, если вы столкнулись с некорректной логикой отображения после обновления приложения.")) {
+        setSchedule([]);
+    }
+  };
+
   const clearSchedule = () => {
     if (window.confirm("Вы уверены, что хотите очистить все расписание? Все размещенные занятия будут возвращены в список нераспределенных.")) {
         setSchedule([]);
@@ -904,7 +911,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     classroomTypes, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey, unscheduledTimeHorizon,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings, updateApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
-    runScheduler, clearSchedule, removeScheduleEntries, setUnscheduledTimeHorizon,
+    runScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon,
     startNewProject, handleOpen, handleSave, handleSaveAs,
     getFullState, loadFullState, clearAllData, mergeFullState
   };
