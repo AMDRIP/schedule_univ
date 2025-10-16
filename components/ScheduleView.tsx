@@ -183,6 +183,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, updateSettings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks, streams } = store;
   const [filterType, setFilterType] = useState<'group' | 'teacher' | 'classroom'>('group');
   const [selectedId, setSelectedId] = useState<string>(groups[0]?.id || '');
+  const [colorBy, setColorBy] = useState<'type' | 'teacher' | 'subject'>('type');
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
   const [isSaveTemplateModalOpen, setIsSaveTemplateModalOpen] = useState(false);
   const [isLoadTemplateModalOpen, setIsLoadTemplateModalOpen] = useState(false);
@@ -552,16 +553,32 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                 <DocumentTextIcon className="w-4 h-4 mr-2"/>
                 Экспорт в TXT
             </button>
-            <label htmlFor="showScheduleColors" className="flex items-center cursor-pointer text-sm">
-              <div className="relative">
-                <input type="checkbox" id="showScheduleColors" name="showScheduleColors" className="sr-only" checked={settings.showScheduleColors} onChange={handleColorToggle} />
-                <div className={`block w-10 h-6 rounded-full transition ${settings.showScheduleColors ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
-                <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.showScheduleColors ? 'translate-x-4' : ''}`}></div>
+            <div className="flex items-center gap-4">
+              <label htmlFor="showScheduleColors" className="flex items-center cursor-pointer text-sm">
+                <div className="relative">
+                  <input type="checkbox" id="showScheduleColors" name="showScheduleColors" className="sr-only" checked={settings.showScheduleColors} onChange={handleColorToggle} />
+                  <div className={`block w-10 h-6 rounded-full transition ${settings.showScheduleColors ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                  <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.showScheduleColors ? 'translate-x-4' : ''}`}></div>
+                </div>
+                <div className="ml-2 text-gray-700">
+                    Цветовые метки
+                </div>
+              </label>
+
+              <div className={`flex items-center p-0.5 rounded-lg bg-gray-200 transition-opacity ${!settings.showScheduleColors ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  <span className="text-sm text-gray-600 mr-2 ml-1 font-medium">Цвет по:</span>
+                  {(['type', 'teacher', 'subject'] as const).map(type => (
+                      <button
+                          key={type}
+                          onClick={() => setColorBy(type)}
+                          disabled={!settings.showScheduleColors}
+                          className={`px-2 py-1 text-sm rounded-md transition-all font-medium ${colorBy === type ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:bg-gray-300/50'}`}
+                      >
+                          {{ type: 'Типу', teacher: 'Преподавателю', subject: 'Предмету'}[type]}
+                      </button>
+                  ))}
               </div>
-              <div className="ml-2 text-gray-700">
-                  Цветовые метки
-              </div>
-            </label>
+            </div>
           </div>
         )}
         <div className="overflow-x-auto">
@@ -625,6 +642,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                         entries={entriesForCell}
                         weekType={effectiveWeekType}
                         isEditable={isMethodist}
+                        colorBy={colorBy}
                       />
                     );
                   })}

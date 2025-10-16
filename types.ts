@@ -264,6 +264,7 @@ export interface SchedulingSettings {
   allowOverbooking: boolean;
   showTeacherDetailsInLists: boolean;
   showScheduleColors: boolean;
+  allowManualOverrideOfForbidden: boolean;
 }
 
 export interface HeuristicConfig {

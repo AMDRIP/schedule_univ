@@ -1,7 +1,8 @@
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
     SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS, 
-    Specialty, EducationalPlan, UnscheduledEntry, AvailabilityType, WeekType, DeliveryMode, ClassroomType, Subgroup, Elective, HeuristicConfig
+    Specialty, EducationalPlan, UnscheduledEntry, AvailabilityType, WeekType, DeliveryMode, ClassroomType, Subgroup, Elective, HeuristicConfig,
+    RuleSeverity, RuleAction, RuleCondition
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { toYYYYMMDD } from '../utils/dateUtils';
@@ -257,6 +258,8 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                     
                     // FIX: Pass `newSchedule` to `calculateSlotCost` to make it available in the function's scope.
                     const cost = calculateSlotCost(entryToPlace, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, softPenaltyMultiplier, newSchedule);
+                    if (cost === Infinity) continue;
+                    
                     if (bestSlot === null || cost < bestSlot.cost) {
                         bestSlot = { date, timeSlotId: timeSlot.id, classroom, cost };
                     }
@@ -325,6 +328,23 @@ const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData): numb
     return score;
 };
 
+const doesConditionApply = (condition: RuleCondition, entry: UnscheduledEntry): boolean => {
+    switch (condition.entityType) {
+        case 'teacher':
+            return condition.entityIds.includes(entry.teacherId);
+        case 'group':
+            return condition.entityIds.includes(entry.groupId);
+        case 'subject':
+            if (condition.entityIds.includes(entry.subjectId)) {
+                return !condition.classType || condition.classType === entry.classType;
+            }
+            return false;
+        case 'classType':
+            return condition.entityIds.includes(entry.classType);
+        default:
+            return false;
+    }
+};
 
 // Calculates the "cost" of placing a class in a specific slot.
 const calculateSlotCost = (
@@ -339,12 +359,21 @@ const calculateSlotCost = (
     newSchedule: ScheduleEntry[]
 ): number => {
     let cost = 0;
-    const { teachers, subjects, timeSlots, settings } = data;
+    const { teachers, subjects, timeSlots, settings, schedulingRules } = data;
     const teacher = teachers.find(t => t.id === entry.teacherId);
     const subject = subjects.find(s => s.id === entry.subjectId);
     const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
     const dateStr = toYYYYMMDD(date);
     
+    const existingOrNewBooking = (key: string, resourceFn: (g: Group) => string) => {
+        const sched = [...data.schedule, ...newSchedule];
+        return sched.find(e => {
+            if (`${e.date}-${e.timeSlotId}` !== key) return false;
+            if (involvedGroups.some(g => resourceFn(g) === `group-${e.groupId}`)) return true;
+            return false;
+        });
+    }
+
     // Availability Grids
     const teacherAvailability = teacher?.availabilityGrid?.[dayName]?.[timeSlotId];
     if (teacherAvailability === AvailabilityType.Undesirable) cost += 20 * penaltyMultiplier;
@@ -402,19 +431,59 @@ const calculateSlotCost = (
         }
     });
 
-    const existingOrNewBooking = (key: string, resourceFn: (g: Group) => string) => {
-        const sched = [...data.schedule, ...newSchedule];
-        return sched.find(e => {
-            if (`${e.date}-${e.timeSlotId}` !== key) return false;
-            if (involvedGroups.some(g => resourceFn(g) === `group-${e.groupId}`)) return true;
-            return false;
-        });
-    }
-
     if(teacherClassesOnDay >= 4) cost += (teacherClassesOnDay - 3) * 100 * penaltyMultiplier; // Penalize 4+ classes
     groupClassesOnDay.forEach(count => {
         if (count >= 4) cost += (count - 3) * 100 * penaltyMultiplier;
     });
+
+    // --- NEW: Apply schedulingRules ---
+    const rulePenaltyMap = {
+        [RuleSeverity.Strict]: 1_000_000,
+        [RuleSeverity.Strong]: 500 * penaltyMultiplier,
+        [RuleSeverity.Medium]: 100 * penaltyMultiplier,
+        [RuleSeverity.Weak]: 20 * penaltyMultiplier,
+    };
+
+    for (const rule of schedulingRules) {
+        const conditionA = rule.conditions[0];
+        if (!conditionA || !doesConditionApply(conditionA, entry)) {
+            continue;
+        }
+        const penalty = rulePenaltyMap[rule.severity] || 0;
+        if (penalty >= 1_000_000 && rule.severity === RuleSeverity.Strict) {
+            if (rule.action === RuleAction.AvoidTime && rule.day === dayName && rule.timeSlotId === timeSlotId) return Infinity;
+        }
+
+        switch (rule.action) {
+            case RuleAction.AvoidTime:
+                if (rule.day === dayName && rule.timeSlotId === timeSlotId) {
+                    cost += penalty;
+                }
+                break;
+            case RuleAction.PreferTime:
+                if (rule.day === dayName && rule.timeSlotId === timeSlotId) {
+                    cost -= penalty;
+                }
+                break;
+            case RuleAction.MaxPerDay:
+                if (rule.param !== undefined) {
+                    const dayBookings = [...data.schedule, ...newSchedule].filter(e => e.date === dateStr);
+                    let count = dayBookings.filter(booking => {
+                        switch (conditionA.entityType) {
+                            case 'teacher': return conditionA.entityIds.includes(booking.teacherId);
+                            case 'group': return conditionA.entityIds.includes(booking.groupId);
+                            case 'subject': return conditionA.entityIds.includes(booking.subjectId) && (!conditionA.classType || conditionA.classType === booking.classType);
+                            default: return false;
+                        }
+                    }).length;
+                    
+                    if (count >= rule.param) {
+                        cost += penalty;
+                    }
+                }
+                break;
+        }
+    }
 
     // Prefer weekdays over Saturday
     if (date.getDay() === 6) { // Saturday

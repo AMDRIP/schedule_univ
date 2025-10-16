@@ -98,7 +98,9 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         defaultBreakMinutes: 15, allowWindows: true, useEvenOddWeekSeparation: true, showDegreeInSchedule: false,
         respectProductionCalendar: true, useShortenedPreHolidaySchedule: true, allowOverbooking: false,
         showScheduleColors: true,
-        showTeacherDetailsInLists: false
+        showTeacherDetailsInLists: false,
+        // FIX: Added missing property 'allowManualOverrideOfForbidden' to satisfy the SchedulingSettings type.
+        allowManualOverrideOfForbidden: false,
     });
     const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([{ id: generateId('ts'), time: '08:30-10:00' }]);
     const [faculties, setFaculties] = useState<Faculty[]>([{ id: generateId('f'), name: '' }]);

@@ -104,6 +104,7 @@ const initialSettings: SchedulingSettings = {
     allowOverbooking: false,
     showTeacherDetailsInLists: false,
     showScheduleColors: true,
+    allowManualOverrideOfForbidden: false,
 };
 const initialScheduleTemplates: ScheduleTemplate[] = [];
 
@@ -301,6 +302,7 @@ const getInitialEmptySettings = (): SchedulingSettings => ({
     allowOverbooking: false,
     showTeacherDetailsInLists: false,
     showScheduleColors: true,
+    allowManualOverrideOfForbidden: false,
 });
 
 
@@ -769,7 +771,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       setIsGeminiAvailable(!!newKey);
     } catch (error) {
       console.error("Не удалось установить API-ключ:", error);
-      alert("Ошибка при сохранении ключа API.");
+      alert("Ошибка при сохранении ключа.");
     }
   };
 
@@ -784,14 +786,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       alert("Некорректный формат дат семестра в настройках.");
       return;
     }
-    
-    // --- BUG FIX LOGIC ---
-    // 1. Get a fresh pool of all possible entries and filter out those already scheduled.
-    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
-    const scheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
-    const availableUnscheduledEntries = allPossibleEntries.filter(e => !scheduledUids.has(e.uid));
 
-    // 2. Find template entries that originated from the unscheduled pool.
+    // 1. Get a pool of entries that are not yet fixed to a specific date.
+    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+    const alreadyDatedUids = new Set(schedule.filter(e => e.date).map(e => e.unscheduledUid).filter(Boolean));
+    const availablePool = allPossibleEntries.filter(e => !alreadyDatedUids.has(e.uid));
+
+    // 2. Find template entries to copy from the specified week type.
     const templateEntries = schedule.filter(e => 
       !e.date && 
       e.unscheduledUid && 
@@ -803,13 +804,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     while (currentDate <= semesterEndDate) {
         const currentWeekType = getWeekType(currentDate, semesterStartDate);
+        
+        // Only process dates that match the week type to be copied
         if (currentWeekType === weekTypeToCopy) {
             const dayOfWeek = DAYS_OF_WEEK[currentDate.getDay() === 0 ? 6 : currentDate.getDay() - 1];
             const entriesForThisDay = templateEntries.filter(e => e.day === dayOfWeek);
 
             for (const templateEntry of entriesForThisDay) {
-                // 3. Find a matching unscheduled entry to "consume" for this new slot.
-                const matchingUnscheduledIndex = availableUnscheduledEntries.findIndex(unsched =>
+                // 3. Find a matching available entry from our pool to "consume".
+                const matchingUnscheduledIndex = availablePool.findIndex(unsched =>
                     unsched.subjectId === templateEntry.subjectId &&
                     unsched.groupId === templateEntry.groupId &&
                     (unsched.subgroupId || null) === (templateEntry.subgroupId || null) &&
@@ -818,16 +821,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 );
 
                 if (matchingUnscheduledIndex > -1) {
-                    // 4. "Consume" the entry from the available pool so it can't be used again in this operation.
-                    const consumedEntry = availableUnscheduledEntries.splice(matchingUnscheduledIndex, 1)[0];
+                    // 4. "Consume" the entry so it can't be used again in this operation.
+                    const consumedEntry = availablePool.splice(matchingUnscheduledIndex, 1)[0];
 
+                    // 5. Create the new dated entry.
                     newDatedEntries.push({
                         ...templateEntry,
                         id: `prop-${consumedEntry.uid}-${toYYYYMMDD(currentDate)}`,
                         date: toYYYYMMDD(currentDate),
                         unscheduledUid: consumedEntry.uid, // Assign the newly consumed UID
+                        weekType: 'every' // Dated entries are effectively 'every' for their specific day
                     });
                 } else {
+                    // This can happen if the template week contains more classes than are available in the plan.
                     console.warn(`Could not find an available unscheduled entry to propagate for template:`, templateEntry);
                 }
             }
@@ -835,13 +841,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         currentDate.setDate(currentDate.getDate() + 1);
     }
 
+    // 6. Remove all previous dated entries that fall within the semester for the copied week type.
     const scheduleWithoutOldEntries = schedule.filter(e => {
-        if (!e.date) return true;
+        if (!e.date) return true; // Keep all non-dated (template) entries
         const entryDate = new Date(e.date + 'T00:00:00');
-        if (entryDate < semesterStartDate || entryDate > semesterEndDate) return true;
+        if (entryDate < semesterStartDate || entryDate > semesterEndDate) return true; // Keep entries outside the semester
+        // Remove the entry if its week type matches the one we are replacing
         return getWeekType(entryDate, semesterStartDate) !== weekTypeToCopy;
     });
 
+    // 7. Combine the cleaned schedule with the newly generated dated entries.
     setSchedule([...scheduleWithoutOldEntries, ...newDatedEntries]);
     alert(`${newDatedEntries.length} занятий было скопировано на все ${weekTypeToCopy === 'even' ? 'чётные' : 'нечётные'} недели семестра.`);
   };

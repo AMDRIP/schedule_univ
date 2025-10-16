@@ -1,6 +1,6 @@
 {
   "name": "schedule-system-app",
-  "version": "2433.1910.2025",
+  "version": "2455.1910.2025",
   "releaseType": "релиз",
   "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
   "main": "main.js",
@@ -57,6 +57,12 @@
     "win": {
       "target": "nsis",
       "icon": "1631285.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "mac": {
       "target": "dmg",

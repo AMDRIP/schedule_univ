@@ -315,6 +315,21 @@ const SettingsView: React.FC = () => {
                       </div>
                     </label>
                </div>
+               <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Запрещенные слоты
+                  </label>
+                  <label htmlFor="allowManualOverrideOfForbidden" className="flex items-center cursor-pointer">
+                      <div className="relative">
+                        <input type="checkbox" id="allowManualOverrideOfForbidden" name="allowManualOverrideOfForbidden" className="sr-only" checked={formData.allowManualOverrideOfForbidden} onChange={handleChange} />
+                        <div className={`block w-14 h-8 rounded-full transition ${formData.allowManualOverrideOfForbidden ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                        <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.allowManualOverrideOfForbidden ? 'translate-x-6' : ''}`}></div>
+                      </div>
+                      <div className="ml-3 text-gray-700">
+                        {formData.allowManualOverrideOfForbidden ? 'Разрешено' : 'Запрещено'} (игнорировать запрет на размещение в ручном режиме)
+                      </div>
+                    </label>
+                </div>
                  <div>
                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     Списки преподавателей

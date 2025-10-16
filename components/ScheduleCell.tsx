@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useDrop, useDrag } from 'react-dnd';
 import { useStore } from '../hooks/useStore';
-import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag } from '../types';
+import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag, AvailabilityType } from '../types';
 import { CLASS_TYPE_COLORS, ItemTypes, DAYS_OF_WEEK, COLOR_MAP } from '../constants';
 import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon } from './icons';
 import { renderIcon } from './IconMap';
@@ -9,9 +9,10 @@ import { renderIcon } from './IconMap';
 interface ScheduleEntryCardProps {
   entry: ScheduleEntry;
   isEditable: boolean;
+  colorBy: 'type' | 'teacher' | 'subject';
 }
 
-const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable }) => {
+const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable, colorBy }) => {
   const { subjects, teachers, classrooms, groups, subgroups, schedule, updateScheduleEntry, deleteScheduleEntry, settings, classroomTags } = useStore();
   const [isEditingClassroom, setIsEditingClassroom] = useState(false);
   const [isEditingDate, setIsEditingDate] = useState(false);
@@ -84,6 +85,13 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   const teacher = teachers.find(t => t.id === entry.teacherId);
   const classroom = classrooms.find(c => c.id === entry.classroomId);
   const tags: (ClassroomTag | undefined)[] = useMemo(() => classroom?.tagIds?.map(tagId => classroomTags.find(t => t.id === tagId)).filter(Boolean) || [], [classroom, classroomTags]);
+  
+  const isUndesirable = useMemo(() => {
+    const teacherAvailability = teacher?.availabilityGrid?.[entry.day]?.[entry.timeSlotId];
+    const groupAvailability = group?.availabilityGrid?.[entry.day]?.[entry.timeSlotId];
+
+    return teacherAvailability === AvailabilityType.Undesirable || groupAvailability === AvailabilityType.Undesirable;
+  }, [entry, teacher, group]);
 
 
   if (!subject || !teacher || !classroom) {
@@ -94,31 +102,44 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
       </div>
     );
   }
-
-  let colorClass = CLASS_TYPE_COLORS[entry.classType] || 'bg-gray-100 border-gray-300';
+  
+  let colorClass = 'bg-gray-100 border-gray-300';
   let borderClass = '';
+  const warningClass = isUndesirable ? 'ring-2 ring-red-400 ring-offset-1' : '';
 
   if (settings.showScheduleColors) {
-      const subjectColorName = subject?.color;
-      const teacherColorName = teacher?.color;
-
-      if (subjectColorName && COLOR_MAP[subjectColorName]) {
-          const colorData = COLOR_MAP[subjectColorName];
-          colorClass = `${colorData.bg} ${colorData.border}`;
-      }
-
-      if (teacherColorName && COLOR_MAP[teacherColorName]) {
-          borderClass = `border-l-4 ${COLOR_MAP[teacherColorName].borderL}`;
+      switch (colorBy) {
+          case 'type':
+              colorClass = CLASS_TYPE_COLORS[entry.classType] || colorClass;
+              break;
+          case 'teacher': {
+              const teacherColorName = teacher?.color;
+              if (teacherColorName && COLOR_MAP[teacherColorName]) {
+                  const colorData = COLOR_MAP[teacherColorName];
+                  colorClass = `${colorData.bg} ${colorData.border}`;
+                  borderClass = `border-l-4 ${colorData.borderL}`;
+              }
+              break;
+          }
+          case 'subject': {
+              const subjectColorName = subject?.color;
+              if (subjectColorName && COLOR_MAP[subjectColorName]) {
+                  const colorData = COLOR_MAP[subjectColorName];
+                  colorClass = `${colorData.bg} ${colorData.border}`;
+                  borderClass = `border-l-4 ${colorData.borderL}`;
+              }
+              break;
+          }
       }
   }
-  
+
   const teacherName = (settings.showDegreeInSchedule && teacher.academicDegree)
       ? `${teacher.name}, ${teacher.academicDegree}`
       : teacher.name;
   const groupName = subgroup ? `${group?.number} (${subgroup.name})` : group?.number;
 
   return (
-    <div ref={isEditable ? drag as any : null} className={`p-1.5 rounded-md text-xs cursor-grab relative group transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${colorClass} ${borderClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
+    <div ref={isEditable ? drag as any : null} className={`p-1.5 rounded-md text-xs cursor-grab relative group transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${colorClass} ${borderClass} ${warningClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
       <div>
         <p className="font-bold truncate">{subject.name}</p>
         <p>{entry.classType}</p>
@@ -188,10 +209,11 @@ interface ScheduleCellProps {
   timeSlotId: string;
   weekType: 'even' | 'odd' | 'every';
   isEditable: boolean;
+  colorBy: 'type' | 'teacher' | 'subject';
 }
 
-const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlotId, weekType, isEditable }) => {
-  const { placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar } = useStore();
+const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlotId, weekType, isEditable, colorBy }) => {
+  const { placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups } = useStore();
 
   const [{ isOver, canDrop }, drop] = useDrop(() => ({
     accept: [ItemTypes.SCHEDULE_ENTRY, ItemTypes.UNSCHEDULED_ENTRY],
@@ -202,6 +224,19 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
         if (dayInfo && !dayInfo.isWorkDay) {
             return false;
         }
+      }
+
+      // Check for Forbidden slots
+      if (!settings.allowManualOverrideOfForbidden) {
+          const teacher = teachers.find(t => t.id === item.teacherId);
+          const group = groups.find(g => g.id === item.groupId);
+
+          const teacherAvailability = teacher?.availabilityGrid?.[day]?.[timeSlotId];
+          const groupAvailability = group?.availabilityGrid?.[day]?.[timeSlotId];
+
+          if (teacherAvailability === AvailabilityType.Forbidden || groupAvailability === AvailabilityType.Forbidden) {
+              return false;
+          }
       }
 
       const itemType = monitor.getItemType();
@@ -225,7 +260,7 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
       isOver: !!monitor.isOver(),
       canDrop: !!monitor.canDrop(),
     }),
-  }), [entries, day, timeSlotId, weekType, date, placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar]);
+  }), [entries, day, timeSlotId, weekType, date, placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups]);
   
   let cellBgClass = 'bg-white';
   if (canDrop && isOver) cellBgClass = 'bg-green-200';
@@ -239,7 +274,7 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
     <td ref={isEditable ? drop as any : null} className={`p-1 border align-top transition-colors ${cellBgClass}`}>
       <div className="h-full flex flex-col gap-1">
         {entries.map(entry => (
-          <ScheduleEntryCard key={entry.id} entry={entry} isEditable={isEditable} />
+          <ScheduleEntryCard key={entry.id} entry={entry} isEditable={isEditable} colorBy={colorBy} />
         ))}
       </div>
     </td>
