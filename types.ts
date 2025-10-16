@@ -272,6 +272,7 @@ export interface HeuristicConfig {
     target?: { type: 'group' | 'teacher' | 'classroom'; id: string };
     timeFrame: { start: string; end: string };
     clearExisting: boolean;
+    iterations: number;
 }
 
 export interface ScheduleEntry extends BaseItem {

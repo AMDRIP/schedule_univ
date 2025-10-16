@@ -3,7 +3,7 @@
 import React from 'react';
 import { Role } from '../types';
 import { useStore } from '../hooks/useStore';
-import { CalendarIcon, UsersIcon, AcademicCapIcon, CollectionIcon, HomeIcon, SparklesIcon, KeyIcon, BuildingOfficeIcon, BookmarkIcon, UserGroupIcon, ClockIcon, CogIcon, LinkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, LibraryIcon } from './icons';
+import { CalendarIcon, UsersIcon, AcademicCapIcon, CollectionIcon, HomeIcon, SparklesIcon, KeyIcon, BuildingOfficeIcon, BookmarkIcon, UserGroupIcon, ClockIcon, CogIcon, LinkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, LibraryIcon, DocumentSearchIcon } from './icons';
 
 interface SidebarProps {
   currentRole: Role;
@@ -31,6 +31,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
     const baseItems: NavItem[] = [
       { name: 'Просмотр расписания', icon: <CalendarIcon /> },
       { name: 'Академический календарь', icon: <CalendarIcon /> },
+      { name: 'Сводное расписание', icon: <DocumentSearchIcon /> },
     ];
 
     if (currentRole === Role.Admin) {

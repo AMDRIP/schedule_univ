@@ -8,8 +8,9 @@ import {
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
-import { generateScheduleWithHeuristics } from '../services/heuristicScheduler';
+import { generateScheduleWithHeuristics, SchedulerResult } from '../services/heuristicScheduler';
 import { generateScheduleWithGemini } from '../services/geminiService';
+import { runIterativeScheduler } from '../services/iterativeScheduler';
 
 // MOCK DATA (Initial State)
 const initialFaculties: Faculty[] = [{
@@ -247,6 +248,7 @@ interface StoreState {
   lastAutosave: Date | null;
   apiKey: string;
   unscheduledTimeHorizon: 'semester' | 'week' | 'twoWeeks';
+  schedulingProgress: { current: number; total: number } | null;
   
   addItem: (dataType: DataType, item: Omit<DataItem, 'id'>) => void;
   updateItem: (dataType: DataType, item: DataItem) => void;
@@ -336,6 +338,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
   const [lastAutosave, setLastAutosave] = useState<Date | null>(null);
   const [unscheduledTimeHorizon, setUnscheduledTimeHorizon] = useState<'semester' | 'week' | 'twoWeeks'>('semester');
+  const [schedulingProgress, setSchedulingProgress] = useState<{ current: number; total: number } | null>(null);
 
   useEffect(() => {
     const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
@@ -709,24 +712,43 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           alert(`Для дисциплины "${subject.name}" не указаны подходящие типы аудиторий в справочнике.`);
           return;
       }
+
       const suitableClassroom = classrooms.find(c => {
-        const occupants = schedule.filter(e => 
-            e.classroomId === c.id && e.day === day && e.timeSlotId === timeSlotId &&
-            (e.weekType === weekType || e.weekType === 'every' || weekType === 'every')
-        );
+        const targetWeekType = getWeekType(new Date(date + 'T00:00:00'), new Date(settings.semesterStart));
+        const effectiveTargetWeekType = settings.useEvenOddWeekSeparation ? targetWeekType : 'every';
+        
+        const occupants = schedule.filter(e => {
+            if (e.classroomId !== c.id || e.timeSlotId !== timeSlotId) return false;
+
+            // Conflict with another dated entry
+            if (e.date && e.date === date) return true;
+
+            // Conflict with a template entry
+            if (!e.date && e.day === day) {
+                if (e.weekType === 'every' || e.weekType === effectiveTargetWeekType) {
+                    return true;
+                }
+            }
+            return false;
+        });
+
         if (occupants.length >= (settings.allowOverbooking ? 2 : 1)) {
             return false;
         }
         if (c.capacity < studentCount) return false;
         return subject.suitableClassroomTypeIds?.includes(c.typeId);
       });
+
       if (!suitableClassroom) {
           alert(`Нет подходящей свободной аудитории для занятия "${subject.name}" с вместимостью ${studentCount}.`);
           return;
       }
       const newEntry: ScheduleEntry = {
           id: `sched-${Date.now()}-${Math.random()}`,
-          day, timeSlotId, weekType,
+          day, 
+          timeSlotId, 
+          weekType: 'every', // A dated entry is absolute
+          date: date, // Set the specific date for the entry
           groupId: item.groupId,
           subgroupId: item.subgroupId,
           subjectId: item.subjectId,
@@ -886,24 +908,39 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     clearAllData();
   };
 
-  const runScheduler = async (method: 'heuristic' | 'gemini', config?: HeuristicConfig) => {
+  // FIX: Corrected the return type annotation of `runScheduler` to match the `StoreState` interface. This fixes multiple errors.
+  const runScheduler = async (method: 'heuristic' | 'gemini', config?: HeuristicConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }> => {
+    setSchedulingProgress(null);
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
         subgroups, electives, schedule
     };
 
+    let result: SchedulerResult;
+
     if (method === 'heuristic') {
         if (!config) throw new Error("Конфигурация для эвристического планировщика не предоставлена.");
-        const result = await generateScheduleWithHeuristics(generationData, config);
+        
+        if (config.iterations > 1) {
+            const handleProgress = (progress: { current: number, total: number }) => {
+                setSchedulingProgress(progress);
+            };
+            result = await runIterativeScheduler(generationData, config, handleProgress);
+        } else {
+            result = await generateScheduleWithHeuristics(generationData, config);
+        }
+
+        setSchedulingProgress(null);
         
         let finalSchedule = [...schedule];
         if(config.clearExisting && config.target) {
             finalSchedule = schedule.filter(entry => {
+                if (!entry.date) return true;
                 const entryDate = new Date(entry.date + 'T00:00:00');
                 const startDate = new Date(config.timeFrame.start + 'T00:00:00');
                 const endDate = new Date(config.timeFrame.end + 'T00:00:00');
-                 if (entry.date && entryDate >= startDate && entryDate <= endDate) {
+                 if (entryDate >= startDate && entryDate <= endDate) {
                      if (config.target?.type === 'group' && entry.groupId === config.target.id) return false;
                      if (config.target?.type === 'teacher' && entry.teacherId === config.target.id) return false;
                      if (config.target?.type === 'classroom' && entry.classroomId === config.target.id) return false;
@@ -913,10 +950,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         } else if (config.clearExisting && !config.target) {
              if (window.confirm(`Вы уверены, что хотите очистить ВСЕ расписание в диапазоне с ${config.timeFrame.start} по ${config.timeFrame.end} перед генерацией?`)) {
                 finalSchedule = schedule.filter(entry => {
+                    if (!entry.date) return true;
                     const entryDate = new Date(entry.date + 'T00:00:00');
                     const startDate = new Date(config.timeFrame.start + 'T00:00:00');
                     const endDate = new Date(config.timeFrame.end + 'T00:00:00');
-                    return !entry.date || entryDate < startDate || entryDate > endDate;
+                    return entryDate < startDate || entryDate > endDate;
                 });
              } else {
                  return { scheduled: 0, unscheduled: 0, failedEntries: [] };
@@ -1015,6 +1053,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
     classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey, unscheduledTimeHorizon,
+    schedulingProgress,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings, updateApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
     runScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon,

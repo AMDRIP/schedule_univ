@@ -24,7 +24,7 @@ const Header: React.FC<HeaderProps> = ({
   const [isSchedulerMenuOpen, setSchedulerMenuOpen] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const schedulerMenuRef = useRef<HTMLDivElement>(null);
-  const { isGeminiAvailable, lastAutosave } = useStore();
+  const { isGeminiAvailable, lastAutosave, schedulingProgress } = useStore();
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -65,7 +65,9 @@ const Header: React.FC<HeaderProps> = ({
             className="flex items-center p-2 border border-gray-300 rounded-md hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 disabled:cursor-wait disabled:bg-gray-100"
           >
             {isScheduling ? <SpinnerIcon className="h-5 w-5 mr-2 text-gray-600" /> : <CogIcon className="h-5 w-5 mr-2 text-gray-600" />}
-            <span className="text-gray-700 font-medium">Планировщик</span>
+            <span className="text-gray-700 font-medium w-36 text-left">
+                {isScheduling && schedulingProgress ? `Планировщик (${schedulingProgress.current}/${schedulingProgress.total})` : 'Планировщик'}
+            </span>
             <ChevronDownIcon className={`w-5 h-5 ml-1 text-gray-500 transition-transform ${isSchedulerMenuOpen ? 'rotate-180' : ''}`} />
           </button>
           {isSchedulerMenuOpen && (

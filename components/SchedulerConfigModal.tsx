@@ -17,6 +17,7 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
     const [startDate, setStartDate] = useState(settings.semesterStart);
     const [endDate, setEndDate] = useState(settings.semesterEnd);
     const [clearExisting, setClearExisting] = useState(true);
+    const [iterations, setIterations] = useState(1);
 
     const targetOptions = {
         group: groups,
@@ -37,6 +38,7 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
             strictness,
             timeFrame: { start: startDate, end: endDate },
             clearExisting,
+            iterations,
         };
         if (targetType !== 'all' && targetId) {
             config.target = { type: targetType as 'group' | 'teacher' | 'classroom', id: targetId };
@@ -65,6 +67,18 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
                             max="10"
                             value={strictness}
                             onChange={e => setStrictness(Number(e.target.value))}
+                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                        />
+                    </div>
+                     <div>
+                        <label className="block text-sm font-medium text-gray-700">Количество итераций ({iterations})</label>
+                        <p className="text-xs text-gray-500 mb-2">Больше итераций может улучшить результат, но займет больше времени. 1 = обычный запуск.</p>
+                        <input
+                            type="range"
+                            min="1"
+                            max="20"
+                            value={iterations}
+                            onChange={e => setIterations(Number(e.target.value))}
                             className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                         />
                     </div>

@@ -28,7 +28,7 @@ interface GenerationData {
   schedule: ScheduleEntry[];
 }
 
-interface SchedulerResult {
+export interface SchedulerResult {
     schedule: ScheduleEntry[];
     unschedulable: UnscheduledEntry[];
 }
@@ -175,10 +175,11 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     let existingSchedule = data.schedule;
     if (clearExisting && target) {
         existingSchedule = data.schedule.filter(entry => {
+             if (!entry.date) return true;
              const entryDate = new Date(entry.date + 'T00:00:00');
              const startDate = new Date(timeFrame.start + 'T00:00:00');
              const endDate = new Date(timeFrame.end + 'T00:00:00');
-             if (entry.date && entryDate >= startDate && entryDate <= endDate) {
+             if (entryDate >= startDate && entryDate <= endDate) {
                  if (target.type === 'group' && entry.groupId === target.id) return false;
                  if (target.type === 'teacher' && entry.teacherId === target.id) return false;
                  if (target.type === 'classroom' && entry.classroomId === target.id) return false;
@@ -229,7 +230,8 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     
     // --- 3. PLACEMENT LOOP ---
     for (const entryToPlace of classPool) {
-        let bestSlot: { date: Date, timeSlotId: string, classroom: Classroom, cost: number } | null = null;
+        let bestSlots: { date: Date, timeSlotId: string, classroom: Classroom, cost: number }[] = [];
+        const TOP_N_CANDIDATES = 5;
         
         const parentGroup = groups.find(g => g.id === entryToPlace.groupId);
         if (!parentGroup) { unschedulable.push(entryToPlace); continue; }
@@ -256,29 +258,33 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                 for (const classroom of suitableClassrooms) {
                     if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
                     
-                    // FIX: Pass `newSchedule` to `calculateSlotCost` to make it available in the function's scope.
                     const cost = calculateSlotCost(entryToPlace, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, softPenaltyMultiplier, newSchedule);
                     if (cost === Infinity) continue;
                     
-                    if (bestSlot === null || cost < bestSlot.cost) {
-                        bestSlot = { date, timeSlotId: timeSlot.id, classroom, cost };
+                    if (bestSlots.length < TOP_N_CANDIDATES) {
+                        bestSlots.push({ date, timeSlotId: timeSlot.id, classroom, cost });
+                        bestSlots.sort((a, b) => a.cost - b.cost);
+                    } else if (cost < bestSlots[TOP_N_CANDIDATES - 1].cost) {
+                        bestSlots[TOP_N_CANDIDATES - 1] = { date, timeSlotId: timeSlot.id, classroom, cost };
+                        bestSlots.sort((a, b) => a.cost - b.cost);
                     }
                 }
             }
         }
 
-        if (bestSlot) {
-            const bookingKey = `${toYYYYMMDD(bestSlot.date)}-${bestSlot.timeSlotId}`;
-            const dayName = DAYS_OF_WEEK[bestSlot.date.getDay() === 0 ? 6 : bestSlot.date.getDay() - 1];
+        if (bestSlots.length > 0) {
+            const chosenSlot = bestSlots[Math.floor(Math.random() * bestSlots.length)];
+            const bookingKey = `${toYYYYMMDD(chosenSlot.date)}-${chosenSlot.timeSlotId}`;
+            const dayName = DAYS_OF_WEEK[chosenSlot.date.getDay() === 0 ? 6 : chosenSlot.date.getDay() - 1];
 
             const groupsToCreateEntriesFor = entryToPlace.streamId ? involvedGroups : [parentGroup];
             groupsToCreateEntriesFor.forEach(group => {
                  newSchedule.push({
                     id: `sched-h-${group.id}-${Math.random()}`,
                     day: dayName,
-                    date: toYYYYMMDD(bestSlot!.date),
-                    timeSlotId: bestSlot!.timeSlotId,
-                    classroomId: bestSlot!.classroom.id,
+                    date: toYYYYMMDD(chosenSlot.date),
+                    timeSlotId: chosenSlot.timeSlotId,
+                    classroomId: chosenSlot.classroom.id,
                     groupId: entryToPlace.subgroupId ? entryToPlace.groupId : group.id,
                     subgroupId: entryToPlace.subgroupId,
                     subjectId: entryToPlace.subjectId,
@@ -291,7 +297,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             });
 
             resourceBookings.get(`teacher-${entryToPlace.teacherId}`)?.add(bookingKey);
-            resourceBookings.get(`classroom-${bestSlot.classroom.id}`)?.add(bookingKey);
+            resourceBookings.get(`classroom-${chosenSlot.classroom.id}`)?.add(bookingKey);
             involvedGroups.forEach(g => resourceBookings.get(`group-${g.id}`)?.add(bookingKey));
 
         } else {
