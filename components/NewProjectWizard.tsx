@@ -97,7 +97,7 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         sessionStart: '', sessionEnd: '', practiceStart: '', practiceEnd: '', retakeStart: '', retakeEnd: '',
         defaultBreakMinutes: 15, allowWindows: true, useEvenOddWeekSeparation: true, showDegreeInSchedule: false,
         respectProductionCalendar: true, useShortenedPreHolidaySchedule: true, allowOverbooking: false,
-        // FIX: Added missing 'showTeacherDetailsInLists' property to match the SchedulingSettings type.
+        showScheduleColors: true,
         showTeacherDetailsInLists: false
     });
     const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([{ id: generateId('ts'), time: '08:30-10:00' }]);
@@ -273,7 +273,7 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-40">
-            <div className="bg-gray-50 p-6 rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div className="bg-gray-50 p-6 rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col animation-fade-in-scale">
                 <h2 className="text-2xl font-bold text-gray-900">Мастер создания нового проекта</h2>
                 
                  <div className="my-6">

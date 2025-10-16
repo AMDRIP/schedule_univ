@@ -5,6 +5,7 @@ import AvailabilityGridEditor from './AvailabilityGridEditor';
 import { PlusIcon, TrashIcon } from './icons';
 import { OKSO_CODES, UGSN_FROM_OKSO } from '../data/codes';
 import { iconNames } from './IconMap';
+import { COLOR_PALETTE, COLOR_MAP } from '../constants';
 
 
 const TITLE_MAP: Record<DataType, { single: string }> = {
@@ -69,11 +70,11 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     switch (type) {
       case 'faculties': return { name: '', deanId: '', address: '', phone: '', email: '', notes: '' };
       case 'departments': return { name: '', facultyId: faculties[0]?.id || '', specialtyIds: [], headTeacherId: '', address: '', phone: '', email: '', vkLink: '', telegramLink: '', notes: '' };
-      case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', fieldOfScience: '', academicTitle: '', photoUrl: '', hireDate: '' };
+      case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', fieldOfScience: '', academicTitle: '', photoUrl: '', hireDate: '', color: '' };
       case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, availabilityGrid: {}, pinnedClassroomId: '' };
       case 'streams': return { name: '', groupIds: [] };
       case 'classrooms': return { number: '', capacity: 30, typeId: classroomTypes[0]?.id || '', availabilityGrid: {} };
-      case 'subjects': return { name: '', pinnedClassroomId: '', suitableClassroomTypeIds: [] };
+      case 'subjects': return { name: '', pinnedClassroomId: '', suitableClassroomTypeIds: [], color: '' };
       case 'cabinets': return { number: '', departmentId: departments[0]?.id || '' };
       case 'timeSlots': return { time: '00:00-00:00' };
       case 'timeSlotsShortened': return { time: '00:00-00:00' };
@@ -241,6 +242,23 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
         telegramLink: 'Ссылка Telegram', notes: 'Заметки',
     };
     
+    if (key === 'color' && (dataType === 'teachers' || dataType === 'subjects')) {
+      return (
+          <div>
+              <label className="block text-sm font-medium text-gray-700">Цветовая метка</label>
+              <div className="flex items-center gap-2">
+                  <select name="color" value={formData[key] || ''} onChange={handleChange} className={defaultInputClass}>
+                      <option value="">-- Нет --</option>
+                      {COLOR_PALETTE.map(c => <option key={c.value} value={c.value}>{c.name}</option>)}
+                  </select>
+                  {formData[key] && (
+                      <div className={`w-6 h-6 rounded ${COLOR_MAP[formData[key]]?.bg} ${COLOR_MAP[formData[key]]?.border} flex-shrink-0`}></div>
+                  )}
+              </div>
+          </div>
+      );
+    }
+
     if (dataType === 'teachers') {
         if (key === 'photoUrl') {
             return (
@@ -339,7 +357,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'teacherId': return (
           <div><label className="block text-sm font-medium text-gray-700">Преподаватель</label><select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass}>{teachers.map(t => <option key={t.id} value={t.id}>{teacherDisplayNames.get(t.id)}</option>)}</select></div>
         );
-      case 'groupId': return (
+       case 'groupId': return (
           <div><label className="block text-sm font-medium text-gray-700">Группа</label><select name="groupId" value={formData.groupId} onChange={handleChange} className={defaultInputClass}>{groups.map(g => <option key={g.id} value={g.id}>{g.number}</option>)}</select></div>
         );
       case 'pinnedClassroomId': return (
@@ -442,16 +460,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
-      <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto transform transition-all duration-300 ease-out scale-95 opacity-0 animate-fade-in-scale">
-        <style>{`
-          @keyframes fade-in-scale {
-            from { opacity: 0; transform: scale(0.95); }
-            to { opacity: 1; transform: scale(1); }
-          }
-          .animate-fade-in-scale {
-            animation: fade-in-scale 0.2s forwards;
-          }
-        `}</style>
+      <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto animation-fade-in-scale">
         <h2 className="text-xl font-bold mb-4 text-gray-900">{modalTitle}</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

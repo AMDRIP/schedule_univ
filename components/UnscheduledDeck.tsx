@@ -38,9 +38,9 @@ const UnscheduledDeck: React.FC = () => {
     });
   }, [unscheduledEntries, groupFilter, teacherFilter, subjectFilter]);
 
-  let dropzoneBgClass = 'bg-white';
-  if (canDrop && isOver) dropzoneBgClass = 'bg-red-200 ring-2 ring-red-500 ring-dashed';
-  else if (canDrop) dropzoneBgClass = 'bg-red-50 ring-2 ring-red-400 ring-dashed';
+  let dropzoneClasses = 'bg-white border-transparent';
+  if (canDrop && isOver) dropzoneClasses = 'bg-red-100 border-red-500 border-dashed scale-[1.01]';
+  else if (canDrop) dropzoneClasses = 'bg-red-50/50 border-red-400 border-dashed';
 
   const horizonOptions: { value: 'week' | 'twoWeeks' | 'semester', label: string }[] = [
     { value: 'week', label: 'Неделя' },
@@ -51,7 +51,7 @@ const UnscheduledDeck: React.FC = () => {
   return (
     // FIX: Cast the react-dnd connector to 'any' to resolve type conflicts,
     // which is a consistent pattern in this codebase due to likely library version mismatches.
-    <div ref={drop as any} className={`p-6 rounded-lg shadow-lg transition-all ${dropzoneBgClass}`}>
+    <div ref={drop as any} className={`p-6 rounded-lg shadow-lg transition-all border-2 ${dropzoneClasses}`}>
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-xl font-bold text-gray-800">Нераспределенные занятия ({filteredEntries.length})</h3>
         {canDrop && (

@@ -135,6 +135,7 @@ export interface Teacher extends BaseItem {
   academicTitle?: AcademicTitle;
   photoUrl?: string;
   hireDate?: string;
+  color?: string;
 }
 export interface Group extends BaseItem { 
   number: string; 
@@ -155,6 +156,7 @@ export interface Subject extends BaseItem {
   availabilityGrid?: AvailabilityGrid;
   pinnedClassroomId?: string;
   suitableClassroomTypeIds?: string[];
+  color?: string;
 }
 
 export interface UGS extends BaseItem {
@@ -261,6 +263,14 @@ export interface SchedulingSettings {
   useShortenedPreHolidaySchedule: boolean;
   allowOverbooking: boolean;
   showTeacherDetailsInLists: boolean;
+  showScheduleColors: boolean;
+}
+
+export interface HeuristicConfig {
+    strictness: number; // 1-10
+    target?: { type: 'group' | 'teacher' | 'classroom'; id: string };
+    timeFrame: { start: string; end: string };
+    clearExisting: boolean;
 }
 
 export interface ScheduleEntry extends BaseItem {

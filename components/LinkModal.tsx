@@ -87,16 +87,7 @@ const LinkModal: React.FC<LinkModalProps> = ({ isOpen, onClose, onSave, initialD
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
-            <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md transform transition-all duration-300 ease-out scale-95 opacity-0 animate-fade-in-scale">
-                 <style>{`
-                  @keyframes fade-in-scale {
-                    from { opacity: 0; transform: scale(0.95); }
-                    to { opacity: 1; transform: scale(1); }
-                  }
-                  .animate-fade-in-scale {
-                    animation: fade-in-scale 0.2s forwards;
-                  }
-                `}</style>
+            <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md animation-fade-in-scale">
                 <h2 className="text-xl font-bold mb-4 text-gray-900">{isEditing ? 'Редактировать привязку' : 'Добавить привязку'}</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>

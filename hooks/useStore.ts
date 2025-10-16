@@ -4,7 +4,7 @@ import {
     UnscheduledEntry, DataItem, DataType, ClassroomType, ClassType, TeacherSubjectLink, SchedulingRule, 
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
     EducationalPlan, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective,
-    AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag
+    AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag, HeuristicConfig
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
@@ -37,8 +37,8 @@ const initialDepartments: Department[] = [{
     notes: 'Кафедра является одной из старейших в университете. Она была образована в 1965 году. За время своего существования кафедра подготовила несколько тысяч специалистов в области статистики, которые успешно работают в различных отраслях экономики.'
 }];
 const initialTeachers: Teacher[] = [
-    { id: 't1', name: 'Иванов И.И.', departmentId: 'd1', academicDegree: AcademicDegree.Doctor, fieldOfScience: FieldOfScience.Engineering, academicTitle: AcademicTitle.Professor, hireDate: '2010-09-01', regalia: 'Заслуженный деятель науки РФ' }, 
-    { id: 't2', name: 'Петров П.П.', departmentId: 'd1', academicDegree: AcademicDegree.Candidate, fieldOfScience: FieldOfScience.PhysicalMathematical, academicTitle: AcademicTitle.Docent, hireDate: '2018-03-15' }
+    { id: 't1', name: 'Иванов И.И.', departmentId: 'd1', academicDegree: AcademicDegree.Doctor, fieldOfScience: FieldOfScience.Engineering, academicTitle: AcademicTitle.Professor, hireDate: '2010-09-01', regalia: 'Заслуженный деятель науки РФ', color: 'blue' }, 
+    { id: 't2', name: 'Петров П.П.', departmentId: 'd1', academicDegree: AcademicDegree.Candidate, fieldOfScience: FieldOfScience.PhysicalMathematical, academicTitle: AcademicTitle.Docent, hireDate: '2018-03-15', color: 'green' }
 ];
 const initialGroups: Group[] = [{ id: 'g1', number: 'ПИ-101', departmentId: 'd1', studentCount: 25, course: 1, specialtyId: 'spec1', formOfStudy: FormOfStudy.FullTime }];
 const initialSubgroups: Subgroup[] = [];
@@ -61,8 +61,8 @@ const initialClassrooms: Classroom[] = [
     { id: 'c3', number: '303-PC', capacity: 20, typeId: 'ct4', tagIds: ['tag-comp', 'tag-board'] },
 ];
 const initialSubjects: Subject[] = [
-    { id: 'sub1', name: 'Основы программирования', suitableClassroomTypeIds: ['ct2', 'ct4'] },
-    { id: 'sub2', name: 'Базы данных', suitableClassroomTypeIds: ['ct1', 'ct3', 'ct4'] },
+    { id: 'sub1', name: 'Основы программирования', suitableClassroomTypeIds: ['ct2', 'ct4'], color: 'indigo' },
+    { id: 'sub2', name: 'Базы данных', suitableClassroomTypeIds: ['ct1', 'ct3', 'ct4'], color: 'red' },
 ];
 const initialEducationalPlans: EducationalPlan[] = [
     { id: 'plan1', specialtyId: 'spec1', entries: [
@@ -103,6 +103,7 @@ const initialSettings: SchedulingSettings = {
     useShortenedPreHolidaySchedule: true,
     allowOverbooking: false,
     showTeacherDetailsInLists: false,
+    showScheduleColors: true,
 };
 const initialScheduleTemplates: ScheduleTemplate[] = [];
 
@@ -261,7 +262,7 @@ interface StoreState {
   saveCurrentScheduleAsTemplate: (name: string, description: string) => void;
   loadScheduleFromTemplate: (templateId: string) => void;
   setUnscheduledTimeHorizon: (horizon: 'semester' | 'week' | 'twoWeeks') => void;
-  runScheduler: (method: 'heuristic' | 'gemini') => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
+  runScheduler: (method: 'heuristic' | 'gemini', config?: HeuristicConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
   clearSchedule: () => void;
   resetSchedule: () => void;
   startNewProject: () => void;
@@ -299,6 +300,7 @@ const getInitialEmptySettings = (): SchedulingSettings => ({
     useShortenedPreHolidaySchedule: true,
     allowOverbooking: false,
     showTeacherDetailsInLists: false,
+    showScheduleColors: true,
 });
 
 
@@ -875,41 +877,70 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     clearAllData();
   };
 
-  const runScheduler = async (method: 'heuristic' | 'gemini') => {
+  const runScheduler = async (method: 'heuristic' | 'gemini', config?: HeuristicConfig) => {
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
-        subgroups, electives,
+        subgroups, electives, schedule
     };
-    let newSchedule: ScheduleEntry[] = [];
-    let unschedulable: UnscheduledEntry[] = [];
+
     if (method === 'heuristic') {
-        const result = await generateScheduleWithHeuristics(generationData);
-        newSchedule = result.schedule;
-        unschedulable = result.unschedulable;
-    } else {
-        if (!isGeminiAvailable) {
-            throw new Error("API Gemini недоступен. Убедитесь, что API-ключ настроен в настройках.");
+        if (!config) throw new Error("Конфигурация для эвристического планировщика не предоставлена.");
+        const result = await generateScheduleWithHeuristics(generationData, config);
+        
+        let finalSchedule = [...schedule];
+        if(config.clearExisting && config.target) {
+            finalSchedule = schedule.filter(entry => {
+                const entryDate = new Date(entry.date + 'T00:00:00');
+                const startDate = new Date(config.timeFrame.start + 'T00:00:00');
+                const endDate = new Date(config.timeFrame.end + 'T00:00:00');
+                 if (entry.date && entryDate >= startDate && entryDate <= endDate) {
+                     if (config.target?.type === 'group' && entry.groupId === config.target.id) return false;
+                     if (config.target?.type === 'teacher' && entry.teacherId === config.target.id) return false;
+                     if (config.target?.type === 'classroom' && entry.classroomId === config.target.id) return false;
+                 }
+                 return true;
+            });
+        } else if (config.clearExisting && !config.target) {
+             if (window.confirm(`Вы уверены, что хотите очистить ВСЕ расписание в диапазоне с ${config.timeFrame.start} по ${config.timeFrame.end} перед генерацией?`)) {
+                finalSchedule = schedule.filter(entry => {
+                    const entryDate = new Date(entry.date + 'T00:00:00');
+                    const startDate = new Date(config.timeFrame.start + 'T00:00:00');
+                    const endDate = new Date(config.timeFrame.end + 'T00:00:00');
+                    return !entry.date || entryDate < startDate || entryDate > endDate;
+                });
+             } else {
+                 return { scheduled: 0, unscheduled: 0, failedEntries: [] };
+             }
         }
-        newSchedule = await generateScheduleWithGemini(generationData);
-        const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
-        const tempUnscheduled = [...allPossibleEntries];
-        newSchedule.forEach(schedEntry => {
-            const matchIndex = tempUnscheduled.findIndex(unsched => 
-                unsched.groupId === schedEntry.groupId &&
-                (unsched.subgroupId || '') === (schedEntry.subgroupId || '') &&
-                unsched.subjectId === schedEntry.subjectId &&
-                unsched.classType === schedEntry.classType
-            );
-            if (matchIndex > -1) {
-                schedEntry.unscheduledUid = tempUnscheduled[matchIndex].uid;
-                tempUnscheduled.splice(matchIndex, 1);
-            } else {
-                 console.warn('Gemini-generated entry could not be matched to an educational plan entry:', schedEntry);
-            }
-        });
-        unschedulable = tempUnscheduled;
+        
+        setSchedule([...finalSchedule, ...result.schedule]);
+        return { scheduled: result.schedule.length, unscheduled: result.unschedulable.length, failedEntries: result.unschedulable };
     }
+
+    // Gemini method
+    if (!isGeminiAvailable) {
+        throw new Error("API Gemini недоступен. Убедитесь, что API-ключ настроен в настройках.");
+    }
+    const newSchedule = await generateScheduleWithGemini(generationData);
+    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+    const tempUnscheduled = [...allPossibleEntries];
+    newSchedule.forEach(schedEntry => {
+        const matchIndex = tempUnscheduled.findIndex(unsched => 
+            unsched.groupId === schedEntry.groupId &&
+            (unsched.subgroupId || '') === (schedEntry.subgroupId || '') &&
+            unsched.subjectId === schedEntry.subjectId &&
+            unsched.classType === schedEntry.classType
+        );
+        if (matchIndex > -1) {
+            schedEntry.unscheduledUid = tempUnscheduled[matchIndex].uid;
+            tempUnscheduled.splice(matchIndex, 1);
+        } else {
+             console.warn('Gemini-generated entry could not be matched to an educational plan entry:', schedEntry);
+        }
+    });
+    const unschedulable = tempUnscheduled;
+
     if (!Array.isArray(newSchedule)) {
         throw new Error("Алгоритм вернул некорректный формат расписания.");
     }

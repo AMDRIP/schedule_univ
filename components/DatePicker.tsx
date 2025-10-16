@@ -46,13 +46,6 @@ const DatePicker: React.FC<DatePickerProps> = ({ selectedDate, onSelect }) => {
 
   return (
     <div className="absolute top-full mt-2 w-72 bg-gray-700 text-white rounded-lg shadow-2xl p-4 z-50 animate-fade-in-up">
-       <style>{`
-        @keyframes fade-in-up {
-            from { opacity: 0; transform: translateY(-10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        .animate-fade-in-up { animation: fade-in-up 0.2s ease-out forwards; }
-      `}</style>
       <div className="flex justify-between items-center mb-4">
         <h3 className="font-semibold text-lg">
           {displayDate.toLocaleString('ru-RU', { month: 'long', year: 'numeric' })}

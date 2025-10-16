@@ -1,4 +1,5 @@
 
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { Specialty, EducationalPlan, PlanEntry, Subject, AttestationType } from '../types';
@@ -61,16 +62,7 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
-             <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg transform transition-all duration-300 ease-out scale-95 opacity-0 animate-fade-in-scale">
-                 <style>{`
-                  @keyframes fade-in-scale {
-                    from { opacity: 0; transform: scale(0.95); }
-                    to { opacity: 1; transform: scale(1); }
-                  }
-                  .animate-fade-in-scale {
-                    animation: fade-in-scale 0.2s forwards;
-                  }
-                `}</style>
+             <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg animation-fade-in-scale">
                 <h2 className="text-xl font-bold mb-4 text-gray-900">{entry ? 'Редактировать дисциплину в плане' : 'Добавить дисциплину в план'}</h2>
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
@@ -280,11 +272,10 @@ const EducationalPlanManager: React.FC = () => {
                         </div>
                     </div>
                 )}) : (
-                    <div className="text-center py-16 text-gray-500 border-2 border-dashed rounded-lg">
-                        <DocumentSearchIcon className="mx-auto h-12 w-12 text-gray-400" />
-                        <p className="mt-2 font-semibold">Учебный план пуст</p>
-                        <p className="text-sm">Для данной специальности учебный план еще не создан.</p>
-                        <p className="text-sm">Нажмите "Добавить дисциплину", чтобы начать.</p>
+                    <div className="text-center py-16 text-gray-500 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50/50">
+                        <BookOpenIcon className="mx-auto h-16 w-16 text-gray-300" />
+                        <p className="mt-4 text-lg font-semibold text-gray-600">Учебный план пуст</p>
+                        <p className="mt-1 text-sm text-gray-500">Для этой специальности еще не добавлены дисциплины. Нажмите "Добавить", чтобы начать.</p>
                     </div>
                 )}
             </div>

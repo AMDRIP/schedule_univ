@@ -3,6 +3,7 @@ import { useDrag } from 'react-dnd';
 import { useStore } from '../hooks/useStore';
 import { UnscheduledEntry } from '../types';
 import { CLASS_TYPE_COLORS, ItemTypes } from '../constants';
+import { CollectionIcon, AcademicCapIcon, UsersIcon } from './icons';
 
 interface UnscheduledCardProps {
   entry: UnscheduledEntry;
@@ -34,12 +35,25 @@ const UnscheduledCard: React.FC<UnscheduledCardProps> = ({ entry }) => {
       // FIX: Cast the react-dnd connector to 'any' to resolve type conflicts,
       // likely caused by library version mismatches.
       ref={drag as any}
-      className={`p-2 rounded-lg shadow cursor-grab text-xs ${colorClass} transition-transform transform hover:scale-105 ${isDragging ? 'opacity-50 scale-105 ring-2 ring-blue-500' : 'opacity-100'}`}
+      className={`p-2 rounded-lg shadow cursor-grab text-xs ${colorClass} transition-transform transform hover:scale-105 ${isDragging ? 'opacity-50 scale-105 ring-2 ring-blue-500' : 'opacity-100'} space-y-1`}
     >
-      <p className="font-bold">{subject.name}</p>
-      <p>{entry.classType}</p>
-      <p className="mt-1 text-gray-600">{groupName}</p>
-      <p className="text-gray-600">{teacher.name}</p>
+      <div>
+        <div className="flex items-center gap-1.5 font-bold">
+          <CollectionIcon className="w-3.5 h-3.5 flex-shrink-0 text-gray-700" />
+          <p className="truncate" title={subject.name}>{subject.name}</p>
+        </div>
+        <p className="text-xs text-gray-500 ml-5">{entry.classType}</p>
+      </div>
+
+      <div className="flex items-center gap-1.5 text-gray-600">
+        <AcademicCapIcon className="w-3.5 h-3.5 flex-shrink-0" />
+        <p className="truncate" title={groupName}>{groupName}</p>
+      </div>
+
+      <div className="flex items-center gap-1.5 text-gray-600">
+        <UsersIcon className="w-3.5 h-3.5 flex-shrink-0" />
+        <p className="truncate" title={teacher.name}>{teacher.name}</p>
+      </div>
     </div>
   );
 };

@@ -2,17 +2,19 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { StoreProvider, useStore } from './hooks/useStore';
-import { Role } from './types';
+import { Role, HeuristicConfig } from './types';
 import Dashboard from './components/Dashboard';
 import Header from './components/Header';
 import NewProjectWizard from './components/NewProjectWizard';
 import ConfirmationModal from './components/ConfirmationModal';
 import UpdateNotification from './components/UpdateNotification';
+import SchedulerConfigModal from './components/SchedulerConfigModal';
 
 const AppContent: React.FC = () => {
   const [currentRole, setCurrentRole] = useState<Role>(Role.Admin);
   const [isNewProjectWizardOpen, setNewProjectWizardOpen] = useState(false);
   const [isNewProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
+  const [isSchedulerConfigOpen, setSchedulerConfigOpen] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
   const { runScheduler, clearSchedule, resetSchedule, startNewProject, handleOpen, handleSave, handleSaveAs, settings } = useStore();
@@ -35,19 +37,30 @@ const AppContent: React.FC = () => {
   const handleRestartForUpdate = () => {
     window.electronAPI?.restartApp();
   };
+  
+  const handleStartHeuristicScheduler = (config: HeuristicConfig) => {
+    setSchedulerConfigOpen(false);
+    handleRunScheduler('heuristic', config);
+  };
 
-  const handleRunScheduler = async (method: 'heuristic' | 'gemini') => {
+
+  const handleRunScheduler = async (method: 'heuristic' | 'gemini', config?: HeuristicConfig) => {
     if (isScheduling) return;
+
+    if (method === 'heuristic' && !config) {
+        setSchedulerConfigOpen(true);
+        return;
+    }
     
-    if (method === 'heuristic' && settings.respectProductionCalendar) {
-        if (!window.confirm("Внимание: Эвристический планировщик не может в полной мере учитывать производственный календарь и может разместить занятия на нерабочие дни. Рекомендуется использовать ИИ-планировщик (Gemini) для точного учета календаря или проверить результат вручную.\n\nПродолжить генерацию?")) {
+    if (method === 'heuristic' && settings.respectProductionCalendar && !config?.timeFrame) {
+        if (!window.confirm("Внимание: Эвристический планировщик в режиме без указания дат не может в полной мере учитывать производственный календарь и может разместить занятия на нерабочие дни. Рекомендуется использовать ИИ-планировщик (Gemini) или задать конкретный диапазон дат.\n\nПродолжить генерацию?")) {
             return;
         }
     }
 
     setIsScheduling(true);
     try {
-        const result = await runScheduler(method);
+        const result = await runScheduler(method, config);
         if (result.scheduled === 0 && result.unscheduled === 0 && result.failedEntries.length === 0) {
             // User likely cancelled the confirmation dialog
             alert("Генерация расписания отменена.");
@@ -106,6 +119,13 @@ const AppContent: React.FC = () => {
         <NewProjectWizard
           isOpen={isNewProjectWizardOpen}
           onClose={handleCloseWizard}
+        />
+      )}
+      {isSchedulerConfigOpen && (
+        <SchedulerConfigModal
+            isOpen={isSchedulerConfigOpen}
+            onClose={() => setSchedulerConfigOpen(false)}
+            onStart={handleStartHeuristicScheduler}
         />
       )}
       {isNewProjectConfirmOpen && (

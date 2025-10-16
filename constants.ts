@@ -27,6 +27,32 @@ export const PRODUCTION_CALENDAR_COLORS: { [key in ProductionCalendarEventType]:
     [ProductionCalendarEventType.SpecialWorkday]: { bg: 'bg-green-100', border: 'border-green-200', text: 'text-green-900', label: 'Рабочий день' },
 };
 
+export const COLOR_PALETTE = [
+    { name: 'Серый', value: 'gray' },
+    { name: 'Красный', value: 'red' },
+    { name: 'Оранжевый', value: 'orange' },
+    { name: 'Желтый', value: 'yellow' },
+    { name: 'Зеленый', value: 'green' },
+    { name: 'Бирюзовый', value: 'teal' },
+    { name: 'Синий', value: 'blue' },
+    { name: 'Индиго', value: 'indigo' },
+    { name: 'Фиолетовый', value: 'purple' },
+    { name: 'Розовый', value: 'pink' },
+];
+
+export const COLOR_MAP: { [key: string]: { bg: string; border: string; text: string; borderL: string; } } = {
+  gray:   { bg: 'bg-gray-100',   border: 'border-gray-300',   text: 'text-gray-800',   borderL: 'border-l-gray-500' },
+  red:    { bg: 'bg-red-100',    border: 'border-red-300',    text: 'text-red-800',    borderL: 'border-l-red-500' },
+  orange: { bg: 'bg-orange-100', border: 'border-orange-300', text: 'text-orange-800', borderL: 'border-l-orange-500' },
+  yellow: { bg: 'bg-yellow-100', border: 'border-yellow-300', text: 'text-yellow-800', borderL: 'border-l-yellow-500' },
+  green:  { bg: 'bg-green-100',  border: 'border-green-300',  text: 'text-green-800',  borderL: 'border-l-green-500' },
+  teal:   { bg: 'bg-teal-100',   border: 'border-teal-300',   text: 'text-teal-800',   borderL: 'border-l-teal-500' },
+  blue:   { bg: 'bg-blue-100',   border: 'border-blue-300',   text: 'text-blue-800',   borderL: 'border-l-blue-500' },
+  indigo: { bg: 'bg-indigo-100', border: 'border-indigo-300', text: 'text-indigo-800', borderL: 'border-l-indigo-500' },
+  purple: { bg: 'bg-purple-100', border: 'border-purple-300', text: 'text-purple-800', borderL: 'border-l-purple-500' },
+  pink:   { bg: 'bg-pink-100',   border: 'border-pink-300',   text: 'text-pink-800',   borderL: 'border-l-pink-500' },
+};
+
 export const ItemTypes = {
   SCHEDULE_ENTRY: 'scheduleEntry',
   UNSCHEDULED_ENTRY: 'unscheduledEntry',

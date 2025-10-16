@@ -309,6 +309,11 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
                             <DocumentSearchIcon />
                         </button>
                     )}
+                     {dataType === 'teachers' && onNavigate && (
+                        <button onClick={() => onNavigate('Просмотр преподавателя', item.id)} className="text-teal-600 hover:text-teal-800 transition-transform transform hover:scale-110" title="Просмотр">
+                            <DocumentSearchIcon />
+                        </button>
+                    )}
                     {dataType === 'subjects' && (
                         <button onClick={() => handleAddLink(item.id)} className="text-green-600 hover:text-green-800 transition-transform transform hover:scale-110" title="Привязать преподавателя">
                             <LinkIcon />
@@ -330,10 +335,10 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
               ))
             ) : (
               <tr>
-                <td colSpan={columns.length + 1} className="text-center py-12 text-gray-500">
-                  <DocumentSearchIcon className="mx-auto h-12 w-12 text-gray-400" />
-                  <p className="mt-2 font-semibold">Данные отсутствуют</p>
-                  <p className="text-sm">Нажмите "Добавить", чтобы создать первую запись.</p>
+                <td colSpan={columns.length + 1} className="text-center py-16 text-gray-500 bg-gray-50/50">
+                  <DocumentSearchIcon className="mx-auto h-16 w-16 text-gray-300" />
+                  <p className="mt-4 text-lg font-semibold text-gray-600">Пока здесь пусто</p>
+                  <p className="mt-1 text-sm text-gray-500">Нажмите кнопку "Добавить", чтобы создать первую запись в этом справочнике.</p>
                 </td>
               </tr>
             )}

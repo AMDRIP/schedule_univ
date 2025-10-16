@@ -13,6 +13,7 @@ import ProductionCalendarManager from './ProductionCalendarManager';
 import DepartmentView from './DepartmentView';
 import { toYYYYMMDD } from '../utils/dateUtils';
 import FacultyView from './FacultyView';
+import TeacherView from './TeacherView';
 
 
 interface DashboardProps {
@@ -51,7 +52,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
       case 'Просмотр кафедры':
         return <DepartmentView departmentId={viewEntityId!} />;
       case 'Преподаватели':
-        return <DataManager dataType="teachers" title="Управление преподавателями" />;
+        return <DataManager dataType="teachers" title="Управление преподавателями" onNavigate={handleNavigate} />;
+      case 'Просмотр преподавателя':
+        return <TeacherView teacherId={viewEntityId!} onNavigate={handleNavigate} />;
       case 'Группы':
         return <DataManager dataType="groups" title="Управление группами" />;
       case 'Подгруппы':
@@ -98,7 +101,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
   return (
     <div className="flex flex-1 overflow-hidden">
       <Sidebar currentRole={currentRole} activeView={activeView} setActiveView={handleSidebarNavigate} />
-      <main className="flex-1 p-6 overflow-y-auto bg-gray-50">
+      <main className="flex-1 p-6 overflow-y-auto bg-gradient-to-br from-gray-50 to-gray-100">
         {renderContent()}
       </main>
     </div>

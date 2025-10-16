@@ -330,6 +330,21 @@ const SettingsView: React.FC = () => {
                       </div>
                     </label>
                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Цветовые метки в расписании
+                  </label>
+                  <label htmlFor="showScheduleColors" className="flex items-center cursor-pointer">
+                      <div className="relative">
+                      <input type="checkbox" id="showScheduleColors" name="showScheduleColors" className="sr-only" checked={formData.showScheduleColors} onChange={handleChange} />
+                      <div className={`block w-14 h-8 rounded-full transition ${formData.showScheduleColors ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                      <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.showScheduleColors ? 'translate-x-6' : ''}`}></div>
+                      </div>
+                      <div className="ml-3 text-gray-700">
+                      {formData.showScheduleColors ? 'Включено' : 'Выключено'} (использовать цвета преподавателей и дисциплин)
+                      </div>
+                  </label>
+                </div>
             </div>
 
 

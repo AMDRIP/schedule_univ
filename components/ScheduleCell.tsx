@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useDrop, useDrag } from 'react-dnd';
 import { useStore } from '../hooks/useStore';
 import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag } from '../types';
-import { CLASS_TYPE_COLORS, ItemTypes, DAYS_OF_WEEK } from '../constants';
+import { CLASS_TYPE_COLORS, ItemTypes, DAYS_OF_WEEK, COLOR_MAP } from '../constants';
 import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon } from './icons';
 import { renderIcon } from './IconMap';
 
@@ -95,14 +95,30 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     );
   }
 
-  const colorClass = CLASS_TYPE_COLORS[entry.classType] || 'bg-gray-100 border-gray-300';
+  let colorClass = CLASS_TYPE_COLORS[entry.classType] || 'bg-gray-100 border-gray-300';
+  let borderClass = '';
+
+  if (settings.showScheduleColors) {
+      const subjectColorName = subject?.color;
+      const teacherColorName = teacher?.color;
+
+      if (subjectColorName && COLOR_MAP[subjectColorName]) {
+          const colorData = COLOR_MAP[subjectColorName];
+          colorClass = `${colorData.bg} ${colorData.border}`;
+      }
+
+      if (teacherColorName && COLOR_MAP[teacherColorName]) {
+          borderClass = `border-l-4 ${COLOR_MAP[teacherColorName].borderL}`;
+      }
+  }
+  
   const teacherName = (settings.showDegreeInSchedule && teacher.academicDegree)
       ? `${teacher.name}, ${teacher.academicDegree}`
       : teacher.name;
   const groupName = subgroup ? `${group?.number} (${subgroup.name})` : group?.number;
 
   return (
-    <div ref={isEditable ? drag as any : null} className={`p-1.5 rounded-md text-xs cursor-grab relative group ${colorClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
+    <div ref={isEditable ? drag as any : null} className={`p-1.5 rounded-md text-xs cursor-grab relative group transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${colorClass} ${borderClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
       <div>
         <p className="font-bold truncate">{subject.name}</p>
         <p>{entry.classType}</p>
@@ -140,7 +156,8 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
             ) : (
                 <>
                 <span className="truncate">Ауд. {classroom.number}</span>
-                 {tags.map(tag => tag && renderIcon(tag.icon, { key: tag.id, className: `w-3.5 h-3.5 text-gray-600`, title: tag.name }))}
+                {/* FIX: Wrapped icon in a span with a title attribute to show a tooltip, resolving a TypeScript error where 'title' was not a recognized prop for the icon component. */}
+                 {tags.map(tag => tag && <span key={tag.id} title={tag.name}>{renderIcon(tag.icon, { className: `w-3.5 h-3.5 text-gray-600` })}</span>)}
                 {isEditable && <button onClick={() => setIsEditingClassroom(true)} className="ml-1 opacity-0 group-hover:opacity-100 text-blue-600 hover:text-blue-800"><EditIcon className="w-3 h-3"/></button>}
                 </>
             )}

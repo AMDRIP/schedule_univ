@@ -180,7 +180,7 @@ interface ScheduleViewProps {
 
 const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setViewDate }) => {
   const store = useStore();
-  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks, streams } = store;
+  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, updateSettings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks, streams } = store;
   const [filterType, setFilterType] = useState<'group' | 'teacher' | 'classroom'>('group');
   const [selectedId, setSelectedId] = useState<string>(groups[0]?.id || '');
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
@@ -450,6 +450,10 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
     return uniqueSlots.sort((a, b) => a.time.localeCompare(b.time));
   }, [timeSlots, timeSlotsShortened, weekDays, productionCalendar, settings.useShortenedPreHolidaySchedule]);
 
+  const handleColorToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ ...settings, showScheduleColors: e.target.checked });
+  };
+
 
   const isMethodist = currentRole === Role.Methodist || currentRole === Role.Admin;
   const todayStr = toYYYYMMDD(new Date());
@@ -548,6 +552,16 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                 <DocumentTextIcon className="w-4 h-4 mr-2"/>
                 Экспорт в TXT
             </button>
+            <label htmlFor="showScheduleColors" className="flex items-center cursor-pointer text-sm">
+              <div className="relative">
+                <input type="checkbox" id="showScheduleColors" name="showScheduleColors" className="sr-only" checked={settings.showScheduleColors} onChange={handleColorToggle} />
+                <div className={`block w-10 h-6 rounded-full transition ${settings.showScheduleColors ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.showScheduleColors ? 'translate-x-4' : ''}`}></div>
+              </div>
+              <div className="ml-2 text-gray-700">
+                  Цветовые метки
+              </div>
+            </label>
           </div>
         )}
         <div className="overflow-x-auto">
