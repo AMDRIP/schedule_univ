@@ -465,9 +465,24 @@ const SettingsView: React.FC = () => {
                         Сохранить ключ
                     </button>
                 </div>
-                {isOpenRouterKeySaved && (
+                 {isOpenRouterKeySaved && (
                     <p className="text-sm text-green-600 mt-2">Ключ API OpenRouter успешно сохранен для текущей сессии.</p>
                 )}
+            </div>
+             <div>
+                <label htmlFor="openRouterModel" className="block text-sm font-medium text-gray-700">Модель OpenRouter</label>
+                <input
+                    type="text"
+                    id="openRouterModel"
+                    name="openRouterModel"
+                    value={formData.openRouterModel || ''}
+                    onChange={handleChange}
+                    className={defaultInputClass}
+                    placeholder="anthropic/claude-3-haiku"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                    Например: `google/gemini-pro`, `openai/gpt-4o`. Список моделей доступен на сайте OpenRouter.
+                </p>
             </div>
         </div>
       </div>

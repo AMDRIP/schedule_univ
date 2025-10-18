@@ -275,6 +275,7 @@ export interface SchedulingSettings {
   showScheduleColors: boolean;
   allowManualOverrideOfForbidden: boolean;
   enforceStandardRules: boolean;
+  openRouterModel: string;
 }
 
 export interface HeuristicConfig {

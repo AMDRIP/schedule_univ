@@ -47,7 +47,7 @@ const getOpenRouterApiKey = async (): Promise<string | null> => {
   }
 };
 
-export const generateScheduleWithOpenRouter = async (data: GenerationData): Promise<ScheduleEntry[]> => {
+export const generateScheduleWithOpenRouter = async (data: GenerationData, modelName: string): Promise<ScheduleEntry[]> => {
   const { 
     teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
     teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
@@ -139,7 +139,7 @@ export const generateScheduleWithOpenRouter = async (data: GenerationData): Prom
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: "anthropic/claude-3-haiku", // A fast and capable model suitable for this task
+        model: modelName,
         messages: [
           { role: "user", content: prompt }
         ],

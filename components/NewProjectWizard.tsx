@@ -99,10 +99,10 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         respectProductionCalendar: true, useShortenedPreHolidaySchedule: true, allowOverbooking: false,
         showScheduleColors: true,
         showTeacherDetailsInLists: false,
-        // FIX: Added missing property 'allowManualOverrideOfForbidden' to satisfy the SchedulingSettings type.
         allowManualOverrideOfForbidden: false,
-        // FIX: Added missing property 'enforceStandardRules' to satisfy the SchedulingSettings type.
         enforceStandardRules: true,
+        // FIX: Added missing 'openRouterModel' property to satisfy the SchedulingSettings type.
+        openRouterModel: 'anthropic/claude-3-haiku',
     });
     const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([{ id: generateId('ts'), time: '08:30-10:00' }]);
     const [faculties, setFaculties] = useState<Faculty[]>([{ id: generateId('f'), name: '' }]);

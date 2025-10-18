@@ -109,6 +109,7 @@ const initialSettings: SchedulingSettings = {
     showScheduleColors: true,
     allowManualOverrideOfForbidden: false,
     enforceStandardRules: true,
+    openRouterModel: 'anthropic/claude-3-haiku',
 };
 const initialScheduleTemplates: ScheduleTemplate[] = [];
 
@@ -327,6 +328,7 @@ const getInitialEmptySettings = (): SchedulingSettings => ({
     showScheduleColors: true,
     allowManualOverrideOfForbidden: false,
     enforceStandardRules: true,
+    openRouterModel: 'anthropic/claude-3-haiku',
 });
 
 
@@ -1053,7 +1055,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
          if (!openRouterApiKey) {
             throw new Error("API OpenRouter недоступен. Убедитесь, что API-ключ настроен в настройках.");
         }
-        newSchedule = await generateScheduleWithOpenRouter(generationData);
+        newSchedule = await generateScheduleWithOpenRouter(generationData, settings.openRouterModel);
     }
 
     // Common logic for AI schedulers
