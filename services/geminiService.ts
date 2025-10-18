@@ -39,6 +39,21 @@ const getAiClient = async (): Promise<GoogleGenAI | null> => {
   }
   isInitialized = true; // Попытка инициализации только один раз
 
+  // Проверяем, не активирован ли принудительный режим
+  const aiForced = await window.electronAPI?.isAiForced?.();
+  if (aiForced) {
+      const apiKey = process.env.API_KEY;
+      if (!apiKey) {
+          console.error("AI forced, but process.env.API_KEY is not available in the renderer.");
+          alert("AI-режим активирован, но ключ API не найден. Убедитесь, что он задан в переменных окружения.");
+          ai = null;
+          return null;
+      }
+      console.log("AI Client Initializing with process.env.API_KEY due to -ai flag.");
+      ai = new GoogleGenAI({ apiKey });
+      return ai;
+  }
+  
   // Проверяем, доступен ли Electron API
   if (!window.electronAPI || typeof window.electronAPI.getApiKey !== 'function') {
       console.warn("Electron API не найдено. Функции Gemini будут отключены.");

@@ -209,8 +209,13 @@ export enum RuleAction {
     DifferentDay = 'Размещать в разные дни',
     Consecutive = 'Размещать пары подряд',
     MaxPerDay = 'Максимум пар в день',
+    MinPerDay = 'Минимум пар в день',
+    MaxConsecutive = 'Максимум пар подряд',
+    AtMostNGaps = 'Не более N "окон" в день',
     Order = 'Определенный порядок (A перед B)',
     NoOverlap = 'Не пересекать с (по времени)',
+    StartAfter = 'Начинать не ранее',
+    EndBefore = 'Заканчивать не позднее',
 }
 
 export type RuleEntityType = 'teacher' | 'group' | 'subject' | 'classroom' | 'classType' | 'department';
@@ -221,11 +226,14 @@ export interface RuleCondition {
     classType?: ClassType; // Optional filter
 }
 
+export type RuleLogicalOperator = 'AND' | 'OR';
+
 export interface SchedulingRule extends BaseItem {
   description: string;
   severity: RuleSeverity;
   action: RuleAction;
-  conditions: [RuleCondition, RuleCondition?];
+  conditions: RuleCondition[];
+  logicalOperators?: RuleLogicalOperator[];
   day?: string; 
   timeSlotId?: string;
   param?: number; 

@@ -103,13 +103,15 @@ app.whenReady().then(async () => {
   console.log('Main process: App is ready.');
   // --- IPC Handlers ---
 
-  // API Key
+  // API Key & AI Flag
   ipcMain.handle('get-api-key', () => userApiKey);
   ipcMain.handle('set-api-key', (event, key) => {
     console.log(`Main process: API key set in session (length: ${key ? key.length : 0})`);
     userApiKey = key;
     return { success: true };
   });
+  ipcMain.handle('is-ai-forced', () => process.argv.some(arg => arg === '-ai' || arg === '--ai'));
+
 
   // Window Title
   ipcMain.handle('set-window-title', (event, title) => {

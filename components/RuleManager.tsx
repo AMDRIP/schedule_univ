@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../hooks/useStore';
-import { SchedulingRule, RuleAction, RuleSeverity, RuleEntityType, RuleCondition, ClassType } from '../types';
+import { SchedulingRule, RuleAction, RuleSeverity, RuleEntityType, RuleCondition, ClassType, RuleLogicalOperator } from '../types';
 import { EditIcon, TrashIcon, PlusIcon } from './icons';
 
 // Main Component
@@ -44,18 +44,28 @@ const RuleManager: React.FC = () => {
           const entityType = typeMap[cond.entityType] || cond.entityType;
           const names = cond.entityIds.map(id => (dataMap[cond.entityType as keyof typeof dataMap] as any[])?.find(e => e.id === id)?.name || (dataMap[cond.entityType as keyof typeof dataMap] as any[])?.find(e => e.id === id)?.number || id).join(', ');
           const classType = cond.classType ? ` (${cond.classType})` : '';
-          return `${entityType}: ${names}${classType}`;
+          return `(${entityType}: ${names}${classType})`;
       };
 
-      let details = rule.conditions.map(c => c ? formatCondition(c) : '').join(' & ');
+      let details = rule.conditions
+        .map((c, i) => {
+            const operator = i > 0 ? ` ${rule.logicalOperators?.[i - 1] || 'И'} ` : '';
+            return operator + formatCondition(c);
+        })
+        .join('');
 
-      if (rule.action === RuleAction.MaxPerDay) {
-         details += ` (max: ${rule.param})`;
+      if ([RuleAction.MaxPerDay, RuleAction.MinPerDay, RuleAction.MaxConsecutive, RuleAction.AtMostNGaps].includes(rule.action)) {
+         details += ` (Параметр: ${rule.param})`;
       }
 
-      if (rule.day && rule.timeSlotId) {
+      if ([RuleAction.AvoidTime, RuleAction.RequireTime, RuleAction.PreferTime].includes(rule.action) && rule.day && rule.timeSlotId) {
          const time = timeSlots.find(t => t.id === rule.timeSlotId)?.time || '';
          details += ` в ${rule.day}, ${time}`;
+      }
+      
+       if ([RuleAction.StartAfter, RuleAction.EndBefore].includes(rule.action) && rule.timeSlotId) {
+         const time = timeSlots.find(t => t.id === rule.timeSlotId)?.time || '';
+         details += ` (Время: ${time})`;
       }
 
       return `${rule.action}: ${details}`;
@@ -135,8 +145,26 @@ const RuleConditionEditor: React.FC<{
     label: string;
 }> = ({ condition, onChange, label }) => {
     const { teachers, groups, subjects, classrooms, departments } = useStore();
-    const dataMap = useMemo(() => ({ teachers, groups, subjects, classrooms, departments, classType: Object.values(ClassType).map(ct => ({id: ct, name: ct})) }), [teachers, groups, subjects, classrooms, departments]);
-    const options = dataMap[condition.entityType as keyof typeof dataMap] || [];
+    const dataMap = useMemo(() => ({ 
+        teachers, 
+        groups, 
+        subjects, 
+        classrooms, 
+        departments, 
+        classType: Object.values(ClassType).map(ct => ({id: ct, name: ct})) 
+    }), [teachers, groups, subjects, classrooms, departments]);
+    
+    const entityTypeToDataKeyMap: Record<RuleEntityType, keyof typeof dataMap | null> = {
+        teacher: 'teachers',
+        group: 'groups',
+        subject: 'subjects',
+        classroom: 'classrooms',
+        department: 'departments',
+        classType: 'classType'
+    };
+
+    const dataKey = entityTypeToDataKeyMap[condition.entityType];
+    const options = dataKey ? dataMap[dataKey] : [];
 
     return (
         <div className="p-3 border rounded-md bg-gray-50">
@@ -184,28 +212,17 @@ const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose, onSave, item }) 
             setFormData({
                 description: '',
                 severity: RuleSeverity.Medium,
-                action: RuleAction.AvoidTime,
+                action: RuleAction.MaxPerDay,
                 conditions: [{ entityType: 'teacher', entityIds: [] }],
-                day: 'Понедельник',
-                timeSlotId: timeSlots[0]?.id || ''
+                logicalOperators: [],
+                param: 3
             });
         }
-    }, [item, timeSlots]);
+    }, [item]);
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
-    };
-
-    const handleActionChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-        const newAction = e.target.value as RuleAction;
-        const needsTwoConditions = [RuleAction.SameDay, RuleAction.DifferentDay, RuleAction.Order, RuleAction.NoOverlap].includes(newAction);
-        const currentConditions = formData.conditions || [{ entityType: 'teacher', entityIds: [] }];
-        let newConditions: [RuleCondition, RuleCondition?] = [currentConditions[0]];
-        if (needsTwoConditions) {
-            newConditions.push(currentConditions[1] || { entityType: 'teacher', entityIds: [] });
-        }
-        setFormData(prev => ({ ...prev, action: newAction, conditions: newConditions }));
     };
     
     const handleConditionChange = (index: number, newCondition: RuleCondition) => {
@@ -214,6 +231,36 @@ const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose, onSave, item }) 
         setFormData(prev => ({...prev, conditions: newConditions as [RuleCondition, RuleCondition?]}))
     };
 
+    const handleAddCondition = () => {
+        setFormData(prev => ({
+            ...prev,
+            conditions: [...(prev.conditions || []), { entityType: 'teacher', entityIds: [] }],
+            logicalOperators: [...(prev.logicalOperators || []), 'AND']
+        }));
+    };
+
+    const handleRemoveCondition = (index: number) => {
+        setFormData(prev => {
+            if (!prev.conditions || prev.conditions.length <= 1) return prev;
+            const newConditions = [...prev.conditions];
+            const newOperators = [...(prev.logicalOperators || [])];
+            newConditions.splice(index, 1);
+            if (index > 0) {
+                newOperators.splice(index - 1, 1);
+            } else if (newOperators.length > 0) {
+                newOperators.splice(0, 1);
+            }
+            return { ...prev, conditions: newConditions, logicalOperators: newOperators };
+        });
+    };
+
+    const handleLogicalOperatorChange = (index: number, value: RuleLogicalOperator) => {
+        setFormData(prev => {
+            const newOperators = [...(prev.logicalOperators || [])];
+            newOperators[index] = value;
+            return { ...prev, logicalOperators: newOperators };
+        });
+    };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -221,10 +268,11 @@ const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose, onSave, item }) 
     };
 
     if (!isOpen) return null;
+    
+    const needsDayAndTime = [RuleAction.AvoidTime, RuleAction.RequireTime, RuleAction.PreferTime].includes(formData.action as RuleAction);
+    const needsOnlyTime = [RuleAction.StartAfter, RuleAction.EndBefore].includes(formData.action as RuleAction);
+    const needsNumberParam = [RuleAction.MaxPerDay, RuleAction.MinPerDay, RuleAction.MaxConsecutive, RuleAction.AtMostNGaps].includes(formData.action as RuleAction);
 
-    const needsTwoConditions = formData.action && [RuleAction.SameDay, RuleAction.DifferentDay, RuleAction.Order, RuleAction.NoOverlap].includes(formData.action);
-    const needsTime = formData.action && [RuleAction.AvoidTime, RuleAction.RequireTime, RuleAction.PreferTime].includes(formData.action);
-    const needsParam = formData.action === RuleAction.MaxPerDay;
 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
@@ -243,37 +291,87 @@ const RuleModal: React.FC<RuleModalProps> = ({ isOpen, onClose, onSave, item }) 
                     </div>
                      <div>
                         <label className="block text-sm font-medium text-gray-700">Действие</label>
-                        <select name="action" value={formData.action} onChange={handleActionChange} className={defaultInputClass}>
+                        <select name="action" value={formData.action} onChange={handleChange} className={defaultInputClass}>
                             {Object.values(RuleAction).map(t => <option key={t} value={t}>{t}</option>)}
                         </select>
                     </div>
                     
-                    {formData.conditions?.[0] && <RuleConditionEditor condition={formData.conditions[0]} onChange={c => handleConditionChange(0, c)} label="Условие A" />}
-                    {needsTwoConditions && formData.conditions?.[1] && <RuleConditionEditor condition={formData.conditions[1]} onChange={c => handleConditionChange(1, c)} label="Условие B" />}
+                    <div className="space-y-3">
+                        {formData.conditions?.map((condition, index) => (
+                            <React.Fragment key={index}>
+                                {index > 0 && (
+                                    <div className="flex items-center my-2">
+                                        <div className="flex-grow border-t border-gray-300"></div>
+                                        <select 
+                                            value={formData.logicalOperators?.[index-1] || 'AND'} 
+                                            onChange={(e) => handleLogicalOperatorChange(index - 1, e.target.value as RuleLogicalOperator)}
+                                            className="mx-4 p-1 border border-gray-300 rounded text-sm font-semibold"
+                                        >
+                                            <option value="AND">И</option>
+                                            <option value="OR">ИЛИ</option>
+                                        </select>
+                                        <div className="flex-grow border-t border-gray-300"></div>
+                                    </div>
+                                )}
+                                <div className="relative">
+                                    <RuleConditionEditor
+                                        condition={condition}
+                                        onChange={c => handleConditionChange(index, c)}
+                                        label={`Условие ${String.fromCharCode(65 + index)}`}
+                                    />
+                                    {formData.conditions && formData.conditions.length > 1 && (
+                                        <button type="button" onClick={() => handleRemoveCondition(index)} className="absolute top-2 right-2 p-1 text-red-500 hover:text-red-700 rounded-full hover:bg-red-100">
+                                            <TrashIcon className="w-4 h-4" />
+                                        </button>
+                                    )}
+                                </div>
+                            </React.Fragment>
+                        ))}
+                    </div>
+                    
+                    <button type="button" onClick={handleAddCondition} className="text-sm text-blue-600 hover:underline flex items-center gap-1">
+                        <PlusIcon className="w-4 h-4"/>Добавить условие
+                    </button>
 
-                    {needsTime && (
-                         <div className='flex gap-4'>
-                             <div className='w-1/2'>
-                               <label className="block text-sm font-medium text-gray-700">День</label>
-                               <select name="day" value={formData.day} onChange={handleChange} className={defaultInputClass}>
-                                    {['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'].map(d => <option key={d} value={d}>{d}</option>)}
-                               </select>
+                    <div className="pt-4 border-t">
+                        <h3 className="text-md font-semibold text-gray-700 mb-2">Параметры действия</h3>
+                        {needsDayAndTime && (
+                             <div className='flex gap-4'>
+                                 <div className='w-1/2'>
+                                   <label className="block text-sm font-medium text-gray-700">День</label>
+                                   <select name="day" value={formData.day} onChange={handleChange} className={defaultInputClass}>
+                                        {['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'].map(d => <option key={d} value={d}>{d}</option>)}
+                                   </select>
+                                </div>
+                                 <div className='w-1/2'>
+                                   <label className="block text-sm font-medium text-gray-700">Время</label>
+                                   <select name="timeSlotId" value={formData.timeSlotId} onChange={handleChange} className={defaultInputClass}>
+                                       {timeSlots.map(t => <option key={t.id} value={t.id}>{t.time}</option>)}
+                                   </select>
+                                </div>
                             </div>
-                             <div className='w-1/2'>
+                        )}
+                        
+                        {needsOnlyTime && (
+                            <div>
                                <label className="block text-sm font-medium text-gray-700">Время</label>
                                <select name="timeSlotId" value={formData.timeSlotId} onChange={handleChange} className={defaultInputClass}>
                                    {timeSlots.map(t => <option key={t.id} value={t.id}>{t.time}</option>)}
                                </select>
                             </div>
-                        </div>
-                    )}
-                    
-                    {needsParam && (
-                         <div>
-                           <label className="block text-sm font-medium text-gray-700">Параметр (число)</label>
-                           <input type="number" name="param" value={formData.param || ''} onChange={e => setFormData(p => ({...p, param: Number(e.target.value)}))} className={defaultInputClass} min="0"/>
-                        </div>
-                    )}
+                        )}
+                        
+                        {needsNumberParam && (
+                             <div>
+                               <label className="block text-sm font-medium text-gray-700">Параметр (число)</label>
+                               <input type="number" name="param" value={formData.param || ''} onChange={e => setFormData(p => ({...p, param: Number(e.target.value)}))} className={defaultInputClass} min="0"/>
+                            </div>
+                        )}
+
+                        {!needsDayAndTime && !needsOnlyTime && !needsNumberParam && (
+                            <p className="text-sm text-gray-500">Для этого действия дополнительные параметры не требуются.</p>
+                        )}
+                    </div>
 
                     <div className="flex justify-end space-x-4 mt-6">
                         <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">Отмена</button>

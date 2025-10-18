@@ -366,16 +366,35 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
-    let weeksInSemester = 16;
-    if (settings.semesterStart && settings.semesterEnd) {
-      const start = new Date(settings.semesterStart);
-      const end = new Date(settings.semesterEnd);
-      if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start) {
-        weeksInSemester = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 7));
-      }
+    const semesterStartDate = new Date(settings.semesterStart + 'T00:00:00');
+    const semesterEndDate = new Date(settings.semesterEnd + 'T00:00:00');
+
+    if (isNaN(semesterStartDate.getTime()) || isNaN(semesterEndDate.getTime()) || semesterEndDate <= semesterStartDate) {
+        setUnscheduledEntries(allUnscheduledForSemester); // Fallback if dates are invalid
+        return;
     }
-    if (weeksInSemester <= 0) weeksInSemester = 1;
-    
+
+    const weeksInSemester = Math.ceil((semesterEndDate.getTime() - semesterStartDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
+    if (weeksInSemester <= 0) {
+        setUnscheduledEntries(allUnscheduledForSemester); // Fallback
+        return;
+    }
+
+    const viewDateObj = new Date(viewDate + 'T00:00:00');
+    const startOfViewWeek = getWeekDays(viewDateObj)[0];
+    startOfViewWeek.setHours(0, 0, 0, 0); // Normalize to start of day
+
+    // Calculate the current week number within the semester (1-based)
+    let currentSemesterWeek = 0;
+    if (viewDateObj >= semesterStartDate) {
+         // Difference in milliseconds
+        const diffTime = Math.abs(viewDateObj.getTime() - semesterStartDate.getTime());
+        // Difference in days
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+        // Week number (1-based)
+        currentSemesterWeek = Math.floor(diffDays / 7) + 1;
+    }
+
     const getEntryKey = (e: UnscheduledEntry) => `${e.subjectId}-${e.groupId || ''}-${(e.groupIds || []).join('_')}-${e.subgroupId || ''}-${e.classType}`;
 
     const totalDemand = new Map<string, number>();
@@ -384,14 +403,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         totalDemand.set(key, (totalDemand.get(key) || 0) + 1);
     });
 
-    const endOfViewWeek = getWeekDays(new Date(viewDate))[5];
-
-    const scheduledCount = new Map<string, number>();
-    allPossibleEntries.forEach(entry => {
-        const correspondingScheduleEntry = schedule.find(e => e.unscheduledUid === entry.uid);
-        if (correspondingScheduleEntry && correspondingScheduleEntry.date && new Date(correspondingScheduleEntry.date) <= endOfViewWeek) {
-            const key = getEntryKey(entry);
-            scheduledCount.set(key, (scheduledCount.get(key) || 0) + 1);
+    // Count classes scheduled BEFORE the current view week starts
+    const scheduledBeforeViewWeek = new Map<string, number>();
+    schedule.forEach(entry => {
+        if (entry.unscheduledUid && entry.date && !isNaN(new Date(entry.date).getTime())) {
+            const entryDate = new Date(entry.date + 'T00:00:00');
+            if (entryDate < startOfViewWeek) {
+                const originalEntry = allPossibleEntries.find(e => e.uid === entry.unscheduledUid);
+                if (originalEntry) {
+                    const key = getEntryKey(originalEntry);
+                    scheduledBeforeViewWeek.set(key, (scheduledBeforeViewWeek.get(key) || 0) + 1);
+                }
+            }
         }
     });
 
@@ -410,23 +433,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (demand === 0) return;
 
         const classesPerWeek = demand / weeksInSemester;
-        const goalForHorizon = Math.ceil(classesPerWeek * horizonWeeks);
-        if (goalForHorizon <= 0) return;
         
-        const numScheduled = scheduledCount.get(key) || 0;
+        // How many should have been done by the start of this week
+        const targetScheduledByStartOfWeek = Math.ceil(classesPerWeek * (currentSemesterWeek - 1));
         
-        let progressInCurrentGoal = 0;
-        if(goalForHorizon > 0) {
-            progressInCurrentGoal = numScheduled % goalForHorizon;
-        }
+        // How many were actually done
+        const numScheduledBefore = scheduledBeforeViewWeek.get(key) || 0;
         
-        let numToShow = 0;
-        if (numScheduled > 0 && progressInCurrentGoal === 0) {
-            numToShow = 0;
-        } else {
-            numToShow = goalForHorizon - progressInCurrentGoal;
-        }
+        // The deficit from previous weeks
+        const backlog = Math.max(0, targetScheduledByStartOfWeek - numScheduledBefore);
+
+        // How many are planned for the current horizon
+        const neededForHorizon = Math.ceil(classesPerWeek * horizonWeeks);
         
+        // Total to show is the backlog plus what's needed for this period
+        const numToShow = Math.ceil(backlog + neededForHorizon);
+
         newUnscheduled.push(...unscheduledList.slice(0, numToShow));
     });
 
@@ -435,6 +457,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   useEffect(() => {
     const initializeApiKey = async () => {
+        if (window.electronAPI?.isAiForced) {
+            const aiForced = await window.electronAPI.isAiForced();
+            if (aiForced) {
+                console.log("AI features forced by '-ai' flag.");
+                setIsGeminiAvailable(true);
+                // The key itself will be handled by geminiService, which can use process.env.API_KEY.
+                setApiKey('******** (Активировано флагом)');
+                return;
+            }
+        }
+
         if (window.electronAPI && typeof window.electronAPI.getApiKey === 'function') {
             try {
                 const key = await window.electronAPI.getApiKey();
@@ -447,7 +480,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             }
         } else {
             setIsGeminiAvailable(false);
-            console.log("Приложение запущено не в среде Electron. Функции ИИ будут отключены.");
+            console.log("Приложение запущено не в среде Electron или флаг -ai не указан. Функции ИИ будут отключены.");
         }
     };
     initializeApiKey();

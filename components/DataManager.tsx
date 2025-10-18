@@ -258,10 +258,12 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
     }
     
     if (column === 'tagIds' && dataType === 'classrooms') {
-      return renderTags(value as string[] | undefined);
+      // FIX: The type of `value` is a large union. We must check if it's an array before casting and passing it to renderTags.
+      return renderTags(Array.isArray(value) ? value : undefined);
     }
     if (column === 'requiredClassroomTagIds' && dataType === 'subjects') {
-      return renderTags(value as string[] | undefined);
+      // FIX: The type of `value` is a large union. We must check if it's an array before casting and passing it to renderTags.
+      return renderTags(Array.isArray(value) ? value : undefined);
     }
 
 

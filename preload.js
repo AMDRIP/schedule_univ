@@ -15,6 +15,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   setApiKey: (key) => ipcRenderer.invoke('set-api-key', key),
 
+  /**
+   * Проверяет, был ли передан флаг для принудительной активации ИИ.
+   * @returns {Promise<boolean>}
+   */
+  isAiForced: () => ipcRenderer.invoke('is-ai-forced'),
+
   // --- File System and Window API ---
   setWindowTitle: (title) => ipcRenderer.invoke('set-window-title', title),
   openFile: () => ipcRenderer.invoke('open-file'),
