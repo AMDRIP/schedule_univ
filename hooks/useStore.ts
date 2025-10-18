@@ -109,7 +109,7 @@ const initialSettings: SchedulingSettings = {
     showScheduleColors: true,
     allowManualOverrideOfForbidden: false,
     enforceStandardRules: true,
-    openRouterModel: 'anthropic/claude-3-haiku',
+    openRouterModel: 'deepseek/deepseek-chat-v3.1:free',
 };
 const initialScheduleTemplates: ScheduleTemplate[] = [];
 
@@ -328,7 +328,7 @@ const getInitialEmptySettings = (): SchedulingSettings => ({
     showScheduleColors: true,
     allowManualOverrideOfForbidden: false,
     enforceStandardRules: true,
-    openRouterModel: 'anthropic/claude-3-haiku',
+    openRouterModel: 'deepseek/deepseek-chat-v3.1:free',
 });
 
 

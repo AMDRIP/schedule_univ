@@ -80,18 +80,23 @@ const SettingsView: React.FC = () => {
     }
   }, []);
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type, checked } = e.target;
-    setFormData(prev => ({
-      ...prev,
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value, type } = e.target;
+    const checked = (e.target as HTMLInputElement).checked;
+    
+    const newSettings = {
+      ...formData,
       [name]: type === 'checkbox' ? checked : (type === 'number' ? Number(value) : value),
-    }));
+    };
+    
+    setFormData(newSettings);
+    updateSettings(newSettings);
     setIsSaved(false);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    updateSettings(formData);
+    // Data is already saved by handleChange, this just shows confirmation
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
   };
@@ -404,7 +409,7 @@ const SettingsView: React.FC = () => {
                     type="submit"
                     className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg transition-colors"
                 >
-                    Сохранить
+                    Сохранить настройки
                 </button>
             </div>
           </form>

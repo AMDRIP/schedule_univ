@@ -102,7 +102,7 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         allowManualOverrideOfForbidden: false,
         enforceStandardRules: true,
         // FIX: Added missing 'openRouterModel' property to satisfy the SchedulingSettings type.
-        openRouterModel: 'anthropic/claude-3-haiku',
+        openRouterModel: 'deepseek/deepseek-chat-v3.1:free',
     });
     const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([{ id: generateId('ts'), time: '08:30-10:00' }]);
     const [faculties, setFaculties] = useState<Faculty[]>([{ id: generateId('f'), name: '' }]);
