@@ -5,6 +5,8 @@ import DataModal from './DataModal';
 import LinkModal from './LinkModal';
 import { EditIcon, TrashIcon, PlusIcon, DocumentSearchIcon, CopyIcon, LinkIcon } from './icons';
 import { calculateExperience } from '../utils/dateUtils';
+import { renderIcon } from './IconMap';
+import { COLOR_MAP } from '../constants';
 
 interface DataManagerProps {
   dataType: DataType;
@@ -33,6 +35,7 @@ const COLUMN_HEADERS: Record<string, string> = {
   oksoCode: 'Код ОКСО',
   pinnedClassroomId: 'Закреп. ауд.',
   suitableClassroomTypeIds: 'Подходящие типы аудиторий',
+  requiredClassroomTagIds: 'Обязательные теги',
   description: 'Описание',
   photoUrl: 'Фото',
   academicDegree: 'Ученая степень',
@@ -52,6 +55,9 @@ const COLUMN_HEADERS: Record<string, string> = {
   address: 'Адрес',
   phone: 'Телефон',
   email: 'Email',
+  tagIds: 'Теги',
+  color: 'Цвет',
+  icon: 'Иконка',
 };
 
 
@@ -113,7 +119,6 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
                 return; // Prevent deletion
             }
             break;
-        // FIX: Added a default case to the switch statement. This prevents TypeScript from incorrectly narrowing the `dataType` prop's type, which was causing comparison errors in other functions within the component.
         default:
             break;
     }
@@ -154,10 +159,10 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
       return ['id', 'photoUrl', 'name', 'academicDegree', 'academicTitle', 'departmentId', 'hireDate', 'experience'];
     }
     if (dataType === 'subjects') {
-        return ['id', 'name', 'linkedTeachers', 'suitableClassroomTypeIds'];
+        return ['id', 'name', 'linkedTeachers', 'suitableClassroomTypeIds', 'requiredClassroomTagIds'];
     }
     if (dataType === 'classrooms') {
-        return ['id', 'number', 'capacity', 'typeId'];
+        return ['id', 'number', 'capacity', 'typeId', 'tagIds'];
     }
     if (dataType === 'scheduleTemplates') {
         return ['id', 'name', 'description'];
@@ -170,6 +175,9 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
     }
     if (dataType === 'electives') {
         return ['id', 'name', 'subjectId', 'teacherId', 'groupId', 'hoursPerSemester'];
+    }
+    if (dataType === 'classroomTags') {
+        return ['id', 'color', 'icon', 'name'];
     }
 
     if (!data || data.length === 0) {
@@ -195,6 +203,21 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
   const columns = getColumns();
 
   const renderCell = (item: DataItem, column: string) => {
+    const renderTags = (tagIds: string[] | undefined) => {
+      if (!Array.isArray(tagIds) || tagIds.length === 0) return '—';
+      const tags = tagIds.map(id => store.classroomTags.find(t => t.id === id)).filter(Boolean);
+      return (
+          <div className="flex items-center flex-wrap gap-1">
+              {tags.map(tag => tag && (
+                  <span key={tag.id} title={tag.name} className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${COLOR_MAP[tag.color]?.bg || 'bg-gray-100'} ${COLOR_MAP[tag.color]?.text || 'text-gray-700'}`}>
+                      {renderIcon(tag.icon, { className: 'w-3 h-3' })}
+                      <span>{tag.name}</span>
+                  </span>
+              ))}
+          </div>
+      );
+    }
+    
     if (column === 'experience') {
         return calculateExperience((item as any).hireDate);
     }
@@ -223,6 +246,24 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
     if (column === 'photoUrl' && dataType === 'teachers') {
          return value ? <img src={value as string} alt="фото" className="w-10 h-10 rounded-full object-cover mx-auto"/> : <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-xs text-gray-500 mx-auto">Нет фото</div>;
     }
+
+    if (dataType === 'classroomTags') {
+        if (column === 'color') {
+            const colorClass = COLOR_MAP[value as string] || { bg: 'bg-gray-200', border: 'border-gray-300' };
+            return <div className={`w-5 h-5 rounded ${colorClass.bg} border ${colorClass.border}`}></div>;
+        }
+        if (column === 'icon') {
+            return renderIcon(value as string, { className: 'w-5 h-5 text-gray-600' });
+        }
+    }
+    
+    if (column === 'tagIds' && dataType === 'classrooms') {
+      return renderTags(value as string[] | undefined);
+    }
+    if (column === 'requiredClassroomTagIds' && dataType === 'subjects') {
+      return renderTags(value as string[] | undefined);
+    }
+
 
     switch (column) {
       case 'facultyId':
@@ -259,12 +300,15 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
           else if (column === 'specialtyIds') nameMap = store.specialties;
           else nameMap = store.groups;
           
-          return value.map(id => (nameMap.find(g => g.id === id) as any)?.name || (nameMap.find(g => g.id === id) as any)?.number).filter(Boolean).join(', ');
+          return (value as any[]).map(id => (nameMap.find(g => g.id === id) as any)?.name || (nameMap.find(g => g.id === id) as any)?.number).filter(Boolean).join(', ');
         }
         return '';
       case 'isWorkDay':
         return value ? 'Да' : 'Нет';
       default:
+        if (Array.isArray(value)) {
+          return value.join(', ');
+        }
         return String(value ?? '');
     }
   };

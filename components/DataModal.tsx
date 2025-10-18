@@ -4,7 +4,7 @@ import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, 
 import AvailabilityGridEditor from './AvailabilityGridEditor';
 import { PlusIcon, TrashIcon } from './icons';
 import { OKSO_CODES, UGSN_FROM_OKSO } from '../data/codes';
-import { iconNames } from './IconMap';
+import { iconNames, renderIcon } from './IconMap';
 import { COLOR_PALETTE, COLOR_MAP } from '../constants';
 
 
@@ -29,7 +29,6 @@ const TITLE_MAP: Record<DataType, { single: string }> = {
     classroomTypes: { single: 'тип аудитории' },
     subgroups: { single: 'подгруппу' },
     electives: { single: 'факультатив' },
-    // FIX: Added 'classroomTags' to satisfy the Record<DataType, ...> type.
     classroomTags: { single: 'тег аудитории' },
 };
 
@@ -44,7 +43,7 @@ interface DataModalProps {
 
 const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, dataType }) => {
   const [formData, setFormData] = useState<any>({});
-  const { faculties, departments, groups, ugs, specialties, classrooms, classroomTypes, subjects, teachers, settings, teacherSubjectLinks } = useStore();
+  const { faculties, departments, groups, ugs, specialties, classrooms, classroomTypes, subjects, teachers, settings, teacherSubjectLinks, classroomTags } = useStore();
   const [selectedCourseForStream, setSelectedCourseForStream] = useState<number | null>(null);
   const [ugsNotFoundMessage, setUgsNotFoundMessage] = useState<string>('');
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -73,8 +72,8 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', fieldOfScience: '', academicTitle: '', photoUrl: '', hireDate: '', color: '' };
       case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, availabilityGrid: {}, pinnedClassroomId: '' };
       case 'streams': return { name: '', groupIds: [] };
-      case 'classrooms': return { number: '', capacity: 30, typeId: classroomTypes[0]?.id || '', availabilityGrid: {} };
-      case 'subjects': return { name: '', pinnedClassroomId: '', suitableClassroomTypeIds: [], color: '' };
+      case 'classrooms': return { number: '', capacity: 30, typeId: classroomTypes[0]?.id || '', availabilityGrid: {}, tagIds: [] };
+      case 'subjects': return { name: '', pinnedClassroomId: '', suitableClassroomTypeIds: [], requiredClassroomTagIds: [], color: '' };
       case 'cabinets': return { number: '', departmentId: departments[0]?.id || '' };
       case 'timeSlots': return { time: '00:00-00:00' };
       case 'timeSlotsShortened': return { time: '00:00-00:00' };
@@ -104,6 +103,12 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     }
     if (dataType === 'subjects' && !(initialData as any).suitableClassroomTypeIds) {
         (initialData as any).suitableClassroomTypeIds = [];
+    }
+     if (dataType === 'classrooms' && !(initialData as any).tagIds) {
+        (initialData as any).tagIds = [];
+    }
+    if (dataType === 'subjects' && !(initialData as any).requiredClassroomTagIds) {
+        (initialData as any).requiredClassroomTagIds = [];
     }
     if (dataType === 'subgroups' && !(initialData as any).teacherAssignments) {
         (initialData as any).teacherAssignments = [];
@@ -221,6 +226,26 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       setFormData((prev: any) => ({...prev, [name]: values}));
   };
 
+  const handleTagCheckboxChange = (tagId: string) => {
+    setFormData((prev: any) => {
+        const currentTags = prev.tagIds || [];
+        const newTags = currentTags.includes(tagId)
+            ? currentTags.filter((id: string) => id !== tagId)
+            : [...currentTags, tagId];
+        return { ...prev, tagIds: newTags };
+    });
+  };
+  
+  const handleRequiredTagCheckboxChange = (tagId: string) => {
+    setFormData((prev: any) => {
+        const currentTags = prev.requiredClassroomTagIds || [];
+        const newTags = currentTags.includes(tagId)
+            ? currentTags.filter((id: string) => id !== tagId)
+            : [...currentTags, tagId];
+        return { ...prev, requiredClassroomTagIds: newTags };
+    });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave(formData);
@@ -232,17 +257,17 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const showAvailabilityGrid = ['teachers', 'groups', 'classrooms'].includes(dataType);
 
   const renderDefaultField = (key: string, isFirst: boolean) => {
-    if (key === 'id' || key === 'availabilityGrid' || key === 'entries' || key === 'teacherAssignments' || key === 'fieldOfScience') return null;
+    if (key === 'id' || key === 'availabilityGrid' || key === 'entries' || key === 'teacherAssignments' || key === 'fieldOfScience' || key === 'tagIds' || key === 'requiredClassroomTagIds') return null;
     
     const labelMap: Record<string, string> = {
         name: "ФИО / Название", number: "Номер/Название", time: "Время", capacity: "Вместимость", studentCount: "Кол-во студентов", 
         code: "Код", course: "Курс", oksoCode: "Код ОКСО", description: "Описание", date: "Дата",
         photoUrl: "URL Фотографии", regalia: "Регалии, звания", hireDate: "Дата приема на работу",
         hoursPerSemester: 'Часы за семестр', address: 'Адрес', phone: 'Телефон', email: 'Email', vkLink: 'Ссылка ВКонтакте',
-        telegramLink: 'Ссылка Telegram', notes: 'Заметки',
+        telegramLink: 'Ссылка Telegram', notes: 'Заметки', icon: 'Иконка', color: 'Цвет'
     };
     
-    if (key === 'color' && (dataType === 'teachers' || dataType === 'subjects')) {
+    if (key === 'color' && (dataType === 'teachers' || dataType === 'subjects' || dataType === 'classroomTags')) {
       return (
           <div>
               <label className="block text-sm font-medium text-gray-700">Цветовая метка</label>
@@ -304,19 +329,9 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
         if (key === 'icon') {
             return (
                 <div>
-                    <label className="block text-sm font-medium text-gray-700">Иконка</label>
+                    <label className="block text-sm font-medium text-gray-700">{labelMap[key] || key}</label>
                     <select name="icon" value={formData.icon || ''} onChange={handleChange} className={defaultInputClass}>
                         {iconNames.map(iconName => <option key={iconName} value={iconName}>{iconName}</option>)}
-                    </select>
-                </div>
-            );
-        }
-        if (key === 'color') {
-            return (
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Цвет</label>
-                    <select name="color" value={formData.color || ''} onChange={handleChange} className={defaultInputClass}>
-                        {['gray', 'red', 'yellow', 'green', 'blue', 'indigo', 'purple', 'pink'].map(color => <option key={color} value={color}>{color}</option>)}
                     </select>
                 </div>
             );
@@ -453,8 +468,8 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const fields = Object.keys(getInitialFormData(dataType));
   const half = Math.ceil(fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes'].includes(f)).length / 2);
 
-  const column1Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds'].includes(f)).slice(0, half);
-  const column2Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds'].includes(f)).slice(half);
+  const column1Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds', 'requiredClassroomTagIds'].includes(f)).slice(0, half);
+  const column2Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds', 'requiredClassroomTagIds'].includes(f)).slice(half);
   const fullWidthFields = fields.filter(f => ['notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds'].includes(f));
 
 
@@ -497,6 +512,49 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
               <button type="button" onClick={addAssignment} className="mt-2 text-sm text-blue-600 hover:underline flex items-center gap-1"><PlusIcon className="w-4 h-4"/>Добавить назначение</button>
             </div>
           )}
+
+           {dataType === 'classrooms' && (
+                <div className="pt-4 border-t">
+                    <label className="block text-sm font-medium text-gray-700">Теги аудитории</label>
+                    <div className="mt-2 space-y-2 max-h-48 overflow-y-auto border p-3 rounded-md bg-gray-50">
+                        {classroomTags.length > 0 ? classroomTags.map(tag => (
+                            <label key={tag.id} className="flex items-center gap-3 p-2 rounded hover:bg-gray-200 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={(formData.tagIds || []).includes(tag.id)}
+                                    onChange={() => handleTagCheckboxChange(tag.id)}
+                                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                <div className={`w-4 h-4 rounded-sm ${COLOR_MAP[tag.color]?.bg || 'bg-gray-200'} border ${COLOR_MAP[tag.color]?.border || 'border-gray-300'}`}></div>
+                                {renderIcon(tag.icon, { className: "w-4 h-4 text-gray-600" })}
+                                <span>{tag.name}</span>
+                            </label>
+                        )) : <p className="text-xs text-gray-500">Сначала добавьте теги в справочнике "Теги аудиторий".</p>}
+                    </div>
+                </div>
+           )}
+           
+          {dataType === 'subjects' && (
+              <div className="pt-4 border-t">
+                  <label className="block text-sm font-medium text-gray-700">Обязательные теги аудитории</label>
+                  <div className="mt-2 space-y-2 max-h-48 overflow-y-auto border p-3 rounded-md bg-gray-50">
+                      {classroomTags.length > 0 ? classroomTags.map(tag => (
+                          <label key={tag.id} className="flex items-center gap-3 p-2 rounded hover:bg-gray-200 cursor-pointer">
+                              <input
+                                  type="checkbox"
+                                  checked={(formData.requiredClassroomTagIds || []).includes(tag.id)}
+                                  onChange={() => handleRequiredTagCheckboxChange(tag.id)}
+                                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+                              <div className={`w-4 h-4 rounded-sm ${COLOR_MAP[tag.color]?.bg || 'bg-gray-200'} border ${COLOR_MAP[tag.color]?.border || 'border-gray-300'}`}></div>
+                              {renderIcon(tag.icon, { className: "w-4 h-4 text-gray-600" })}
+                              <span>{tag.name}</span>
+                          </label>
+                      )) : <p className="text-xs text-gray-500">Сначала добавьте теги в справочнике "Теги аудиторий".</p>}
+                  </div>
+              </div>
+          )}
+
 
           {showAvailabilityGrid && (
             <div className="mt-4 pt-4 border-t">

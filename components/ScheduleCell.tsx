@@ -241,8 +241,7 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
             ) : (
                 <>
                 <span className="truncate">Ауд. {classroom.number}</span>
-                {/* FIX: Wrapped icon in a span with a title attribute to show a tooltip, resolving a TypeScript error where 'title' was not a recognized prop for the icon component. */}
-                 {tags.map(tag => tag && <span key={tag.id} title={tag.name}>{renderIcon(tag.icon, { className: `w-3.5 h-3.5 text-gray-600` })}</span>)}
+                {tags.map(tag => tag && <span key={tag.id} title={tag.name}>{renderIcon(tag.icon, { className: `w-3.5 h-3.5 text-gray-600` })}</span>)}
                 {isEditable && <button onClick={() => setIsEditingClassroom(true)} className="ml-1 opacity-0 group-hover:opacity-100 text-blue-600 hover:text-blue-800"><EditIcon className="w-3 h-3"/></button>}
                 </>
             )}

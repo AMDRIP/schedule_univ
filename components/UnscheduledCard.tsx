@@ -1,16 +1,17 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { useDrag } from 'react-dnd';
 import { useStore } from '../hooks/useStore';
-import { UnscheduledEntry } from '../types';
+import { UnscheduledEntry, ClassroomTag } from '../types';
 import { CLASS_TYPE_COLORS, ItemTypes } from '../constants';
 import { CollectionIcon, AcademicCapIcon, UsersIcon } from './icons';
+import { renderIcon } from './IconMap';
 
 interface UnscheduledCardProps {
   entry: UnscheduledEntry;
 }
 
 const UnscheduledCard: React.FC<UnscheduledCardProps> = ({ entry }) => {
-  const { subjects, teachers, groups, subgroups } = useStore();
+  const { subjects, teachers, groups, subgroups, classroomTags } = useStore();
 
   const [{ isDragging }, drag] = useDrag(() => ({
     type: ItemTypes.UNSCHEDULED_ENTRY,
@@ -22,6 +23,11 @@ const UnscheduledCard: React.FC<UnscheduledCardProps> = ({ entry }) => {
 
   const subject = subjects.find(s => s.id === entry.subjectId);
   const teacher = teachers.find(t => t.id === entry.teacherId);
+
+  const requiredTags = useMemo((): ClassroomTag[] => {
+    if (!subject?.requiredClassroomTagIds) return [];
+    return classroomTags.filter(tag => subject.requiredClassroomTagIds!.includes(tag.id));
+  }, [subject, classroomTags]);
   
   const getGroupName = () => {
       if(entry.subgroupId) {
@@ -72,6 +78,16 @@ const UnscheduledCard: React.FC<UnscheduledCardProps> = ({ entry }) => {
         <UsersIcon className="w-3.5 h-3.5 flex-shrink-0" />
         <p className="truncate" title={teacher.name}>{teacher.name}</p>
       </div>
+      
+      {requiredTags.length > 0 && (
+        <div className="flex items-center gap-1.5 mt-1 pt-1 border-t border-black border-opacity-10">
+            {requiredTags.map(tag => (
+                <span key={tag.id} title={tag.name}>
+                    {renderIcon(tag.icon, { className: 'w-3.5 h-3.5 text-gray-600' })}
+                </span>
+            ))}
+        </div>
+      )}
     </div>
   );
 };

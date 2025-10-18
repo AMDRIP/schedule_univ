@@ -1,14 +1,8 @@
-
-
-
-
-
-
 import { GoogleGenAI, Type } from '@google/genai';
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
     SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS, Specialty, EducationalPlan, DeliveryMode, ClassroomType,
-    Subgroup, Elective, RuleSeverity, RuleAction, RuleEntityType
+    Subgroup, Elective, RuleSeverity, RuleAction, RuleEntityType, ClassroomTag, AvailabilityType, Department, Faculty
 } from '../types';
 
 interface GenerationData {
@@ -29,6 +23,9 @@ interface GenerationData {
   classroomTypes: ClassroomType[];
   subgroups: Subgroup[];
   electives: Elective[];
+  classroomTags: ClassroomTag[];
+  faculties: Faculty[];
+  departments: Department[];
 }
 
 let ai: GoogleGenAI | null = null;
@@ -70,7 +67,7 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
   const { 
     teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
     teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
-    subgroups, electives
+    subgroups, electives, classroomTags, departments, faculties
   } = data;
 
   const prompt = `
@@ -105,86 +102,63 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
     1.  ИСТОЧНИК ДАННЫХ: Все обязательные занятия, их количество и тип (лекция, практика, лаб.) должны браться ИСКЛЮЧИТЕЛЬНО из Учебных планов. Дополнительные занятия берутся из списка Факультативов.
     2.  ПОДГРУППЫ: Некоторые занятия в учебном плане могут быть помечены как 'splitForSubgroups'. Это значит, что для каждой подгруппы основной группы нужно создать отдельное занятие. При проверке вместимости аудитории используй 'studentCount' из подгруппы. ВАЖНО: когда занятие идет у подгруппы, вся основная группа ('parentGroupId') считается занятой.
     3.  НАЗНАЧЕНИЕ ПРЕПОДАВАТЕЛЕЙ ПОДГРУППАМ: У подгрупп может быть поле 'teacherAssignments'. Это СТРОГОЕ требование. Если для дисциплины и типа занятия у подгруппы указан конкретный преподаватель, ты ОБЯЗАН использовать именно его. Если назначения нет, выбери любого подходящего преподавателя из общих привязок.
-    4.  ФАКУЛЬТАТИВЫ: Это необязательные занятия. Их нужно запланировать для указанной в факультативе группы. Тип такого занятия должен быть 'Факультатив'.
-    5.  ЗАПРЕТ КОНФЛИКТОВ: Один преподаватель, одна группа (или одна из ее подгрупп) или одна аудитория не могут быть заняты в одно и то же время на неделе одного типа. Это самое строгое правило.
-    6.  СООТВЕТСТВИЕ АУДИТОРИЙ: Вместимость аудитории должна быть не меньше количества студентов в группе (или подгруппе, или суммарного для потока). Тип аудитории ('typeId') должен входить в список разрешенных типов для данной дисциплины ('suitableClassroomTypeIds').
-    7.  КОМПЕТЕНЦИИ ПРЕПОДАВАТЕЛЕЙ: Преподаватель может вести только те дисциплины и типы занятий, которые указаны в привязках "преподаватель-дисциплина" (teacherSubjectLinks), если только для подгруппы не сделано явное назначение в 'teacherAssignments'.
-    8.  ПОТОКИ И КУРСЫ: Лекции для групп, состоящих в потоке, должны проходить одновременно. ВАЖНО: в один поток можно объединять только группы ОДНОГО курса.
-    9.  ЗАКРЕПЛЕННЫЕ АУДИТОРИИ: У некоторых преподавателей, групп или дисциплин может быть 'pinnedClassroomId'. Это ОЧЕНЬ СИЛЬНОЕ ПРЕДПОЧТЕНИЕ. Старайся использовать эту аудиторию для них в первую очередь.
-    10. РАСПРЕДЕЛЕНИЕ ПО НЕДЕЛЯМ: Равномерно распредели занятия между чётными ('even') и нечётными ('odd') неделями. Если занятие еженедельное, используй 'every'.
-    11. СЕТКИ ДОСТУПНОСТИ: У многих сущностей есть сетка доступности. 'Запрещено' - строго нельзя ставить. 'Нежелательно' — избегать. 'Желательно' — ставить в приоритете.
-    12. РЕЗУЛЬТАТ: Ответ должен быть только в формате JSON-массива объектов ScheduleEntry, без каких-либо пояснений или markdown-форматирования.
+    4.  ФАКУЛЬТАТИВЫ: Это необязательные занятия, их нужно разместить так же, как и остальные, в соответствии с их 'hoursPerSemester'.
+    5.  ПОТОКИ (streams): Потоки объединяют несколько групп для лекций. Если у занятия указан 'streamId', то все группы из этого потока ('groupIds' в объекте потока) должны присутствовать на занятии одновременно. 'studentCount' для таких занятий рассчитывается как сумма студентов всех групп потока.
+    6.  ПРИВЯЗКИ: Используй 'teacherSubjectLinks' для определения, какой преподаватель может вести какой тип занятия по какой дисциплине. Это СТРОГОЕ правило, если не переопределено в 'teacherAssignments' у подгруппы.
+    7.  КОНФЛИКТЫ: Один преподаватель, одна группа (или подгруппа) или одна аудитория не могут быть в двух местах одновременно. Занятие у подгруппы блокирует всю родительскую группу.
+    8.  АУДИТОРИИ: Вместимость аудитории ('capacity') должна быть не меньше количества студентов ('studentCount'). Для каждой дисциплины указаны подходящие типы аудиторий в 'suitableClassroomTypeIds'. Это СТРОГОЕ требование.
+    9.  ТРЕБОВАНИЯ К АУДИТОРИИ (ТЕГИ): У дисциплин ('subjects') может быть поле 'requiredClassroomTagIds'. Это СТРОГОЕ требование. Если оно есть, ты ОБЯЗАН выбрать для занятия аудиторию ('classrooms'), у которой в поле 'tagIds' присутствуют ВСЕ теги из 'requiredClassroomTagIds'.
+    10. СЕТКА ДОСТУПНОСТИ (availabilityGrid): У преподавателей, групп и аудиторий есть сетка доступности.
+        - '${AvailabilityType.Forbidden}': СТРОГО ЗАПРЕЩЕНО ставить занятия в этот слот.
+        - '${AvailabilityType.Undesirable}': Крайне нежелательно, но можно, если нет других вариантов.
+        - '${AvailabilityType.Desirable}': Очень желательно ставить занятия в этот слот.
+        - '${AvailabilityType.Allowed}' (или отсутствие записи): Нейтральный слот.
 
-    ДАННЫЕ ДЛЯ СОСТАВЛЕНИЯ РАСПИСАНИЯ:
-    - УГСН: ${JSON.stringify(ugs)}
-    - Специальности: ${JSON.stringify(specialties)}
-    - Учебные планы (источник для обязательных занятий): ${JSON.stringify(educationalPlans)}
+    ДАННЫЕ ДЛЯ РАБОТЫ:
+    - Факультеты и Кафедры: ${JSON.stringify(departments.map(d => ({ id: d.id, name: d.name, faculty: faculties.find(f => f.id === d.facultyId)?.name })))}
+    - УГСН и Специальности: ${JSON.stringify(specialties.map(s => ({ id: s.id, name: s.name, ugs: ugs.find(u => u.id === s.ugsId)?.name })))}
     - Преподаватели: ${JSON.stringify(teachers)}
     - Группы: ${JSON.stringify(groups)}
-    - Подгруппы (части основных групп, могут иметь строгие назначения преподавателей): ${JSON.stringify(subgroups)}
-    - Факультативы (дополнительные занятия): ${JSON.stringify(electives)}
+    - Подгруппы: ${JSON.stringify(subgroups)}
     - Потоки: ${JSON.stringify(streams)}
-    - Справочник типов аудиторий: ${JSON.stringify(classroomTypes)}
+    - Типы аудиторий: ${JSON.stringify(classroomTypes)}
+    - Теги аудиторий: ${JSON.stringify(classroomTags)}
     - Аудитории: ${JSON.stringify(classrooms)}
-    - Справочник дисциплин: ${JSON.stringify(subjects)}
-    - Временные слоты (стандартные): ${JSON.stringify(timeSlots)}
-    - Временные слоты (сокращенные, для предпраздничных дней): ${JSON.stringify(timeSlotsShortened)}
-    - Дни недели: ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота"]
-    - Привязки преподавателей к дисциплинам: ${JSON.stringify(teacherSubjectLinks)}
-    - Правила расписания (НОВАЯ СТРУКТУРА): ${JSON.stringify(schedulingRules)}
+    - Дисциплины: ${JSON.stringify(subjects)}
+    - Учебные планы: ${JSON.stringify(educationalPlans)}
+    - Факультативы: ${JSON.stringify(electives)}
+    - Привязки преподаватель-дисциплина: ${JSON.stringify(teacherSubjectLinks)}
+    - Правила расписания: ${JSON.stringify(schedulingRules)}
+    - Расписание звонков (обычное): ${JSON.stringify(timeSlots)}
+    - Расписание звонков (сокращенное): ${JSON.stringify(timeSlotsShortened)}
 
-    Создай полное и оптимальное расписание на семестр.
+    ТВОЯ ЗАДАЧА:
+    Создай полный JSON-массив объектов 'ScheduleEntry' для всех занятий на один семестр. Каждое занятие из учебного плана должно быть представлено в расписании нужное количество раз (hours/2).
+    Вместо 'date' используй 'day' (Понедельник, Вторник...) и 'weekType' ('even', 'odd', 'every').
+    Не создавай записи для консультаций, зачетов и экзаменов. Только лекции, практики, лабораторные и факультативы.
+    Не включай в ответ ничего, кроме JSON-массива. Без комментариев, без markdown.
   `;
 
-  // FIX: Replaced unsupported 'enum' property with guidance in the 'description' to resolve parsing errors.
-  const responseSchema = {
-    type: Type.ARRAY,
-    items: {
-      type: Type.OBJECT,
-      properties: {
-        day: { type: Type.STRING, description: 'День недели' },
-        timeSlotId: { type: Type.STRING, description: 'ID временного слота' },
-        groupId: { type: Type.STRING, description: 'ID основной группы' },
-        subgroupId: { type: Type.STRING, description: 'ID подгруппы, если занятие для нее' },
-        subjectId: { type: Type.STRING, description: 'ID предмета' },
-        teacherId: { type: Type.STRING, description: 'ID преподавателя' },
-        classroomId: { type: Type.STRING, description: 'ID аудитории' },
-        classType: { type: Type.STRING, description: `Тип занятия. Допустимые значения: ${Object.values(ClassType).join(', ')}` },
-        weekType: { type: Type.STRING, description: "Тип недели. Допустимые значения: 'even', 'odd', 'every'" },
-        deliveryMode: { type: Type.STRING, description: `Тип проведения. Допустимые значения: ${Object.values(DeliveryMode).join(', ')}` },
-      },
-      required: ['day', 'timeSlotId', 'groupId', 'subjectId', 'teacherId', 'classroomId', 'classType', 'weekType', 'deliveryMode']
-    }
-  };
+  const client = await getAiClient();
+  if (!client) {
+    throw new Error("Клиент Gemini API не инициализирован. Проверьте API-ключ.");
+  }
 
   try {
-    const aiClient = await getAiClient();
-    
-    // Если клиент не создан (нет ключа или не Electron), сообщаем пользователю.
-    if (!aiClient) {
-      throw new Error("Не удалось инициализировать ИИ-ассистента. Убедитесь, что API-ключ Gemini предоставлен в меню 'Настройки'.");
-    }
-
-    const response = await aiClient.models.generateContent({
-      model: "gemini-2.5-flash",
+    const response = await client.models.generateContent({
+      model: 'gemini-2.5-flash', // Используем рекомендованную модель
       contents: prompt,
       config: {
         responseMimeType: "application/json",
-        responseSchema: responseSchema,
-        temperature: 0.2,
-      },
+      }
     });
-
-    const jsonText = response.text.trim();
-    const cleanedJsonText = jsonText.replace(/^```json\s*/, '').replace(/```$/, '');
-    const schedule = JSON.parse(cleanedJsonText);
-    return schedule;
-
+    
+    // Используем .text для получения строки
+    const jsonText = response.text;
+    const schedule = JSON.parse(jsonText) as ScheduleEntry[];
+    return schedule.map(entry => ({...entry, deliveryMode: DeliveryMode.Offline})); // Add default delivery mode
   } catch (error) {
-    console.error("Error calling Gemini API:", error);
-    if (error instanceof Error) {
-        throw error; // Перебрасываем оригинальную ошибку
-    }
-    throw new Error("Не удалось получить данные от Gemini API. Проверьте правильность ключа API и наличие данных для генерации.");
+    console.error("Ошибка при запросе к Gemini API:", error);
+    throw new Error("Не удалось сгенерировать расписание с помощью ИИ. Проверьте консоль для подробностей.");
   }
 };

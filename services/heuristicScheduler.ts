@@ -260,7 +260,19 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         const subject = subjects.find(s => s.id === entryToPlace.subjectId);
         if (!subject) { unschedulable.push(entryToPlace); continue; }
 
-        const suitableClassrooms = classrooms.filter(c => c.capacity >= entryToPlace.studentCount && subject.suitableClassroomTypeIds?.includes(c.typeId));
+        const suitableClassrooms = classrooms.filter(c => {
+            if (c.capacity < entryToPlace.studentCount) return false;
+            if (!subject.suitableClassroomTypeIds?.includes(c.typeId)) return false;
+
+            const requiredTags = subject.requiredClassroomTagIds || [];
+            if (requiredTags.length > 0) {
+                const classroomTags = c.tagIds || [];
+                if (!requiredTags.every(tagId => classroomTags.includes(tagId))) {
+                    return false;
+                }
+            }
+            return true;
+        });
 
         for (const date of workDays) {
             const dateStr = toYYYYMMDD(date);

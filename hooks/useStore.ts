@@ -62,7 +62,7 @@ const initialClassrooms: Classroom[] = [
     { id: 'c3', number: '303-PC', capacity: 20, typeId: 'ct4', tagIds: ['tag-comp', 'tag-board'] },
 ];
 const initialSubjects: Subject[] = [
-    { id: 'sub1', name: 'Основы программирования', suitableClassroomTypeIds: ['ct2', 'ct4'], color: 'indigo' },
+    { id: 'sub1', name: 'Основы программирования', suitableClassroomTypeIds: ['ct2', 'ct4'], requiredClassroomTagIds: ['tag-comp'], color: 'indigo' },
     { id: 'sub2', name: 'Базы данных', suitableClassroomTypeIds: ['ct1', 'ct3', 'ct4'], color: 'red' },
 ];
 const initialEducationalPlans: EducationalPlan[] = [
@@ -711,6 +711,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // Cleanup classroom tags
     if(classroomTagIds.size > 0) {
       setClassrooms(prev => prev.map(c => ({ ...c, tagIds: c.tagIds?.filter(tagId => !classroomTagIds.has(tagId)) })));
+      setSubjects(prev => prev.map(s => ({ ...s, requiredClassroomTagIds: s.requiredClassroomTagIds?.filter(tagId => !classroomTagIds.has(tagId)) })));
     }
   };
 
@@ -757,11 +758,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             return false;
         }
         if (c.capacity < item.studentCount) return false;
+        
+        // Check for required tags
+        const requiredTags = subject.requiredClassroomTagIds || [];
+        if (requiredTags.length > 0) {
+            const classroomTags = c.tagIds || [];
+            if (!requiredTags.every(tagId => classroomTags.includes(tagId))) {
+                return false;
+            }
+        }
+        
         return subject.suitableClassroomTypeIds?.includes(c.typeId);
       });
 
       if (!suitableClassroom) {
-          alert(`Нет подходящей свободной аудитории для занятия "${subject.name}" с вместимостью ${item.studentCount}.`);
+          alert(`Нет подходящей свободной аудитории для занятия "${subject.name}" с вместимостью ${item.studentCount}. Проверьте требования к типу и тегам аудитории.`);
           return;
       }
       const newEntry: ScheduleEntry = {
@@ -934,10 +945,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // FIX: Corrected the return type annotation of `runScheduler` to match the `StoreState` interface. This fixes multiple errors.
   const runScheduler = async (method: 'heuristic' | 'gemini', config?: HeuristicConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }> => {
     setSchedulingProgress(null);
+    // FIX: Add missing `faculties` and `departments` to the generationData object to satisfy the `GenerationData` type required by `generateScheduleWithGemini`.
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
-        subgroups, electives, schedule
+        subgroups, electives, schedule, classroomTags, faculties, departments
     };
 
     let result: SchedulerResult;
