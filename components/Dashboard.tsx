@@ -11,7 +11,7 @@ import EducationalPlanManager from './EducationalPlanManager';
 import AcademicCalendarView from './AcademicCalendarView';
 import ProductionCalendarManager from './ProductionCalendarManager';
 import DepartmentView from './DepartmentView';
-import { toYYYYMMDD } from '../utils/dateUtils';
+import { useStore } from '../hooks/useStore';
 import FacultyView from './FacultyView';
 import TeacherView from './TeacherView';
 import UniversityWideSchedule from './UniversityWideSchedule';
@@ -24,7 +24,7 @@ interface DashboardProps {
 const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
   const [activeView, setActiveView] = useState('Просмотр расписания');
   const [viewEntityId, setViewEntityId] = useState<string | null>(null);
-  const [viewDate, setViewDate] = useState(toYYYYMMDD(new Date()));
+  const { viewDate, setViewDate } = useStore();
 
   const handleNavigate = (view: string, id: string) => {
     setActiveView(view);

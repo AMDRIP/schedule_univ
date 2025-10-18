@@ -31,7 +31,7 @@ const SubjectCard: React.FC<{ subjectId: string; classTypes: ClassType[] }> = ({
 
 const TeacherView: React.FC<TeacherViewProps> = ({ teacherId, onNavigate }) => {
     const store = useStore();
-    const { teachers, departments, subjects, teacherSubjectLinks, schedule } = store;
+    const { teachers, departments, subjects, teacherSubjectLinks, schedule, settings } = store;
 
     const teacher = useMemo(() => teachers.find(t => t.id === teacherId), [teacherId, teachers]);
     const department = useMemo(() => teacher ? departments.find(d => d.id === teacher.departmentId) : null, [teacher, departments]);
@@ -52,28 +52,27 @@ const TeacherView: React.FC<TeacherViewProps> = ({ teacherId, onNavigate }) => {
     }, [teacherId, teacherSubjectLinks]);
 
     const workload = useMemo(() => {
-        // Calculate based on template (non-dated) entries, as it represents a typical week
-        const weeklyTemplateEntries = schedule.filter(e => e.teacherId === teacherId && !e.date);
-        
-        let weeklyHours = 0;
-        weeklyTemplateEntries.forEach(entry => {
-            const hoursPerClass = 2; // Assuming one class is 2 academic hours
-            if (entry.weekType === 'every') {
-                weeklyHours += hoursPerClass;
-            } else {
-                // For even/odd, it's 1 hour per week on average (2 hours every 2 weeks)
-                weeklyHours += hoursPerClass / 2;
+        let weeksInSemester = 16; // Default
+        if (settings.semesterStart && settings.semesterEnd) {
+            const start = new Date(settings.semesterStart);
+            const end = new Date(settings.semesterEnd);
+            if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start) {
+                weeksInSemester = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24 * 7));
             }
-        });
+        }
+        if (weeksInSemester <= 0) weeksInSemester = 1;
 
-        // A month is roughly 4.33 weeks
+        const allTeacherEntries = schedule.filter(e => e.teacherId === teacherId);
+        const hoursPerClass = 2;
+        const totalHours = allTeacherEntries.length * hoursPerClass;
+        const weeklyHours = totalHours / weeksInSemester;
         const monthlyHours = weeklyHours * 4.33;
 
         return {
             weekly: weeklyHours.toFixed(1),
             monthly: monthlyHours.toFixed(1)
         };
-    }, [teacherId, schedule]);
+    }, [teacherId, schedule, settings.semesterStart, settings.semesterEnd]);
     
     if (!teacher) {
         return <div className="text-center text-red-500">Преподаватель не найден.</div>;

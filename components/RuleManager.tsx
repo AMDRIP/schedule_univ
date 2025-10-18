@@ -152,7 +152,6 @@ const RuleConditionEditor: React.FC<{
                 <select 
                     multiple 
                     value={condition.entityIds} 
-                    // FIX: Explicitly type the `option` parameter to resolve `Property 'value' does not exist on type 'unknown'` error.
                     onChange={e => onChange({ ...condition, entityIds: Array.from(e.target.selectedOptions, (option: HTMLOptionElement) => option.value) })}
                     className={`${defaultInputClass} h-24`}
                 >
