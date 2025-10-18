@@ -3,17 +3,30 @@ const { contextBridge, ipcRenderer } = require('electron');
 // Безопасно предоставляем API из главного процесса процессу рендеринга
 contextBridge.exposeInMainWorld('electronAPI', {
   /**
-   * Запрашивает API-ключ из главного процесса.
+   * Запрашивает API-ключ Gemini из главного процесса.
    * @returns {Promise<string | undefined>} API-ключ.
    */
   getApiKey: () => ipcRenderer.invoke('get-api-key'),
   
   /**
-   * Устанавливает API-ключ в главном процессе для текущей сессии.
+   * Устанавливает API-ключ Gemini в главном процессе для текущей сессии.
    * @param {string} key - The API key to set.
    * @returns {Promise<{success: boolean}>}
    */
   setApiKey: (key) => ipcRenderer.invoke('set-api-key', key),
+
+  /**
+   * Запрашивает API-ключ OpenRouter из главного процесса.
+   * @returns {Promise<string | undefined>} API-ключ.
+   */
+  getOpenRouterApiKey: () => ipcRenderer.invoke('get-openrouter-api-key'),
+
+  /**
+   * Устанавливает API-ключ OpenRouter в главном процессе для текущей сессии.
+   * @param {string} key - The API key to set.
+   * @returns {Promise<{success: boolean}>}
+   */
+  setOpenRouterApiKey: (key) => ipcRenderer.invoke('set-openrouter-api-key', key),
 
   /**
    * Проверяет, был ли передан флаг для принудительной активации ИИ.

@@ -8,6 +8,8 @@
 interface IElectronAPI {
   getApiKey: () => Promise<string | undefined>;
   setApiKey: (key: string) => Promise<{ success: boolean }>;
+  getOpenRouterApiKey: () => Promise<string | undefined>;
+  setOpenRouterApiKey: (key: string) => Promise<{ success: boolean }>;
   isAiForced: () => Promise<boolean>;
   setWindowTitle: (title: string) => Promise<void>;
   openFile: () => Promise<{ filePath: string; data: string } | null>;

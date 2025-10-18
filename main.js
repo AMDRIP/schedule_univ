@@ -37,6 +37,7 @@ async function saveAppSettings() {
 
 let mainWindow;
 let userApiKey = process.env.API_KEY; // Initialize from env var, can be updated by user
+let userOpenRouterKey = process.env.OPENROUTER_API_KEY; // Key for OpenRouter
 
 // --- File Operations ---
 const AUTOSAVE_FILE = 'autosave.schd';
@@ -106,8 +107,14 @@ app.whenReady().then(async () => {
   // API Key & AI Flag
   ipcMain.handle('get-api-key', () => userApiKey);
   ipcMain.handle('set-api-key', (event, key) => {
-    console.log(`Main process: API key set in session (length: ${key ? key.length : 0})`);
+    console.log(`Main process: Gemini API key set in session (length: ${key ? key.length : 0})`);
     userApiKey = key;
+    return { success: true };
+  });
+  ipcMain.handle('get-openrouter-api-key', () => userOpenRouterKey);
+  ipcMain.handle('set-openrouter-api-key', (event, key) => {
+    console.log(`Main process: OpenRouter API key set in session (length: ${key ? key.length : 0})`);
+    userOpenRouterKey = key;
     return { success: true };
   });
   ipcMain.handle('is-ai-forced', () => process.argv.some(arg => arg === '-ai' || arg === '--ai'));

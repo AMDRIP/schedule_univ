@@ -10,7 +10,8 @@ interface HeaderProps {
   onOpen: () => void;
   onSave: () => void;
   onSaveAs: () => void;
-  onRunScheduler: (method: 'heuristic' | 'gemini') => void;
+  onRunScheduler: (method: 'heuristic' | 'gemini' | 'openrouter') => void;
+  onRunSessionScheduler: () => void;
   onClearSchedule: () => void;
   onResetSchedule: () => void;
   isScheduling: boolean;
@@ -18,13 +19,15 @@ interface HeaderProps {
 
 const Header: React.FC<HeaderProps> = ({ 
     currentRole, onRoleChange, onNew, onOpen, onSave, onSaveAs, 
-    onRunScheduler, onClearSchedule, onResetSchedule, isScheduling 
+    onRunScheduler, onRunSessionScheduler, onClearSchedule, onResetSchedule, isScheduling 
 }) => {
   const [isProjectMenuOpen, setProjectMenuOpen] = useState(false);
   const [isSchedulerMenuOpen, setSchedulerMenuOpen] = useState(false);
   const projectMenuRef = useRef<HTMLDivElement>(null);
   const schedulerMenuRef = useRef<HTMLDivElement>(null);
-  const { isGeminiAvailable, lastAutosave, schedulingProgress } = useStore();
+  const { isGeminiAvailable, openRouterApiKey, lastAutosave, schedulingProgress } = useStore();
+  const isOpenRouterAvailable = !!openRouterApiKey;
+
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -80,13 +83,30 @@ const Header: React.FC<HeaderProps> = ({
                 >
                   Запустить эвристический
                 </a>
+                <div className="border-t border-gray-100 my-1"></div>
                 <a
                   href="#"
                   onClick={(e) => { e.preventDefault(); if(isGeminiAvailable) { onRunScheduler('gemini'); setSchedulerMenuOpen(false); } }}
                   className={`block px-4 py-2 text-sm ${isGeminiAvailable ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-400 cursor-not-allowed'}`}
-                  title={!isGeminiAvailable ? 'Недоступно без API ключа' : ''}
+                  title={!isGeminiAvailable ? 'Недоступно без API ключа Gemini' : ''}
                 >
                   Запустить с помощью AI (Gemini)
+                </a>
+                 <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); if(isOpenRouterAvailable) { onRunScheduler('openrouter'); setSchedulerMenuOpen(false); } }}
+                  className={`block px-4 py-2 text-sm ${isOpenRouterAvailable ? 'text-gray-700 hover:bg-gray-100' : 'text-gray-400 cursor-not-allowed'}`}
+                  title={!isOpenRouterAvailable ? 'Недоступно без API ключа OpenRouter' : ''}
+                >
+                  Запустить с помощью OpenRouter
+                </a>
+                 <div className="border-t border-gray-100 my-1"></div>
+                 <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); onRunSessionScheduler(); setSchedulerMenuOpen(false); }}
+                  className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                >
+                  Сгенерировать расписание сессии
                 </a>
                 <div className="border-t border-gray-100 my-1"></div>
                  <a

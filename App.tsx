@@ -2,22 +2,24 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { StoreProvider, useStore } from './hooks/useStore';
-import { Role, HeuristicConfig } from './types';
+import { Role, HeuristicConfig, SessionSchedulerConfig } from './types';
 import Dashboard from './components/Dashboard';
 import Header from './components/Header';
 import NewProjectWizard from './components/NewProjectWizard';
 import ConfirmationModal from './components/ConfirmationModal';
 import UpdateNotification from './components/UpdateNotification';
 import SchedulerConfigModal from './components/SchedulerConfigModal';
+import SessionSchedulerModal from './components/SessionSchedulerModal';
 
 const AppContent: React.FC = () => {
   const [currentRole, setCurrentRole] = useState<Role>(Role.Admin);
   const [isNewProjectWizardOpen, setNewProjectWizardOpen] = useState(false);
   const [isNewProjectConfirmOpen, setNewProjectConfirmOpen] = useState(false);
   const [isSchedulerConfigOpen, setSchedulerConfigOpen] = useState(false);
+  const [isSessionSchedulerOpen, setSessionSchedulerOpen] = useState(false);
   const [isScheduling, setIsScheduling] = useState(false);
   const [updateDownloaded, setUpdateDownloaded] = useState(false);
-  const { runScheduler, clearSchedule, resetSchedule, startNewProject, handleOpen, handleSave, handleSaveAs, settings } = useStore();
+  const { runScheduler, runSessionScheduler, clearSchedule, resetSchedule, startNewProject, handleOpen, handleSave, handleSaveAs, settings } = useStore();
 
   useEffect(() => {
     console.log('Renderer process started. AppContent mounted.');
@@ -42,9 +44,29 @@ const AppContent: React.FC = () => {
     setSchedulerConfigOpen(false);
     handleRunScheduler('heuristic', config);
   };
+  
+  const handleRunSessionScheduler = async (config: SessionSchedulerConfig) => {
+    if (isScheduling) return;
+    setIsScheduling(true);
+    setSessionSchedulerOpen(false);
+    
+    try {
+        const result = await runSessionScheduler(config);
+        alert(`Генерация расписания сессии завершена!\n\nРазмещено экзаменов/консультаций: ${result.scheduled}\nНе удалось разместить: ${result.unscheduled}`);
+        if(result.failedEntries.length > 0) {
+            console.log("Не удалось разместить следующие события сессии:", result.failedEntries);
+            alert("Подробности о неразмещенных событиях смотрите в консоли разработчика (Ctrl+Shift+I).");
+        }
+    } catch (err: any) {
+        alert(`Ошибка при генерации расписания сессии: ${err.message}`);
+        console.error(err);
+    } finally {
+        setIsScheduling(false);
+    }
+  };
 
 
-  const handleRunScheduler = async (method: 'heuristic' | 'gemini', config?: HeuristicConfig) => {
+  const handleRunScheduler = async (method: 'heuristic' | 'gemini' | 'openrouter', config?: HeuristicConfig) => {
     if (isScheduling) return;
 
     if (method === 'heuristic' && !config) {
@@ -109,6 +131,7 @@ const AppContent: React.FC = () => {
           onSave={handleSave}
           onSaveAs={handleSaveAs}
           onRunScheduler={handleRunScheduler}
+          onRunSessionScheduler={() => setSessionSchedulerOpen(true)}
           onClearSchedule={handleClearSchedule}
           onResetSchedule={handleResetSchedule}
           isScheduling={isScheduling}
@@ -127,6 +150,13 @@ const AppContent: React.FC = () => {
             onClose={() => setSchedulerConfigOpen(false)}
             onStart={handleStartHeuristicScheduler}
         />
+      )}
+      {isSessionSchedulerOpen && (
+          <SessionSchedulerModal
+              isOpen={isSessionSchedulerOpen}
+              onClose={() => setSessionSchedulerOpen(false)}
+              onStart={handleRunSessionScheduler}
+          />
       )}
       {isNewProjectConfirmOpen && (
         <ConfirmationModal

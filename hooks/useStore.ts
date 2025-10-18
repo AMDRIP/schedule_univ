@@ -4,13 +4,15 @@ import {
     UnscheduledEntry, DataItem, DataType, ClassroomType, ClassType, TeacherSubjectLink, SchedulingRule, 
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
     EducationalPlan, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective,
-    AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag, HeuristicConfig
+    AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag, HeuristicConfig, SessionSchedulerConfig
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
 import { generateScheduleWithHeuristics, SchedulerResult } from '../services/heuristicScheduler';
 import { generateScheduleWithGemini } from '../services/geminiService';
+import { generateScheduleWithOpenRouter } from '../services/openRouterService';
 import { runIterativeScheduler } from '../services/iterativeScheduler';
+import { generateSessionSchedule } from '../services/sessionScheduler';
 
 // MOCK DATA (Initial State)
 const initialFaculties: Faculty[] = [{
@@ -106,6 +108,7 @@ const initialSettings: SchedulingSettings = {
     showTeacherDetailsInLists: false,
     showScheduleColors: true,
     allowManualOverrideOfForbidden: false,
+    enforceStandardRules: true,
 };
 const initialScheduleTemplates: ScheduleTemplate[] = [];
 
@@ -260,6 +263,7 @@ interface StoreState {
   currentFilePath: string | null;
   lastAutosave: Date | null;
   apiKey: string;
+  openRouterApiKey: string;
   unscheduledTimeHorizon: 'semester' | 'week' | 'twoWeeks';
   schedulingProgress: { current: number; total: number } | null;
   viewDate: string;
@@ -275,12 +279,14 @@ interface StoreState {
   addScheduleEntry: (entry: Omit<ScheduleEntry, 'id'>) => void;
   updateSettings: (newSettings: SchedulingSettings) => void;
   updateApiKey: (newKey: string) => Promise<void>;
+  updateOpenRouterApiKey: (newKey: string) => Promise<void>;
   propagateWeekSchedule: (weekTypeToCopy: 'even' | 'odd') => void;
   saveCurrentScheduleAsTemplate: (name: string, description: string) => void;
   loadScheduleFromTemplate: (templateId: string) => void;
   setUnscheduledTimeHorizon: (horizon: 'semester' | 'week' | 'twoWeeks') => void;
   setViewDate: (date: string) => void;
-  runScheduler: (method: 'heuristic' | 'gemini', config?: HeuristicConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
+  runScheduler: (method: 'heuristic' | 'gemini' | 'openrouter', config?: HeuristicConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
+  runSessionScheduler: (config: SessionSchedulerConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }>;
   clearSchedule: () => void;
   resetSchedule: () => void;
   startNewProject: () => void;
@@ -320,6 +326,7 @@ const getInitialEmptySettings = (): SchedulingSettings => ({
     showTeacherDetailsInLists: false,
     showScheduleColors: true,
     allowManualOverrideOfForbidden: false,
+    enforceStandardRules: true,
 });
 
 
@@ -350,6 +357,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [electives, setElectives] = useState(initialElectives);
   const [isGeminiAvailable, setIsGeminiAvailable] = useState(false);
   const [apiKey, setApiKey] = useState('');
+  const [openRouterApiKey, setOpenRouterApiKey] = useState('');
   const [currentFilePath, setCurrentFilePath] = useState<string | null>(null);
   const [lastAutosave, setLastAutosave] = useState<Date | null>(null);
   const [unscheduledTimeHorizon, setUnscheduledTimeHorizon] = useState<'semester' | 'week' | 'twoWeeks'>('semester');
@@ -357,133 +365,122 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [viewDate, setViewDate] = useState(toYYYYMMDD(new Date()));
 
   useEffect(() => {
+    // 1. Generate all possible classes for the semester from plans. This is the "master list".
     const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+    
+    // 2. Create a set of UIDs for classes that are already on the schedule.
     const allScheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
+    
+    // 3. The pool of all unscheduled classes for the entire semester.
     const allUnscheduledForSemester = allPossibleEntries.filter(e => !allScheduledUids.has(e.uid));
 
+    // If view is 'semester', show everything unscheduled.
     if (unscheduledTimeHorizon === 'semester') {
       setUnscheduledEntries(allUnscheduledForSemester);
       return;
     }
 
+    // --- Logic for 'week' and 'twoWeeks' horizons ---
     const semesterStartDate = new Date(settings.semesterStart + 'T00:00:00');
     const semesterEndDate = new Date(settings.semesterEnd + 'T00:00:00');
-
+    
+    // Fallback to showing all if dates are invalid.
     if (isNaN(semesterStartDate.getTime()) || isNaN(semesterEndDate.getTime()) || semesterEndDate <= semesterStartDate) {
-        setUnscheduledEntries(allUnscheduledForSemester); // Fallback if dates are invalid
+        setUnscheduledEntries(allUnscheduledForSemester);
         return;
     }
 
     const weeksInSemester = Math.ceil((semesterEndDate.getTime() - semesterStartDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
     if (weeksInSemester <= 0) {
-        setUnscheduledEntries(allUnscheduledForSemester); // Fallback
+        setUnscheduledEntries(allUnscheduledForSemester);
         return;
     }
 
     const viewDateObj = new Date(viewDate + 'T00:00:00');
-    const startOfViewWeek = getWeekDays(viewDateObj)[0];
-    startOfViewWeek.setHours(0, 0, 0, 0); // Normalize to start of day
-
-    // Calculate the current week number within the semester (1-based)
-    let currentSemesterWeek = 0;
+    
+    // 4. Calculate the current week number (1-based) relative to the semester start.
+    let currentSemesterWeek = 1;
     if (viewDateObj >= semesterStartDate) {
-         // Difference in milliseconds
-        const diffTime = Math.abs(viewDateObj.getTime() - semesterStartDate.getTime());
-        // Difference in days
+        const diffTime = viewDateObj.getTime() - semesterStartDate.getTime();
         const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-        // Week number (1-based)
         currentSemesterWeek = Math.floor(diffDays / 7) + 1;
     }
-
+    
     const getEntryKey = (e: UnscheduledEntry) => `${e.subjectId}-${e.groupId || ''}-${(e.groupIds || []).join('_')}-${e.subgroupId || ''}-${e.classType}`;
 
-    const totalDemand = new Map<string, number>();
+    // 5. Group all possible entries by type (subject, group, etc.) to process them independently.
+    const possibleEntryGroups = new Map<string, UnscheduledEntry[]>();
     allPossibleEntries.forEach(entry => {
         const key = getEntryKey(entry);
-        totalDemand.set(key, (totalDemand.get(key) || 0) + 1);
-    });
-
-    // Count classes scheduled BEFORE the current view week starts
-    const scheduledBeforeViewWeek = new Map<string, number>();
-    schedule.forEach(entry => {
-        if (entry.unscheduledUid && entry.date && !isNaN(new Date(entry.date).getTime())) {
-            const entryDate = new Date(entry.date + 'T00:00:00');
-            if (entryDate < startOfViewWeek) {
-                const originalEntry = allPossibleEntries.find(e => e.uid === entry.unscheduledUid);
-                if (originalEntry) {
-                    const key = getEntryKey(originalEntry);
-                    scheduledBeforeViewWeek.set(key, (scheduledBeforeViewWeek.get(key) || 0) + 1);
-                }
-            }
-        }
-    });
-
-    const unscheduledGroups = new Map<string, UnscheduledEntry[]>();
-    allUnscheduledForSemester.forEach(entry => {
-        const key = getEntryKey(entry);
-        if (!unscheduledGroups.has(key)) unscheduledGroups.set(key, []);
-        unscheduledGroups.get(key)!.push(entry);
+        if (!possibleEntryGroups.has(key)) possibleEntryGroups.set(key, []);
+        possibleEntryGroups.get(key)!.push(entry);
     });
 
     const horizonWeeks = unscheduledTimeHorizon === 'week' ? 1 : 2;
     const newUnscheduled: UnscheduledEntry[] = [];
 
-    unscheduledGroups.forEach((unscheduledList, key) => {
-        const demand = totalDemand.get(key) || 0;
+    possibleEntryGroups.forEach((possibleList, key) => {
+        const demand = possibleList.length;
         if (demand === 0) return;
 
         const classesPerWeek = demand / weeksInSemester;
         
-        // How many should have been done by the start of this week
-        const targetScheduledByStartOfWeek = Math.ceil(classesPerWeek * (currentSemesterWeek - 1));
-        
-        // How many were actually done
-        const numScheduledBefore = scheduledBeforeViewWeek.get(key) || 0;
-        
-        // The deficit from previous weeks
-        const backlog = Math.max(0, targetScheduledByStartOfWeek - numScheduledBefore);
+        // 6. Calculate the target week number for the end of our viewing period.
+        const endOfHorizonWeekNumber = (currentSemesterWeek - 1) + horizonWeeks;
 
-        // How many are planned for the current horizon
-        const neededForHorizon = Math.ceil(classesPerWeek * horizonWeeks);
-        
-        // Total to show is the backlog plus what's needed for this period
-        const numToShow = Math.ceil(backlog + neededForHorizon);
+        // 7. Calculate the cumulative number of classes of this type that *should* be completed by the end of the horizon.
+        // This creates a target based on the average rate. We use ceil to ensure we plan for fractions of classes.
+        const cumulativeTargetCount = Math.ceil(classesPerWeek * endOfHorizonWeekNumber);
 
-        newUnscheduled.push(...unscheduledList.slice(0, numToShow));
+        // 8. Get the candidate entries from the master list that fall within this cumulative target.
+        const candidateEntries = possibleList.slice(0, cumulativeTargetCount);
+        
+        // 9. From these candidates, filter out any that are already scheduled. The result is the backlog + current items to be shown.
+        const entriesToShow = candidateEntries.filter(entry => !allScheduledUids.has(entry.uid));
+        
+        newUnscheduled.push(...entriesToShow);
     });
 
     setUnscheduledEntries(newUnscheduled);
   }, [groups, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives, unscheduledTimeHorizon, settings.semesterStart, settings.semesterEnd, viewDate]);
 
   useEffect(() => {
-    const initializeApiKey = async () => {
+    const initializeApiKeys = async () => {
         if (window.electronAPI?.isAiForced) {
             const aiForced = await window.electronAPI.isAiForced();
             if (aiForced) {
                 console.log("AI features forced by '-ai' flag.");
                 setIsGeminiAvailable(true);
-                // The key itself will be handled by geminiService, which can use process.env.API_KEY.
                 setApiKey('******** (Активировано флагом)');
+                // Also check for OpenRouter key in env if AI is forced
+                if (process.env.OPENROUTER_API_KEY) {
+                    setOpenRouterApiKey('******** (Активировано флагом)');
+                }
                 return;
             }
         }
 
-        if (window.electronAPI && typeof window.electronAPI.getApiKey === 'function') {
+        if (window.electronAPI) {
             try {
-                const key = await window.electronAPI.getApiKey();
-                setApiKey(key || '');
-                setIsGeminiAvailable(!!key);
+                const geminiKey = await window.electronAPI.getApiKey();
+                setApiKey(geminiKey || '');
+                setIsGeminiAvailable(!!geminiKey);
+
+                const orKey = await window.electronAPI.getOpenRouterApiKey();
+                setOpenRouterApiKey(orKey || '');
+
             } catch (error) {
-                console.error("Не удалось получить API-ключ:", error);
+                console.error("Не удалось получить API-ключи:", error);
                 setIsGeminiAvailable(false);
                 setApiKey('');
+                setOpenRouterApiKey('');
             }
         } else {
             setIsGeminiAvailable(false);
             console.log("Приложение запущено не в среде Electron или флаг -ai не указан. Функции ИИ будут отключены.");
         }
     };
-    initializeApiKey();
+    initializeApiKeys();
   }, []);
   
   const getFullState = () => ({
@@ -859,10 +856,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       setApiKey(newKey);
       setIsGeminiAvailable(!!newKey);
     } catch (error) {
-      console.error("Не удалось установить API-ключ:", error);
-      alert("Ошибка при сохранении ключа.");
+      console.error("Не удалось установить API-ключ Gemini:", error);
+      alert("Ошибка при сохранении ключа Gemini.");
     }
   };
+
+  const updateOpenRouterApiKey = async (newKey: string) => {
+    if (!window.electronAPI) return;
+    try {
+      await window.electronAPI.setOpenRouterApiKey(newKey);
+      setOpenRouterApiKey(newKey);
+    } catch (error) {
+      console.error("Не удалось установить API-ключ OpenRouter:", error);
+      alert("Ошибка при сохранении ключа OpenRouter.");
+    }
+  };
+
 
   const propagateWeekSchedule = (weekTypeToCopy: 'even' | 'odd') => {
     if (!settings.semesterStart || !settings.semesterEnd) {
@@ -976,16 +985,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   // FIX: Corrected the return type annotation of `runScheduler` to match the `StoreState` interface. This fixes multiple errors.
-  const runScheduler = async (method: 'heuristic' | 'gemini', config?: HeuristicConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }> => {
+  const runScheduler = async (method: 'heuristic' | 'gemini' | 'openrouter', config?: HeuristicConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }> => {
     setSchedulingProgress(null);
-    // FIX: Add missing `faculties` and `departments` to the generationData object to satisfy the `GenerationData` type required by `generateScheduleWithGemini`.
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
         subgroups, electives, schedule, classroomTags, faculties, departments
     };
 
-    let result: SchedulerResult;
+    let result: SchedulerResult | null = null;
+    let newSchedule: ScheduleEntry[] | null = null;
 
     if (method === 'heuristic') {
         if (!config) throw new Error("Конфигурация для эвристического планировщика не предоставлена.");
@@ -1034,40 +1043,80 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         
         setSchedule([...finalSchedule, ...result.schedule]);
         return { scheduled: result.schedule.length, unscheduled: result.unschedulable.length, failedEntries: result.unschedulable };
-    }
-
-    // Gemini method
-    if (!isGeminiAvailable) {
-        throw new Error("API Gemini недоступен. Убедитесь, что API-ключ настроен в настройках.");
-    }
-    const newSchedule = await generateScheduleWithGemini(generationData);
-    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
-    const tempUnscheduled = [...allPossibleEntries];
-    newSchedule.forEach(schedEntry => {
-        const matchIndex = tempUnscheduled.findIndex(unsched => 
-            (unsched.groupId === schedEntry.groupId || (unsched.groupIds || []).join(',') === (schedEntry.groupIds || []).join(',')) &&
-            (unsched.subgroupId || '') === (schedEntry.subgroupId || '') &&
-            unsched.subjectId === schedEntry.subjectId &&
-            unsched.classType === schedEntry.classType
-        );
-        if (matchIndex > -1) {
-            schedEntry.unscheduledUid = tempUnscheduled[matchIndex].uid;
-            tempUnscheduled.splice(matchIndex, 1);
-        } else {
-             console.warn('Gemini-generated entry could not be matched to an educational plan entry:', schedEntry);
+    
+    } else if (method === 'gemini') {
+        if (!isGeminiAvailable) {
+            throw new Error("API Gemini недоступен. Убедитесь, что API-ключ настроен в настройках.");
         }
-    });
-    const unschedulable = tempUnscheduled;
+        newSchedule = await generateScheduleWithGemini(generationData);
+    } else if (method === 'openrouter') {
+         if (!openRouterApiKey) {
+            throw new Error("API OpenRouter недоступен. Убедитесь, что API-ключ настроен в настройках.");
+        }
+        newSchedule = await generateScheduleWithOpenRouter(generationData);
+    }
 
-    if (!Array.isArray(newSchedule)) {
-        throw new Error("Алгоритм вернул некорректный формат расписания.");
+    // Common logic for AI schedulers
+    if (newSchedule) {
+        const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+        const tempUnscheduled = [...allPossibleEntries];
+        newSchedule.forEach(schedEntry => {
+            const matchIndex = tempUnscheduled.findIndex(unsched => 
+                (unsched.groupId === schedEntry.groupId || (unsched.groupIds || []).join(',') === (schedEntry.groupIds || []).join(',')) &&
+                (unsched.subgroupId || '') === (schedEntry.subgroupId || '') &&
+                unsched.subjectId === schedEntry.subjectId &&
+                unsched.classType === schedEntry.classType
+            );
+            if (matchIndex > -1) {
+                schedEntry.unscheduledUid = tempUnscheduled[matchIndex].uid;
+                tempUnscheduled.splice(matchIndex, 1);
+            } else {
+                 console.warn('AI-generated entry could not be matched to an educational plan entry:', schedEntry);
+            }
+        });
+        const unschedulable = tempUnscheduled;
+
+        if (!Array.isArray(newSchedule)) {
+            throw new Error("Алгоритм вернул некорректный формат расписания.");
+        }
+        const validatedSchedule: ScheduleEntry[] = newSchedule.map((entry: any, index: number) => ({ ...entry, id: `gen-${Date.now()}-${index}` }));
+        if (window.confirm(`Сгенерировано ${validatedSchedule.length} занятий. Заменить текущее расписание?`)) {
+            setSchedule(validatedSchedule);
+            return { scheduled: validatedSchedule.length, unscheduled: unschedulable.length, failedEntries: unschedulable };
+        }
     }
-    const validatedSchedule: ScheduleEntry[] = newSchedule.map((entry: any, index: number) => ({ ...entry, id: `gen-${Date.now()}-${index}` }));
-    if (window.confirm(`Сгенерировано ${validatedSchedule.length} занятий. Заменить текущее расписание?`)) {
-        setSchedule(validatedSchedule);
-        return { scheduled: validatedSchedule.length, unscheduled: unschedulable.length, failedEntries: unschedulable };
-    }
+    
     return { scheduled: 0, unscheduled: 0, failedEntries: [] };
+  };
+
+  const runSessionScheduler = async (config: SessionSchedulerConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }> => {
+    const generationData = {
+        teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings,
+        teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
+        subgroups, schedule
+    };
+
+    const result = await generateSessionSchedule(generationData, config);
+
+    let finalSchedule = [...schedule];
+    if (config.clearExisting) {
+        const sessionStart = new Date(config.timeFrame.start + 'T00:00:00').getTime();
+        const sessionEnd = new Date(config.timeFrame.end + 'T23:59:59').getTime();
+        finalSchedule = schedule.filter(entry => {
+            if (!entry.date) return true;
+            if (![ClassType.Exam, ClassType.Consultation].includes(entry.classType)) return true;
+            
+            const entryTime = new Date(entry.date).getTime();
+            return entryTime < sessionStart || entryTime > sessionEnd;
+        });
+    }
+
+    setSchedule([...finalSchedule, ...result.schedule]);
+    return { 
+        scheduled: result.schedule.length, 
+        unscheduled: result.unschedulable.length, 
+        failedEntries: result.unschedulable 
+    };
   };
 
   const resetSchedule = () => {
@@ -1123,11 +1172,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const value: StoreState = {
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
-    classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey, unscheduledTimeHorizon,
+    classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey, openRouterApiKey, unscheduledTimeHorizon,
     schedulingProgress, viewDate,
-    addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings, updateApiKey,
+    addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, updateScheduleEntry, updateSettings, updateApiKey, updateOpenRouterApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
-    runScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,
+    runScheduler, runSessionScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,
     startNewProject, handleOpen, handleSave, handleSaveAs,
     getFullState, loadFullState, clearAllData, mergeFullState
   };

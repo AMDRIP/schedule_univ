@@ -49,12 +49,14 @@ const ImportConfirmModal: React.FC<{
 
 const SettingsView: React.FC = () => {
   const store = useStore();
-  const { settings, updateSettings, getFullState, loadFullState, mergeFullState, apiKey, updateApiKey } = store;
+  const { settings, updateSettings, getFullState, loadFullState, mergeFullState, apiKey, updateApiKey, openRouterApiKey, updateOpenRouterApiKey } = store;
   const [formData, setFormData] = useState<SchedulingSettings>(settings);
   const [isSaved, setIsSaved] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [keyInput, setKeyInput] = useState('');
-  const [isKeySaved, setIsKeySaved] = useState(false);
+  const [geminiKeyInput, setGeminiKeyInput] = useState('');
+  const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
+  const [isGeminiKeySaved, setIsGeminiKeySaved] = useState(false);
+  const [isOpenRouterKeySaved, setIsOpenRouterKeySaved] = useState(false);
   const [importTarget, setImportTarget] = useState<File | null>(null);
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(true);
 
@@ -63,8 +65,12 @@ const SettingsView: React.FC = () => {
   }, [settings]);
 
   useEffect(() => {
-    setKeyInput(apiKey);
+    setGeminiKeyInput(apiKey);
   }, [apiKey]);
+  
+  useEffect(() => {
+    setOpenRouterKeyInput(openRouterApiKey);
+  }, [openRouterApiKey]);
   
   useEffect(() => {
     if (window.electronAPI?.getAutoUpdateSetting) {
@@ -90,10 +96,17 @@ const SettingsView: React.FC = () => {
     setTimeout(() => setIsSaved(false), 3000);
   };
   
-  const handleKeySave = () => {
-    updateApiKey(keyInput).then(() => {
-        setIsKeySaved(true);
-        setTimeout(() => setIsKeySaved(false), 3000);
+  const handleGeminiKeySave = () => {
+    updateApiKey(geminiKeyInput).then(() => {
+        setIsGeminiKeySaved(true);
+        setTimeout(() => setIsGeminiKeySaved(false), 3000);
+    });
+  };
+
+  const handleOpenRouterKeySave = () => {
+    updateOpenRouterApiKey(openRouterKeyInput).then(() => {
+        setIsOpenRouterKeySaved(true);
+        setTimeout(() => setIsOpenRouterKeySaved(false), 3000);
     });
   };
 
@@ -225,6 +238,24 @@ const SettingsView: React.FC = () => {
             </div>
             
             <div className="pt-4 border-t space-y-4">
+                <div>
+                 <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Общие стандарты
+                  </label>
+                   <label htmlFor="enforceStandardRules" className="flex items-center cursor-pointer">
+                      <div className="relative">
+                        <input type="checkbox" id="enforceStandardRules" name="enforceStandardRules" className="sr-only" checked={formData.enforceStandardRules} onChange={handleChange} />
+                        <div className={`block w-14 h-8 rounded-full transition ${formData.enforceStandardRules ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                        <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform ${formData.enforceStandardRules ? 'translate-x-6' : ''}`}></div>
+                      </div>
+                      <div className="ml-3 text-gray-700">
+                        {formData.enforceStandardRules ? 'Включено' : 'Выключено'} (соблюдать общие стандарты расписания)
+                      </div>
+                    </label>
+                    <p className="text-xs text-gray-500 ml-16">
+                        Включает правила, такие как: не более 5 пар в день, без "окон" для 1 курса, лекции не ставятся после практик и др.
+                    </p>
+               </div>
                <div>
                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     "Окна" в расписании
@@ -382,36 +413,62 @@ const SettingsView: React.FC = () => {
       <div className="pt-8 border-t">
         <div className="flex items-center mb-4">
             <SparklesIcon className="h-8 w-8 text-purple-600 mr-3" />
-            <h3 className="text-xl font-bold text-gray-800">Настройки ИИ-ассистента (Gemini)</h3>
+            <h3 className="text-xl font-bold text-gray-800">Настройки ИИ-ассистентов</h3>
         </div>
-        <p className="text-sm text-gray-500 mb-4">
-            Введите ваш API-ключ для Google AI Studio, чтобы активировать функции автоматического составления расписания. Ключ хранится только в текущей сессии и не сохраняется в файле проекта.
-        </p>
-        <div className="space-y-2">
-            <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700">Google Gemini API Key</label>
-            <div className="flex items-center gap-4">
-                <input 
-                    type="password" 
-                    id="apiKey" 
-                    name="apiKey" 
-                    value={keyInput}
-                    onChange={e => setKeyInput(e.target.value)}
-                    className={defaultInputClass}
-                    placeholder="Введите ваш API ключ..."
-                />
-                <button
-                    type="button"
-                    onClick={handleKeySave}
-                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors whitespace-nowrap"
-                >
-                    Сохранить ключ
-                </button>
+        
+        <div className="space-y-6">
+            <div>
+                <label htmlFor="geminiApiKey" className="block text-sm font-medium text-gray-700">Google Gemini API Key</label>
+                <div className="flex items-center gap-4 mt-1">
+                    <input 
+                        type="password" 
+                        id="geminiApiKey" 
+                        name="geminiApiKey" 
+                        value={geminiKeyInput}
+                        onChange={e => setGeminiKeyInput(e.target.value)}
+                        className={defaultInputClass}
+                        placeholder="Введите ваш API ключ Google..."
+                    />
+                    <button
+                        type="button"
+                        onClick={handleGeminiKeySave}
+                        className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors whitespace-nowrap"
+                    >
+                        Сохранить ключ
+                    </button>
+                </div>
+                {isGeminiKeySaved && (
+                    <p className="text-sm text-green-600 mt-2">Ключ API Gemini успешно сохранен для текущей сессии.</p>
+                )}
             </div>
-            {isKeySaved && (
-                <p className="text-sm text-green-600 mt-2 transition-opacity duration-300">
-                    Ключ API успешно сохранен для текущей сессии.
+
+            <div>
+                <label htmlFor="openRouterApiKey" className="block text-sm font-medium text-gray-700">OpenRouter API Key</label>
+                 <p className="text-xs text-gray-500 mb-1">
+                    Позволяет использовать модели от Anthropic, OpenAI и др. через единый API. Подробнее на <a href="https://openrouter.ai" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">openrouter.ai</a>
                 </p>
-            )}
+                <div className="flex items-center gap-4 mt-1">
+                    <input 
+                        type="password" 
+                        id="openRouterApiKey" 
+                        name="openRouterApiKey" 
+                        value={openRouterKeyInput}
+                        onChange={e => setOpenRouterKeyInput(e.target.value)}
+                        className={defaultInputClass}
+                        placeholder="Введите ваш API ключ OpenRouter..."
+                    />
+                    <button
+                        type="button"
+                        onClick={handleOpenRouterKeySave}
+                        className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg transition-colors whitespace-nowrap"
+                    >
+                        Сохранить ключ
+                    </button>
+                </div>
+                {isOpenRouterKeySaved && (
+                    <p className="text-sm text-green-600 mt-2">Ключ API OpenRouter успешно сохранен для текущей сессии.</p>
+                )}
+            </div>
         </div>
       </div>
 

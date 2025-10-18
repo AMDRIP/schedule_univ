@@ -274,6 +274,7 @@ export interface SchedulingSettings {
   showTeacherDetailsInLists: boolean;
   showScheduleColors: boolean;
   allowManualOverrideOfForbidden: boolean;
+  enforceStandardRules: boolean;
 }
 
 export interface HeuristicConfig {
@@ -282,6 +283,16 @@ export interface HeuristicConfig {
     timeFrame: { start: string; end: string };
     clearExisting: boolean;
     iterations: number;
+    enforceLectureOrder: boolean;
+    distributeEvenly: boolean;
+}
+
+export interface SessionSchedulerConfig {
+    consultationOffset: number; // 0 for no consultation, 1 for 1 day before, etc.
+    restDays: number; // Min days between exams for the same group
+    clearExisting: boolean;
+    timeFrame: { start: string; end: string };
+    scheduleTests: 'like_exams' | 'no_rest_days' | 'none';
 }
 
 export interface ScheduleEntry extends BaseItem {
@@ -311,6 +322,7 @@ export interface UnscheduledEntry {
   teacherId: string;
   streamId?: string;
   studentCount: number;
+  targetWeek?: number;
 }
 
 export interface ScheduleTemplate extends BaseItem {

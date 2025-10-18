@@ -1,8 +1,7 @@
-import { GoogleGenAI, Type } from '@google/genai';
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
     SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS, Specialty, EducationalPlan, DeliveryMode, ClassroomType,
-    Subgroup, Elective, RuleSeverity, RuleAction, RuleEntityType, ClassroomTag, AvailabilityType, Department, Faculty
+    Subgroup, Elective, RuleSeverity, RuleAction, AvailabilityType, ClassroomTag, Department, Faculty
 } from '../types';
 import { SCHEDULING_STANDARDS_PROMPT } from './schedulingStandards';
 
@@ -29,63 +28,32 @@ interface GenerationData {
   departments: Department[];
 }
 
-let ai: GoogleGenAI | null = null;
-let isInitialized = false;
-
-// Инициализирует и возвращает клиент Gemini API, получая ключ через Electron IPC.
-// Возвращает null, если клиент не может быть создан (нет ключа или не Electron).
-const getAiClient = async (): Promise<GoogleGenAI | null> => {
-  if (isInitialized) {
-    return ai;
-  }
-  isInitialized = true; // Попытка инициализации только один раз
-
-  // Проверяем, не активирован ли принудительный режим
-  const aiForced = await window.electronAPI?.isAiForced?.();
-  if (aiForced) {
-      const apiKey = process.env.API_KEY;
-      if (!apiKey) {
-          console.error("AI forced, but process.env.API_KEY is not available in the renderer.");
-          alert("AI-режим активирован, но ключ API не найден. Убедитесь, что он задан в переменных окружения.");
-          ai = null;
-          return null;
-      }
-      console.log("AI Client Initializing with process.env.API_KEY due to -ai flag.");
-      ai = new GoogleGenAI({ apiKey });
-      return ai;
-  }
-  
-  // Проверяем, доступен ли Electron API
-  if (!window.electronAPI || typeof window.electronAPI.getApiKey !== 'function') {
-      console.warn("Electron API не найдено. Функции Gemini будут отключены.");
+const getOpenRouterApiKey = async (): Promise<string | null> => {
+  if (!window.electronAPI || typeof window.electronAPI.getOpenRouterApiKey !== 'function') {
+      console.warn("Electron API не найдено. Функции OpenRouter будут отключены.");
       return null;
   }
   
   try {
-    const apiKey = await window.electronAPI.getApiKey();
-  
+    const apiKey = await window.electronAPI.getOpenRouterApiKey();
     if (!apiKey) {
-      console.warn("API-ключ Gemini не найден. Функции Gemini будут отключены.");
-      ai = null;
+      console.warn("API-ключ OpenRouter не найден. Функции OpenRouter будут отключены.");
       return null;
     }
-    
-    ai = new GoogleGenAI({ apiKey });
-    return ai;
+    return apiKey;
   } catch (error) {
-    console.error("Ошибка при получении API-ключа:", error);
-    ai = null;
+    console.error("Ошибка при получении API-ключа OpenRouter:", error);
     return null;
   }
 };
 
-export const generateScheduleWithGemini = async (data: GenerationData): Promise<ScheduleEntry[]> => {
+export const generateScheduleWithOpenRouter = async (data: GenerationData): Promise<ScheduleEntry[]> => {
   const { 
     teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
     teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
     subgroups, electives, classroomTags, departments, faculties
   } = data;
-
+  
   let standardsPrompt = '';
   if (settings.enforceStandardRules) {
     standardsPrompt = `
@@ -118,23 +86,16 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
       - '${RuleAction.MaxPerDay}': Для сущности из первого условия не должно быть больше 'param' занятий в день.
       - '${RuleAction.Consecutive}': Занятия для указанных сущностей должны идти подряд, без окон.
     
-    ПРИМЕРЫ ПРАВИЛ:
-    - \`{ "action": "${RuleAction.Order}", "severity": "${RuleSeverity.Strong}", "conditions": [{ "entityType": "subject", "entityIds": ["subj-1"], "classType": "Лекция" }, { "entityType": "subject", "entityIds": ["subj-1"], "classType": "Практика" }]}\`
-      Означает: лекция по предмету subj-1 должна быть раньше практики по нему же в тот же день. Это сильное предпочтение.
-    - \`{ "action": "${RuleAction.MaxPerDay}", "severity": "${RuleSeverity.Strict}", "conditions": [{ "entityType": "group", "entityIds": ["group-101"] }], "param": 3 }\`
-      Означает: у группы group-101 не может быть больше 3 пар в день. Это строгое требование.
-
     ОСНОВНЫЕ ПРАВИЛА СОСТАВЛЕНИЯ РАСПИСАНИЯ (помимо указанных в JSON):
     1.  ИСТОЧНИК ДАННЫХ: Все обязательные занятия, их количество и тип (лекция, практика, лаб.) должны браться ИСКЛЮЧИТЕЛЬНО из Учебных планов. Дополнительные занятия берутся из списка Факультативов.
     2.  ПОДГРУППЫ: Некоторые занятия в учебном плане могут быть помечены как 'splitForSubgroups'. Это значит, что для каждой подгруппы основной группы нужно создать отдельное занятие. При проверке вместимости аудитории используй 'studentCount' из подгруппы. ВАЖНО: когда занятие идет у подгруппы, вся основная группа ('parentGroupId') считается занятой.
     3.  НАЗНАЧЕНИЕ ПРЕПОДАВАТЕЛЕЙ ПОДГРУППАМ: У подгрупп может быть поле 'teacherAssignments'. Это СТРОГОЕ требование. Если для дисциплины и типа занятия у подгруппы указан конкретный преподаватель, ты ОБЯЗАН использовать именно его. Если назначения нет, выбери любого подходящего преподавателя из общих привязок.
-    4.  ФАКУЛЬТАТИВЫ: Это необязательные занятия, их нужно разместить так же, как и остальные, в соответствии с их 'hoursPerSemester'.
-    5.  ПОТОКИ (streams): Потоки объединяют несколько групп для лекций. Если у занятия указан 'streamId', то все группы из этого потока ('groupIds' в объекте потока) должны присутствовать на занятии одновременно. 'studentCount' для таких занятий рассчитывается как сумма студентов всех групп потока.
-    6.  ПРИВЯЗКИ: Используй 'teacherSubjectLinks' для определения, какой преподаватель может вести какой тип занятия по какой дисциплине. Это СТРОГОЕ правило, если не переопределено в 'teacherAssignments' у подгруппы.
-    7.  КОНФЛИКТЫ: Один преподаватель, одна группа (или подгруппа) или одна аудитория не могут быть в двух местах одновременно. Занятие у подгруппы блокирует всю родительскую группу.
-    8.  АУДИТОРИИ: Вместимость аудитории ('capacity') должна быть не меньше количества студентов ('studentCount'). Для каждой дисциплины указаны подходящие типы аудиторий в 'suitableClassroomTypeIds'. Это СТРОГОЕ требование.
-    9.  ТРЕБОВАНИЯ К АУДИТОРИИ (ТЕГИ): У дисциплин ('subjects') может быть поле 'requiredClassroomTagIds'. Это СТРОГОЕ требование. Если оно есть, ты ОБЯЗАН выбрать для занятия аудиторию ('classrooms'), у которой в поле 'tagIds' присутствуют ВСЕ теги из 'requiredClassroomTagIds'.
-    10. СЕТКА ДОСТУПНОСТИ (availabilityGrid): У преподавателей, групп и аудиторий есть сетка доступности.
+    4.  ПОТОКИ (streams): Потоки объединяют несколько групп для лекций. Если у занятия указан 'streamId', то все группы из этого потока ('groupIds' в объекте потока) должны присутствовать на занятии одновременно. 'studentCount' для таких занятий рассчитывается как сумма студентов всех групп потока.
+    5.  ПРИВЯЗКИ: Используй 'teacherSubjectLinks' для определения, какой преподаватель может вести какой тип занятия по какой дисциплине. Это СТРОГОЕ правило, если не переопределено в 'teacherAssignments' у подгруппы.
+    6.  КОНФЛИКТЫ: Один преподаватель, одна группа (или подгруппа) или одна аудитория не могут быть в двух местах одновременно. Занятие у подгруппы блокирует всю родительскую группу.
+    7.  АУДИТОРИИ: Вместимость аудитории ('capacity') должна быть не меньше количества студентов ('studentCount'). Для каждой дисциплины указаны подходящие типы аудиторий в 'suitableClassroomTypeIds'. Это СТРОГОЕ требование.
+    8.  ТРЕБОВАНИЯ К АУДИТОРИИ (ТЕГИ): У дисциплин ('subjects') может быть поле 'requiredClassroomTagIds'. Это СТРОГОЕ требование. Если оно есть, ты ОБЯЗАН выбрать для занятия аудиторию ('classrooms'), у которой в поле 'tagIds' присутствуют ВСЕ теги из 'requiredClassroomTagIds'.
+    9. СЕТКА ДОСТУПНОСТИ (availabilityGrid): У преподавателей, групп и аудиторий есть сетка доступности.
         - '${AvailabilityType.Forbidden}': СТРОГО ЗАПРЕЩЕНО ставить занятия в этот слот.
         - '${AvailabilityType.Undesirable}': Крайне нежелательно, но можно, если нет других вариантов.
         - '${AvailabilityType.Desirable}': Очень желательно ставить занятия в этот слот.
@@ -162,29 +123,43 @@ export const generateScheduleWithGemini = async (data: GenerationData): Promise<
     Создай полный JSON-массив объектов 'ScheduleEntry' для всех занятий на один семестр. Каждое занятие из учебного плана должно быть представлено в расписании нужное количество раз (hours/2).
     Вместо 'date' используй 'day' (Понедельник, Вторник...) и 'weekType' ('even', 'odd', 'every').
     Не создавай записи для консультаций, зачетов и экзаменов. Только лекции, практики, лабораторные и факультативы.
-    Не включай в ответ ничего, кроме JSON-массива. Без комментариев, без markdown.
+    Не включай в ответ ничего, кроме JSON-массива. Без комментариев, без markdown. Только валидный JSON.
   `;
 
-  const client = await getAiClient();
-  if (!client) {
-    throw new Error("Клиент Gemini API не инициализирован. Проверьте API-ключ.");
+  const apiKey = await getOpenRouterApiKey();
+  if (!apiKey) {
+    throw new Error("API-ключ OpenRouter не настроен. Пожалуйста, добавьте его в настройках.");
   }
 
   try {
-    const response = await client.models.generateContent({
-      model: 'gemini-2.5-flash', // Используем рекомендованную модель
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      }
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: "anthropic/claude-3-haiku", // A fast and capable model suitable for this task
+        messages: [
+          { role: "user", content: prompt }
+        ],
+        response_format: { type: "json_object" },
+      })
     });
-    
-    // Используем .text для получения строки
-    const jsonText = response.text;
-    const schedule = JSON.parse(jsonText) as ScheduleEntry[];
-    return schedule.map(entry => ({...entry, deliveryMode: DeliveryMode.Offline})); // Add default delivery mode
+
+    if (!response.ok) {
+        const errorBody = await response.text();
+        console.error("OpenRouter API Error:", errorBody);
+        throw new Error(`Ошибка от OpenRouter API: ${response.status} ${response.statusText}`);
+    }
+
+    const jsonResponse = await response.json();
+    const content = jsonResponse.choices[0].message.content;
+    const schedule = JSON.parse(content) as ScheduleEntry[];
+
+    return schedule.map(entry => ({...entry, deliveryMode: DeliveryMode.Offline}));
   } catch (error) {
-    console.error("Ошибка при запросе к Gemini API:", error);
-    throw new Error("Не удалось сгенерировать расписание с помощью ИИ. Проверьте консоль для подробностей.");
+    console.error("Ошибка при запросе к OpenRouter API:", error);
+    throw new Error("Не удалось сгенерировать расписание с помощью OpenRouter. Проверьте консоль для подробностей.");
   }
 };

@@ -5,7 +5,7 @@ import {
     RuleSeverity, RuleAction, RuleCondition
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
-import { toYYYYMMDD } from '../utils/dateUtils';
+import { getWeekNumber, toYYYYMMDD } from '../utils/dateUtils';
 
 interface GenerationData {
   teachers: Teacher[];
@@ -168,7 +168,7 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
 export const generateScheduleWithHeuristics = async (data: GenerationData, config: HeuristicConfig): Promise<SchedulerResult> => {
     
     // --- 1. INITIALIZATION ---
-    const { strictness, target, timeFrame, clearExisting } = config;
+    const { strictness, target, timeFrame, clearExisting, enforceLectureOrder, distributeEvenly } = config;
     const { teachers, groups, classrooms, subjects, timeSlots, settings } = data;
 
     const newSchedule: ScheduleEntry[] = [];
@@ -230,6 +230,34 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             return true; // Classroom target is a preference, not a filter
         });
     }
+    
+    if (distributeEvenly) {
+        const startDate = new Date(timeFrame.start + 'T00:00:00');
+        const endDate = new Date(timeFrame.end + 'T00:00:00');
+        const totalWeeks = Math.max(1, Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7)));
+        const startWeek = getWeekNumber(startDate);
+    
+        const classGroups = new Map<string, UnscheduledEntry[]>();
+        classPool.forEach(entry => {
+            const groupIds = entry.groupIds?.join(',') || entry.groupId;
+            const key = `${entry.subjectId}-${groupIds}-${entry.classType}`;
+            if (!classGroups.has(key)) {
+                classGroups.set(key, []);
+            }
+            classGroups.get(key)!.push(entry);
+        });
+    
+        classGroups.forEach(group => {
+            const numClasses = group.length;
+            if (numClasses === 0) return;
+            
+            const interval = totalWeeks / numClasses;
+            group.forEach((entry, index) => {
+                const targetWeekOffset = Math.floor(index * interval);
+                entry.targetWeek = startWeek + targetWeekOffset;
+            });
+        });
+    }
 
     classPool.sort((a, b) => getConstraintScore(b, data) - getConstraintScore(a, data));
     
@@ -289,7 +317,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                 for (const classroom of suitableClassrooms) {
                     if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
                     
-                    const cost = calculateSlotCost(entryToPlace, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, softPenaltyMultiplier, newSchedule);
+                    const cost = calculateSlotCost(entryToPlace, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, softPenaltyMultiplier, newSchedule, config);
                     if (cost === Infinity) continue;
                     
                     if (bestSlots.length < TOP_N_CANDIDATES) {
@@ -394,25 +422,22 @@ const calculateSlotCost = (
     bookings: Map<string, Set<string>>,
     data: GenerationData,
     penaltyMultiplier: number,
-    newSchedule: ScheduleEntry[]
+    newSchedule: ScheduleEntry[],
+    config: HeuristicConfig
 ): number => {
     let cost = 0;
     const { teachers, subjects, timeSlots, settings, schedulingRules } = data;
+    const { enforceLectureOrder, distributeEvenly } = config;
     const teacher = teachers.find(t => t.id === entry.teacherId);
     const subject = subjects.find(s => s.id === entry.subjectId);
     const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
     const dateStr = toYYYYMMDD(date);
     
-    const existingOrNewBooking = (key: string, resourceFn: (g: Group) => string) => {
-        const sched = [...data.schedule, ...newSchedule];
-        return sched.find(e => {
-            if (`${e.date}-${e.timeSlotId}` !== key) return false;
-            const entryGroupIds = e.groupIds || (e.groupId ? [e.groupId] : []);
-            const involvedGroupIds = involvedGroups.map(g => g.id);
-            if (entryGroupIds.some(gid => involvedGroupIds.includes(gid))) return true;
-            return false;
-        });
-    }
+    const allBookingsTodayForGroups = [...data.schedule, ...newSchedule].filter(e => {
+        if (e.date !== dateStr) return false;
+        const entryGroupIds = e.groupIds || (e.groupId ? [e.groupId] : []);
+        return entryGroupIds.some(gid => involvedGroups.some(ig => ig.id === gid));
+    });
 
     // Availability Grids
     const teacherAvailability = teacher?.availabilityGrid?.[dayName]?.[timeSlotId];
@@ -435,46 +460,60 @@ const calculateSlotCost = (
     }
 
     // Window Penalty
-    if (!settings.allowWindows) {
+    if (!settings.allowWindows || (settings.enforceStandardRules && involvedGroups.some(g => g.course === 1))) {
         const timeSlotIndex = timeSlots.findIndex(ts => ts.id === timeSlotId);
-        const checkWindowsForResource = (resourceKey: string) => {
+        const checkWindowsForResource = (resourceKey: string, isFirstYear: boolean) => {
             const prevTimeSlot = timeSlots[timeSlotIndex - 1];
             const nextTimeSlot = timeSlots[timeSlotIndex + 1];
             const isOccupiedBefore = prevTimeSlot ? bookings.get(resourceKey)?.has(`${dateStr}-${prevTimeSlot.id}`) : true;
             const isOccupiedAfter = nextTimeSlot ? bookings.get(resourceKey)?.has(`${dateStr}-${nextTimeSlot.id}`) : true;
             const hasAnyOtherClassToday = timeSlots.some(ts => ts.id !== timeSlotId && bookings.get(resourceKey)?.has(`${dateStr}-${ts.id}`));
 
-            if (hasAnyOtherClassToday && !isOccupiedBefore && !isOccupiedAfter) cost += 400 * penaltyMultiplier; // Isolated class
-            else if (hasAnyOtherClassToday && (!isOccupiedBefore || !isOccupiedAfter)) cost += 200 * penaltyMultiplier; // Class at start/end with gap
+            let windowPenalty = 200 * penaltyMultiplier;
+            if (isFirstYear && settings.enforceStandardRules) {
+                windowPenalty = 1000 * penaltyMultiplier; // Very high penalty for first years
+            }
+
+
+            if (hasAnyOtherClassToday && !isOccupiedBefore && !isOccupiedAfter) cost += windowPenalty * 2; // Isolated class
+            else if (hasAnyOtherClassToday && (!isOccupiedBefore || !isOccupiedAfter)) cost += windowPenalty; // Class at start/end with gap
         };
-        checkWindowsForResource(`teacher-${entry.teacherId}`);
-        involvedGroups.forEach(g => checkWindowsForResource(`group-${g.id}`));
+        checkWindowsForResource(`teacher-${entry.teacherId}`, false);
+        involvedGroups.forEach(g => checkWindowsForResource(`group-${g.id}`, g.course === 1));
     }
     
-    // Day Load and Subject Duplication Penalty
-    let teacherClassesOnDay = 0;
-    const groupClassesOnDay = new Map<string, number>();
-    involvedGroups.forEach(g => groupClassesOnDay.set(g.id, 0));
+    // Day Load Penalty
+    const teacherBookingsToday = [...data.schedule, ...newSchedule].filter(e => e.teacherId === teacher?.id && e.date === dateStr);
+    const teacherClassesOnDay = teacherBookingsToday.length;
 
-    timeSlots.forEach(ts => {
-        const key = `${dateStr}-${ts.id}`;
-        if (bookings.get(`teacher-${entry.teacherId}`)?.has(key)) teacherClassesOnDay++;
-        involvedGroups.forEach(g => {
-            if (bookings.get(`group-${g.id}`)?.has(key)) {
-                groupClassesOnDay.set(g.id, (groupClassesOnDay.get(g.id) || 0) + 1);
-            }
-        });
-        // Penalty for same subject on same day for a group
-        const groupBooking = existingOrNewBooking(key, g => `group-${g.id}`);
-        if(groupBooking && groupBooking.subjectId === entry.subjectId) {
-            cost += 75 * penaltyMultiplier;
+    if(settings.enforceStandardRules && teacherClassesOnDay >= 4) {
+        cost += (teacherClassesOnDay - 3) * 150 * penaltyMultiplier;
+    }
+
+    // FIX: Define groupClassesOnDay to calculate class load per group.
+    const groupClassesOnDay = involvedGroups.map(group => {
+        return [...data.schedule, ...newSchedule].filter(e => {
+            if (e.date !== dateStr) return false;
+            const entryGroupIds = e.groupIds || (e.groupId ? [e.groupId] : []);
+            return entryGroupIds.includes(group.id);
+        }).length;
+    });
+
+    groupClassesOnDay.forEach(count => {
+        if(settings.enforceStandardRules && count >= 5) {
+            cost += (count - 4) * 200 * penaltyMultiplier;
+        } else if (count >= 4) {
+            cost += (count - 3) * 100 * penaltyMultiplier;
         }
     });
 
-    if(teacherClassesOnDay >= 4) cost += (teacherClassesOnDay - 3) * 100 * penaltyMultiplier; // Penalize 4+ classes
-    groupClassesOnDay.forEach(count => {
-        if (count >= 4) cost += (count - 3) * 100 * penaltyMultiplier;
-    });
+    if(settings.enforceStandardRules) {
+        // Penalty for same subject on same day for a group
+        if(allBookingsTodayForGroups.some(b => b.subjectId === entry.subjectId)) {
+            cost += 75 * penaltyMultiplier;
+        }
+    }
+    
 
     // --- NEW: Apply schedulingRules ---
     const rulePenaltyMap = {
@@ -507,12 +546,10 @@ const calculateSlotCost = (
                 break;
             case RuleAction.MaxPerDay:
                 if (rule.param !== undefined) {
-                    const dayBookings = [...data.schedule, ...newSchedule].filter(e => e.date === dateStr);
-                    let count = dayBookings.filter(booking => {
-                        const bookingGroupIds = booking.groupIds || (booking.groupId ? [booking.groupId] : []);
+                    const count = allBookingsTodayForGroups.filter(booking => {
                         switch (conditionA.entityType) {
                             case 'teacher': return conditionA.entityIds.includes(booking.teacherId);
-                            case 'group': return bookingGroupIds.some(gid => conditionA.entityIds.includes(gid));
+                            case 'group': return (booking.groupIds || [booking.groupId]).some(gid => gid && conditionA.entityIds.includes(gid));
                             case 'subject': return conditionA.entityIds.includes(booking.subjectId) && (!conditionA.classType || conditionA.classType === booking.classType);
                             default: return false;
                         }
@@ -523,6 +560,91 @@ const calculateSlotCost = (
                     }
                 }
                 break;
+        }
+    }
+
+    // --- NEW: Apply Standard Rules if enabled ---
+    if(settings.enforceStandardRules) {
+        // Rule: No lectures after labs/practicals (of other subjects)
+        if(entry.classType === ClassType.Lecture) {
+            const timeSlotIndex = timeSlots.findIndex(ts => ts.id === timeSlotId);
+            const previousSlots = timeSlots.slice(0, timeSlotIndex);
+            const hasPracticeBefore = previousSlots.some(slot => 
+                allBookingsTodayForGroups.some(b => 
+                    b.timeSlotId === slot.id &&
+                    (b.classType === ClassType.Practical || b.classType === ClassType.Lab) &&
+                    b.subjectId !== entry.subjectId
+                )
+            );
+            if(hasPracticeBefore) {
+                cost += 350 * penaltyMultiplier;
+            }
+        }
+        
+        // Rule: Max 3-4 consecutive classes for teacher
+        const teacherBookingIndices = teacherBookingsToday
+            .map(e => timeSlots.findIndex(ts => ts.id === e.timeSlotId));
+        teacherBookingIndices.push(timeSlots.findIndex(ts => ts.id === timeSlotId));
+        teacherBookingIndices.sort((a,b) => a-b);
+        
+        let maxConsecutive = 0;
+        if(teacherBookingIndices.length > 0) {
+            let currentConsecutive = 1;
+            maxConsecutive = 1;
+            for(let i=1; i<teacherBookingIndices.length; i++) {
+                if(teacherBookingIndices[i] === teacherBookingIndices[i-1] + 1) {
+                    currentConsecutive++;
+                } else {
+                    currentConsecutive = 1;
+                }
+                maxConsecutive = Math.max(maxConsecutive, currentConsecutive);
+            }
+        }
+        if(maxConsecutive > 3) { // Penalize 4 or more
+             cost += (maxConsecutive - 3) * 150 * penaltyMultiplier;
+        }
+
+        // Rule: First pair on Monday is for optimists
+        if (dayName === 'Понедельник' && timeSlots.findIndex(ts => ts.id === timeSlotId) === 0) {
+            cost += 50 * penaltyMultiplier;
+        }
+
+        // Rule: Avoid Saturday
+        if (dayName === 'Суббота') {
+            cost += 60 * penaltyMultiplier;
+        }
+    }
+
+
+    // Distribution Penalty
+    if (distributeEvenly && entry.targetWeek) {
+        const currentWeek = getWeekNumber(date);
+        const weekDifference = Math.abs(currentWeek - entry.targetWeek);
+        if (weekDifference > 0) {
+            cost += weekDifference * 150 * penaltyMultiplier;
+        }
+    }
+
+    // Lecture-Practice Order Penalty
+    if (enforceLectureOrder) {
+        const timeSlotIndex = timeSlots.findIndex(ts => ts.id === timeSlotId);
+
+        if (entry.classType === ClassType.Practical || entry.classType === ClassType.Lab) {
+            const lecturesToday = allBookingsTodayForGroups.filter(e => e.subjectId === entry.subjectId && e.classType === ClassType.Lecture);
+            if (lecturesToday.length > 0) {
+                const earliestLectureIndex = Math.min(...lecturesToday.map(e => timeSlots.findIndex(ts => ts.id === e.timeSlotId)));
+                if (timeSlotIndex < earliestLectureIndex) {
+                    cost += 300 * penaltyMultiplier;
+                }
+            }
+        } else if (entry.classType === ClassType.Lecture) {
+            const practicesToday = allBookingsTodayForGroups.filter(e => e.subjectId === entry.subjectId && (e.classType === ClassType.Practical || e.classType === ClassType.Lab));
+            if (practicesToday.length > 0) {
+                const latestPracticeIndex = Math.max(...practicesToday.map(e => timeSlots.findIndex(ts => ts.id === e.timeSlotId)));
+                if (timeSlotIndex > latestPracticeIndex) {
+                    cost += 300 * penaltyMultiplier;
+                }
+            }
         }
     }
 

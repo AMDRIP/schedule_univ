@@ -101,6 +101,8 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         showTeacherDetailsInLists: false,
         // FIX: Added missing property 'allowManualOverrideOfForbidden' to satisfy the SchedulingSettings type.
         allowManualOverrideOfForbidden: false,
+        // FIX: Added missing property 'enforceStandardRules' to satisfy the SchedulingSettings type.
+        enforceStandardRules: true,
     });
     const [timeSlots, setTimeSlots] = useState<TimeSlot[]>([{ id: generateId('ts'), time: '08:30-10:00' }]);
     const [faculties, setFaculties] = useState<Faculty[]>([{ id: generateId('f'), name: '' }]);

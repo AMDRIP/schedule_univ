@@ -18,6 +18,9 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
     const [endDate, setEndDate] = useState(settings.semesterEnd);
     const [clearExisting, setClearExisting] = useState(true);
     const [iterations, setIterations] = useState(1);
+    const [enforceLectureOrder, setEnforceLectureOrder] = useState(true);
+    const [distributeEvenly, setDistributeEvenly] = useState(true);
+
 
     const targetOptions = {
         group: groups,
@@ -39,6 +42,8 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
             timeFrame: { start: startDate, end: endDate },
             clearExisting,
             iterations,
+            enforceLectureOrder,
+            distributeEvenly,
         };
         if (targetType !== 'all' && targetId) {
             config.target = { type: targetType as 'group' | 'teacher' | 'classroom', id: targetId };
@@ -106,6 +111,14 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
                     <div className="flex items-center">
                         <input type="checkbox" id="clearExisting" checked={clearExisting} onChange={e => setClearExisting(e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
                         <label htmlFor="clearExisting" className="ml-2 block text-sm text-gray-700">Очистить существующее расписание для цели в этих рамках</label>
+                    </div>
+                    <div className="flex items-center">
+                        <input type="checkbox" id="enforceLectureOrder" checked={enforceLectureOrder} onChange={e => setEnforceLectureOrder(e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                        <label htmlFor="enforceLectureOrder" className="ml-2 block text-sm text-gray-700">Соблюдать порядок "Сначала лекция, потом практика"</label>
+                    </div>
+                    <div className="flex items-center">
+                        <input type="checkbox" id="distributeEvenly" checked={distributeEvenly} onChange={e => setDistributeEvenly(e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                        <label htmlFor="distributeEvenly" className="ml-2 block text-sm text-gray-700">Строго распределять занятия по всему семестру</label>
                     </div>
                 </div>
 
