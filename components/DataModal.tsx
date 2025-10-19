@@ -73,7 +73,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, availabilityGrid: {}, pinnedClassroomId: '' };
       case 'streams': return { name: '', groupIds: [] };
       case 'classrooms': return { number: '', capacity: 30, typeId: classroomTypes[0]?.id || '', availabilityGrid: {}, tagIds: [] };
-      case 'subjects': return { name: '', pinnedClassroomId: '', suitableClassroomTypeIds: [], requiredClassroomTagIds: [], color: '' };
+      case 'subjects': return { name: '', pinnedClassroomId: '', classroomTypeRequirements: {}, requiredClassroomTagIds: [], color: '' };
       case 'cabinets': return { number: '', departmentId: departments[0]?.id || '' };
       case 'timeSlots': return { time: '00:00-00:00' };
       case 'timeSlotsShortened': return { time: '00:00-00:00' };
@@ -101,8 +101,8 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     if (['teachers', 'groups', 'classrooms'].includes(dataType) && !(initialData as any).availabilityGrid) {
         (initialData as any).availabilityGrid = {};
     }
-    if (dataType === 'subjects' && !(initialData as any).suitableClassroomTypeIds) {
-        (initialData as any).suitableClassroomTypeIds = [];
+    if (dataType === 'subjects' && !(initialData as any).classroomTypeRequirements) {
+        (initialData as any).classroomTypeRequirements = {};
     }
      if (dataType === 'classrooms' && !(initialData as any).tagIds) {
         (initialData as any).tagIds = [];
@@ -225,6 +225,21 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
 
       setFormData((prev: any) => ({...prev, [name]: values}));
   };
+  
+  const handleClassroomRequirementsChange = (classType: ClassType, e: React.ChangeEvent<HTMLSelectElement>) => {
+    const { options } = e.target;
+    const values = Array.from(options)
+        .filter(option => option.selected)
+        .map(option => option.value);
+
+    setFormData((prev: any) => ({
+        ...prev,
+        classroomTypeRequirements: {
+            ...prev.classroomTypeRequirements,
+            [classType]: values
+        }
+    }));
+  };
 
   const handleTagCheckboxChange = (tagId: string) => {
     setFormData((prev: any) => {
@@ -257,7 +272,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const showAvailabilityGrid = ['teachers', 'groups', 'classrooms'].includes(dataType);
 
   const renderDefaultField = (key: string, isFirst: boolean) => {
-    if (key === 'id' || key === 'availabilityGrid' || key === 'entries' || key === 'teacherAssignments' || key === 'fieldOfScience' || key === 'tagIds' || key === 'requiredClassroomTagIds') return null;
+    if (key === 'id' || key === 'availabilityGrid' || key === 'entries' || key === 'teacherAssignments' || key === 'fieldOfScience' || key === 'tagIds' || key === 'requiredClassroomTagIds' || key === 'classroomTypeRequirements') return null;
     
     const labelMap: Record<string, string> = {
         name: "ФИО / Название", number: "Номер/Название", time: "Время", capacity: "Вместимость", studentCount: "Кол-во студентов", 
@@ -384,9 +399,6 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'groupIds': return (
           <div><label className="block text-sm font-medium text-gray-700">Группы в потоке (Ctrl/Cmd)</label><p className="text-xs text-gray-500 mb-1">Можно выбрать только группы одного курса.</p><select multiple name="groupIds" value={formData.groupIds} onChange={handleMultiSelectChange} className={`${defaultInputClass} h-32`}>{groups.map(g => <option key={g.id} value={g.id} disabled={selectedCourseForStream !== null && g.course !== selectedCourseForStream}>{g.number} ({g.course} курс)</option>)}</select></div>
         );
-         case 'suitableClassroomTypeIds': return (
-          <div><label className="block text-sm font-medium text-gray-700">Подходящие типы аудиторий (Ctrl/Cmd)</label><select multiple name="suitableClassroomTypeIds" value={formData.suitableClassroomTypeIds} onChange={handleMultiSelectChange} className={`${defaultInputClass} h-24`}>{classroomTypes.map(ct => <option key={ct.id} value={ct.id}>{ct.name}</option>)}</select></div>
-        );
         case 'isWorkDay': return (
             <div className="flex items-center pt-5">
                 <input type="checkbox" name="isWorkDay" id="isWorkDay" checked={!!formData.isWorkDay} onChange={handleChange} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
@@ -468,13 +480,13 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const fields = Object.keys(getInitialFormData(dataType));
   const half = Math.ceil(fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes'].includes(f)).length / 2);
 
-  const column1Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds', 'requiredClassroomTagIds'].includes(f)).slice(0, half);
-  const column2Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds', 'requiredClassroomTagIds'].includes(f)).slice(half);
-  const fullWidthFields = fields.filter(f => ['notes', 'description', 'specialtyIds', 'groupIds', 'suitableClassroomTypeIds'].includes(f));
+  const column1Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'classroomTypeRequirements'].includes(f)).slice(0, half);
+  const column2Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'classroomTypeRequirements'].includes(f)).slice(half);
+  const fullWidthFields = fields.filter(f => ['notes', 'description', 'specialtyIds', 'groupIds'].includes(f));
 
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
       <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto animation-fade-in-scale">
         <h2 className="text-xl font-bold mb-4 text-gray-900">{modalTitle}</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -490,6 +502,27 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
              {fullWidthFields.map((key) => <div key={key}>{renderDefaultField(key, false)}</div>)}
           </div>
           
+          {dataType === 'subjects' && (
+            <div className="pt-4 border-t">
+              <h3 className="text-lg font-medium text-gray-800 mb-2">Требования к типам аудиторий</h3>
+              <div className="space-y-3">
+                {[ClassType.Lecture, ClassType.Practical, ClassType.Lab].map(classType => (
+                  <div key={classType}>
+                    <label className="block text-sm font-medium text-gray-700">{classType}</label>
+                    <select
+                      multiple
+                      value={formData.classroomTypeRequirements?.[classType] || []}
+                      onChange={e => handleClassroomRequirementsChange(classType, e)}
+                      className={`${defaultInputClass} h-24`}
+                    >
+                      {classroomTypes.map(ct => <option key={ct.id} value={ct.id}>{ct.name}</option>)}
+                    </select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {dataType === 'subgroups' && (
             <div className="mt-4 pt-4 border-t">
               <h3 className="text-lg font-medium text-gray-800 mb-2">Назначения преподавателей</h3>

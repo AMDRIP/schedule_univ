@@ -64,8 +64,8 @@ const initialClassrooms: Classroom[] = [
     { id: 'c3', number: '303-PC', capacity: 20, typeId: 'ct4', tagIds: ['tag-comp', 'tag-board'] },
 ];
 const initialSubjects: Subject[] = [
-    { id: 'sub1', name: 'Основы программирования', suitableClassroomTypeIds: ['ct2', 'ct4'], requiredClassroomTagIds: ['tag-comp'], color: 'indigo' },
-    { id: 'sub2', name: 'Базы данных', suitableClassroomTypeIds: ['ct1', 'ct3', 'ct4'], color: 'red' },
+    { id: 'sub1', name: 'Основы программирования', classroomTypeRequirements: { [ClassType.Practical]: ['ct2', 'ct4'] }, requiredClassroomTagIds: ['tag-comp'], color: 'indigo' },
+    { id: 'sub2', name: 'Базы данных', classroomTypeRequirements: { [ClassType.Lecture]: ['ct1'], [ClassType.Lab]: ['ct3', 'ct4'] }, color: 'red' },
 ];
 const initialEducationalPlans: EducationalPlan[] = [
     { id: 'plan1', specialtyId: 'spec1', entries: [
@@ -281,9 +281,9 @@ interface StoreState {
   updateSettings: (newSettings: SchedulingSettings) => void;
   updateApiKey: (newKey: string) => Promise<void>;
   updateOpenRouterApiKey: (newKey: string) => Promise<void>;
-  propagateWeekSchedule: (weekTypeToCopy: 'even' | 'odd') => void;
-  saveCurrentScheduleAsTemplate: (name: string, description: string) => void;
-  loadScheduleFromTemplate: (templateId: string) => void;
+  propagateWeekSchedule: (weekTypeToCopy: 'even' | 'odd', currentViewDate: string) => void;
+  saveCurrentScheduleAsTemplate: (name: string, description: string, currentViewDate: string) => void;
+  loadScheduleFromTemplate: (templateId: string, targetViewDate: string, method: 'replace' | 'merge') => void;
   setUnscheduledTimeHorizon: (horizon: 'semester' | 'week' | 'twoWeeks') => void;
   setViewDate: (date: string) => void;
   runScheduler: (method: 'heuristic' | 'gemini' | 'openrouter', config?: HeuristicConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
@@ -762,8 +762,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         alert("Группа или дисциплина для занятия не найдена");
         return;
       }
-      if (!subject.suitableClassroomTypeIds || subject.suitableClassroomTypeIds.length === 0) {
-          alert(`Для дисциплины "${subject.name}" не указаны подходящие типы аудиторий в справочнике.`);
+
+      const requiredClassroomTypes = subject.classroomTypeRequirements?.[item.classType];
+      if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) {
+          alert(`Для дисциплины "${subject.name}" (тип: ${item.classType}) не указаны подходящие типы аудиторий в справочнике.`);
           return;
       }
 
@@ -800,7 +802,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             }
         }
         
-        return subject.suitableClassroomTypeIds?.includes(c.typeId);
+        return requiredClassroomTypes.includes(c.typeId);
       });
 
       if (!suitableClassroom) {
@@ -875,7 +877,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
 
-  const propagateWeekSchedule = (weekTypeToCopy: 'even' | 'odd') => {
+  const propagateWeekSchedule = (weekTypeToCopy: 'even' | 'odd', currentViewDate: string) => {
     if (!settings.semesterStart || !settings.semesterEnd) {
       alert("Даты начала и конца семестра не установлены в настройках.");
       return;
@@ -886,32 +888,53 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       alert("Некорректный формат дат семестра в настройках.");
       return;
     }
-
-    // 1. Get a pool of entries that are not yet fixed to a specific date.
-    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
-    const alreadyDatedUids = new Set(schedule.filter(e => e.date).map(e => e.unscheduledUid).filter(Boolean));
-    const availablePool = allPossibleEntries.filter(e => !alreadyDatedUids.has(e.uid));
-
-    // 2. Find template entries to copy from the specified week type.
-    const templateEntries = schedule.filter(e => 
-      !e.date && 
-      e.unscheduledUid && 
-      (e.weekType === weekTypeToCopy || e.weekType === 'every')
-    );
     
+    // 1. Identify source week entries based on currentViewDate.
+    const sourceWeekDays = getWeekDays(new Date(currentViewDate));
+    const sourceWeekStart = toYYYYMMDD(sourceWeekDays[0]);
+    const sourceWeekEnd = toYYYYMMDD(sourceWeekDays[5]);
+
+    const sourceEntries = schedule.filter(e => e.date && e.date >= sourceWeekStart && e.date <= sourceWeekEnd);
+    
+    if (sourceEntries.length === 0) {
+        alert("На текущей неделе нет занятий для копирования.");
+        return;
+    }
+
+    const sourceTemplate = sourceEntries.map(entry => {
+        const entryDate = new Date(entry.date + 'T00:00:00');
+        const dayIndex = entryDate.getDay() === 0 ? 6 : entryDate.getDay() - 1;
+        return { ...entry, dayIndex };
+    });
+
+    // 2. Get a pool of available unscheduled entries.
+    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+    const scheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
+    const availablePool = allPossibleEntries.filter(e => !scheduledUids.has(e.uid));
+
+    // 3. Remove all existing DATED entries for the target weekType, EXCEPT for the source week itself.
+    const scheduleWithoutOldEntries = schedule.filter(e => {
+        if (!e.date) return true; // Keep non-dated template entries
+        const entryDate = new Date(e.date + 'T00:00:00');
+        if (entryDate >= new Date(sourceWeekStart + 'T00:00:00') && entryDate <= new Date(sourceWeekEnd + 'T23:59:59')) return true; // Keep source week
+        if (entryDate < semesterStartDate || entryDate > semesterEndDate) return true; // Keep entries outside semester
+        
+        return getWeekType(entryDate, semesterStartDate) !== weekTypeToCopy;
+    });
+    
+    // 4. Iterate and create new entries.
     const newDatedEntries: ScheduleEntry[] = [];
     let currentDate = new Date(semesterStartDate);
 
     while (currentDate <= semesterEndDate) {
         const currentWeekType = getWeekType(currentDate, semesterStartDate);
-        
-        // Only process dates that match the week type to be copied
-        if (currentWeekType === weekTypeToCopy) {
-            const dayOfWeek = DAYS_OF_WEEK[currentDate.getDay() === 0 ? 6 : currentDate.getDay() - 1];
-            const entriesForThisDay = templateEntries.filter(e => e.day === dayOfWeek);
+        const currentDateStr = toYYYYMMDD(currentDate);
 
-            for (const templateEntry of entriesForThisDay) {
-                // 3. Find a matching available entry from our pool to "consume".
+        if (currentWeekType === weekTypeToCopy && (currentDateStr < sourceWeekStart || currentDateStr > sourceWeekEnd)) {
+            const dayIndex = currentDate.getDay() === 0 ? 6 : currentDate.getDay() - 1;
+            const templatesForThisDay = sourceTemplate.filter(t => t.dayIndex === dayIndex);
+
+            for (const templateEntry of templatesForThisDay) {
                 const matchingUnscheduledIndex = availablePool.findIndex(unsched =>
                     unsched.subjectId === templateEntry.subjectId &&
                     (unsched.groupId === templateEntry.groupId || (unsched.groupIds || []).join(',') === (templateEntry.groupIds || []).join(',')) &&
@@ -921,56 +944,111 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 );
 
                 if (matchingUnscheduledIndex > -1) {
-                    // 4. "Consume" the entry so it can't be used again in this operation.
                     const consumedEntry = availablePool.splice(matchingUnscheduledIndex, 1)[0];
-
-                    // 5. Create the new dated entry.
                     newDatedEntries.push({
                         ...templateEntry,
                         id: `prop-${consumedEntry.uid}-${toYYYYMMDD(currentDate)}`,
                         date: toYYYYMMDD(currentDate),
-                        unscheduledUid: consumedEntry.uid, // Assign the newly consumed UID
-                        weekType: 'every' // Dated entries are effectively 'every' for their specific day
+                        day: DAYS_OF_WEEK[dayIndex],
+                        unscheduledUid: consumedEntry.uid,
+                        weekType: 'every'
                     });
                 } else {
-                    // This can happen if the template week contains more classes than are available in the plan.
-                    console.warn(`Could not find an available unscheduled entry to propagate for template:`, templateEntry);
+                     console.warn(`Could not find an available unscheduled entry to propagate for template:`, templateEntry);
                 }
             }
         }
         currentDate.setDate(currentDate.getDate() + 1);
     }
-
-    // 6. Remove all previous dated entries that fall within the semester for the copied week type.
-    const scheduleWithoutOldEntries = schedule.filter(e => {
-        if (!e.date) return true; // Keep all non-dated (template) entries
-        const entryDate = new Date(e.date + 'T00:00:00');
-        if (entryDate < semesterStartDate || entryDate > semesterEndDate) return true; // Keep entries outside the semester
-        // Remove the entry if its week type matches the one we are replacing
-        return getWeekType(entryDate, semesterStartDate) !== weekTypeToCopy;
-    });
-
-    // 7. Combine the cleaned schedule with the newly generated dated entries.
+    
     setSchedule([...scheduleWithoutOldEntries, ...newDatedEntries]);
     alert(`${newDatedEntries.length} занятий было скопировано на все ${weekTypeToCopy === 'even' ? 'чётные' : 'нечётные'} недели семестра.`);
   };
 
-  const saveCurrentScheduleAsTemplate = (name: string, description: string) => {
+  const saveCurrentScheduleAsTemplate = (name: string, description: string, currentViewDate: string) => {
+    const sourceWeekDays = getWeekDays(new Date(currentViewDate));
+    const sourceWeekStart = toYYYYMMDD(sourceWeekDays[0]);
+    const sourceWeekEnd = toYYYYMMDD(sourceWeekDays[5]);
+
+    const sourceEntries = schedule.filter(e => e.date && e.date >= sourceWeekStart && e.date <= sourceWeekEnd);
+    
+    if (sourceEntries.length === 0) {
+        alert("На текущей неделе нет занятий для сохранения в шаблон.");
+        return;
+    }
+    
+    const templateEntries = sourceEntries.map(({ id, date, unscheduledUid, ...rest }) => rest);
+
     const newTemplate: Omit<ScheduleTemplate, 'id'> = {
         name,
         description,
-        entries: JSON.parse(JSON.stringify(schedule))
+        entries: JSON.parse(JSON.stringify(templateEntries))
     };
     addItem('scheduleTemplates', newTemplate);
+    alert(`Шаблон "${name}" успешно сохранен!`);
   };
 
-  const loadScheduleFromTemplate = (templateId: string) => {
+  const loadScheduleFromTemplate = (templateId: string, targetViewDate: string, method: 'replace' | 'merge') => {
     const template = scheduleTemplates.find(t => t.id === templateId);
-    if (template) {
-        setSchedule(JSON.parse(JSON.stringify(template.entries)));
-    } else {
+    if (!template) {
         alert("Шаблон не найден!");
+        return;
     }
+    
+    const targetWeekDays = getWeekDays(new Date(targetViewDate));
+    const targetWeekStart = toYYYYMMDD(targetWeekDays[0]);
+    const targetWeekEnd = toYYYYMMDD(targetWeekDays[5]);
+
+    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+    const currentlyScheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
+    const availablePool = allPossibleEntries.filter(e => !currentlyScheduledUids.has(e.uid));
+
+    let baseSchedule = [...schedule];
+    if (method === 'replace') {
+        baseSchedule = schedule.filter(e => !e.date || e.date < targetWeekStart || e.date > targetWeekEnd);
+    }
+    
+    const newDatedEntries: ScheduleEntry[] = [];
+    let placedCount = 0;
+
+    for (const templateEntry of template.entries) {
+        const dayIndex = DAYS_OF_WEEK.indexOf(templateEntry.day);
+        if (dayIndex === -1) continue;
+
+        const targetDate = targetWeekDays[dayIndex];
+        const targetDateStr = toYYYYMMDD(targetDate);
+        
+        if (method === 'merge') {
+            const isOccupied = baseSchedule.some(e => e.date === targetDateStr && e.timeSlotId === templateEntry.timeSlotId);
+            if (isOccupied) continue;
+        }
+
+        const matchingUnscheduledIndex = availablePool.findIndex(unsched =>
+            unsched.subjectId === templateEntry.subjectId &&
+            (unsched.groupId === templateEntry.groupId || (unsched.groupIds || []).join(',') === (templateEntry.groupIds || []).join(',')) &&
+            (unsched.subgroupId || null) === (templateEntry.subgroupId || null) &&
+            unsched.classType === templateEntry.classType &&
+            unsched.teacherId === templateEntry.teacherId
+        );
+
+        if (matchingUnscheduledIndex > -1) {
+            const consumedEntry = availablePool.splice(matchingUnscheduledIndex, 1)[0];
+            
+            newDatedEntries.push({
+                ...templateEntry,
+                id: `tpl-${consumedEntry.uid}-${targetDateStr}`,
+                date: targetDateStr,
+                unscheduledUid: consumedEntry.uid,
+                weekType: 'every'
+            });
+            placedCount++;
+        } else {
+            console.warn(`Could not find an available unscheduled entry for template item:`, templateEntry);
+        }
+    }
+
+    setSchedule([...baseSchedule, ...newDatedEntries]);
+    alert(`Шаблон "${template.name}" применен. Размещено ${placedCount} занятий.`);
   };
   
   const clearAllData = () => {

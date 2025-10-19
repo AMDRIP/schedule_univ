@@ -55,10 +55,11 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   }, [getInvolvedGroups, subgroup]);
 
   const availableClassrooms = useMemo(() => {
-    if (!subject?.suitableClassroomTypeIds || studentCount === 0) return [];
+    const requiredTypes = subject?.classroomTypeRequirements?.[entry.classType];
+    if (!requiredTypes || requiredTypes.length === 0 || studentCount === 0) return [];
     
     const suitableByTypeAndCapacity = classrooms.filter(c => 
-        subject.suitableClassroomTypeIds?.includes(c.typeId) && c.capacity >= studentCount
+        requiredTypes.includes(c.typeId) && c.capacity >= studentCount
     );
 
     const occupiedClassroomIds = new Set(
@@ -203,7 +204,7 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   const groupName = getGroupName();
 
   return (
-    <div ref={isEditable ? drag as any : null} className={`p-1.5 rounded-md text-xs cursor-grab relative group transition-all duration-200 hover:shadow-md hover:-translate-y-0.5 ${colorClass} ${borderClass} ${warningClass} ${conflictClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
+    <div ref={isEditable ? drag as any : null} className={`shadow-sm p-1.5 rounded-lg text-xs cursor-grab relative group transition-all duration-200 hover:shadow-lg hover:-translate-y-1 ${colorClass} ${borderClass} ${warningClass} ${conflictClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
       <div>
         <p className="font-bold truncate">{subject.name}</p>
         <p>{entry.classType}</p>

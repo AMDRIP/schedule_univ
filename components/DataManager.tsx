@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../hooks/useStore';
-import { DataItem, DataType, TeacherSubjectLink, AcademicDegree, AcademicTitle, Teacher } from '../types';
+import { DataItem, DataType, TeacherSubjectLink, AcademicDegree, AcademicTitle, Teacher, ClassType } from '../types';
 import DataModal from './DataModal';
 import LinkModal from './LinkModal';
 import { EditIcon, TrashIcon, PlusIcon, DocumentSearchIcon, CopyIcon, LinkIcon } from './icons';
@@ -34,7 +34,7 @@ const COLUMN_HEADERS: Record<string, string> = {
   ugsId: 'УГСН',
   oksoCode: 'Код ОКСО',
   pinnedClassroomId: 'Закреп. ауд.',
-  suitableClassroomTypeIds: 'Подходящие типы аудиторий',
+  classroomTypeRequirements: 'Требования к аудиториям',
   requiredClassroomTagIds: 'Обязательные теги',
   description: 'Описание',
   photoUrl: 'Фото',
@@ -159,7 +159,7 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
       return ['id', 'photoUrl', 'name', 'academicDegree', 'academicTitle', 'departmentId', 'hireDate', 'experience'];
     }
     if (dataType === 'subjects') {
-        return ['id', 'name', 'linkedTeachers', 'suitableClassroomTypeIds', 'requiredClassroomTagIds'];
+        return ['id', 'name', 'linkedTeachers', 'classroomTypeRequirements', 'requiredClassroomTagIds'];
     }
     if (dataType === 'classrooms') {
         return ['id', 'number', 'capacity', 'typeId', 'tagIds'];
@@ -242,6 +242,17 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
 
 
     const value = item[column as keyof DataItem];
+
+    if (column === 'classroomTypeRequirements' && dataType === 'subjects') {
+        if (!value || typeof value !== 'object') return '—';
+        const requirements = value as { [key in ClassType]?: string[] };
+        const parts = Object.entries(requirements).map(([classType, typeIds]) => {
+            if (!typeIds || typeIds.length === 0) return null;
+            const typeNames = typeIds.map(id => store.classroomTypes.find(ct => ct.id === id)?.name).filter(Boolean).join(', ');
+            return `${classType}: ${typeNames}`;
+        }).filter(Boolean);
+        return parts.length > 0 ? <div className="text-xs space-y-0.5">{parts.map(p => <div key={p}>{p}</div>)}</div> : '—';
+    }
     
     if (column === 'photoUrl' && dataType === 'teachers') {
          return value ? <img src={value as string} alt="фото" className="w-10 h-10 rounded-full object-cover mx-auto"/> : <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-xs text-gray-500 mx-auto">Нет фото</div>;
@@ -293,13 +304,11 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
             return store.groups.find(g => g.id === value)?.number || 'N/A';
           }
           return String(value ?? '');
-      case 'suitableClassroomTypeIds':
       case 'specialtyIds':
       case 'groupIds':
         if (Array.isArray(value)) {
           let nameMap;
-          if (column === 'suitableClassroomTypeIds') nameMap = store.classroomTypes;
-          else if (column === 'specialtyIds') nameMap = store.specialties;
+          if (column === 'specialtyIds') nameMap = store.specialties;
           else nameMap = store.groups;
           
           return (value as any[]).map(id => (nameMap.find(g => g.id === id) as any)?.name || (nameMap.find(g => g.id === id) as any)?.number).filter(Boolean).join(', ');
@@ -332,15 +341,15 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
           <thead>
             <tr className="bg-gray-100 border-b-2 border-gray-200">
               {columns.map(col => (
-                <th key={col} className="p-3 text-sm font-semibold uppercase text-gray-600 border-b border-gray-300 text-left">{COLUMN_HEADERS[col] || col}</th>
+                <th key={col} className="p-3 text-sm font-semibold tracking-wider uppercase text-gray-600 border-b border-gray-300 text-left">{COLUMN_HEADERS[col] || col}</th>
               ))}
-              <th className="p-3 text-sm font-semibold uppercase text-gray-600 border-b border-gray-300 text-left">Действия</th>
+              <th className="p-3 text-sm font-semibold tracking-wider uppercase text-gray-600 border-b border-gray-300 text-left">Действия</th>
             </tr>
           </thead>
           <tbody>
             {data.length > 0 ? (
               data.map((item, index) => (
-                <tr key={item.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-blue-50 transition-colors`}>
+                <tr key={item.id} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-blue-50 transition-colors duration-150`}>
                   {columns.map(col => (
                     <td key={col} className="p-3 text-gray-800 border-b border-gray-200">{renderCell(item, col)}</td>
                   ))}

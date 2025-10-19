@@ -287,10 +287,16 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         
         const subject = subjects.find(s => s.id === entryToPlace.subjectId);
         if (!subject) { unschedulable.push(entryToPlace); continue; }
+        
+        const requiredClassroomTypes = subject?.classroomTypeRequirements?.[entryToPlace.classType];
+        if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) {
+            unschedulable.push(entryToPlace);
+            continue;
+        }
 
         const suitableClassrooms = classrooms.filter(c => {
             if (c.capacity < entryToPlace.studentCount) return false;
-            if (!subject.suitableClassroomTypeIds?.includes(c.typeId)) return false;
+            if (!requiredClassroomTypes.includes(c.typeId)) return false;
 
             const requiredTags = subject.requiredClassroomTagIds || [];
             if (requiredTags.length > 0) {
@@ -363,6 +369,14 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             unschedulable.push(entryToPlace);
         }
     }
+
+    // --- 4. REFINEMENT PHASE ---
+    if (newSchedule.length > 0) {
+        console.log(`Initial placement finished. ${newSchedule.length} entries placed. Starting refinement.`);
+        const refinedSchedule = await refineSchedule(newSchedule, data, config, resourceBookings);
+        return { schedule: refinedSchedule, unschedulable };
+    }
+
 
     return { schedule: newSchedule, unschedulable };
 };
@@ -655,3 +669,160 @@ const calculateSlotCost = (
 
     return cost;
 };
+
+
+async function refineSchedule(
+    initialSchedule: ScheduleEntry[],
+    data: GenerationData,
+    config: HeuristicConfig,
+    initialBookings: Map<string, Set<string>>
+): Promise<ScheduleEntry[]> {
+    console.log("Starting schedule refinement phase...");
+    let refinedSchedule = [...initialSchedule];
+    const resourceBookings = new Map(Array.from(initialBookings.entries()).map(([key, value]) => [key, new Set(value)]));
+    
+    const REFINEMENT_PASSES = 3;
+    const REFINEMENT_CANDIDATE_PERCENTAGE = 0.3; // Check the worst 30% of entries
+
+    const workDays: Date[] = [];
+    let currentDateIterator = new Date(config.timeFrame.start + 'T00:00:00');
+    const lastDate = new Date(config.timeFrame.end + 'T00:00:00');
+    while(currentDateIterator <= lastDate) {
+        const dateStr = toYYYYMMDD(currentDateIterator);
+        const dayInfo = data.productionCalendar.find(e => e.date === dateStr);
+        if (!data.settings.respectProductionCalendar || !dayInfo || dayInfo.isWorkDay) {
+            if (currentDateIterator.getDay() !== 0) { // Exclude Sundays
+                 workDays.push(new Date(currentDateIterator));
+            }
+        }
+        currentDateIterator.setDate(currentDateIterator.getDate() + 1);
+    }
+
+    for (let pass = 0; pass < REFINEMENT_PASSES; pass++) {
+        const entriesWithCosts = refinedSchedule.map(entry => {
+            const involvedGroups = data.groups.filter(g => (entry.groupIds || (entry.groupId ? [entry.groupId] : [])).includes(g.id));
+            const subGroup = data.subgroups.find(sg => sg.id === entry.subgroupId);
+            const studentCount = subGroup ? subGroup.studentCount : involvedGroups.reduce((sum, g) => sum + g.studentCount, 0);
+
+            // FIX: Explicitly create an UnscheduledEntry from the ScheduleEntry to match the function signature.
+            // This resolves the type error.
+            const cost = calculateSlotCost(
+                // FIX: Convert ScheduleEntry to UnscheduledEntry-like object for cost calculation.
+                // Added 'uid' and cast through 'unknown' to satisfy the type.
+                { ...entry, studentCount, uid: entry.unscheduledUid! } as unknown as UnscheduledEntry,
+                new Date(entry.date + 'T00:00:00'),
+                entry.timeSlotId,
+                data.classrooms.find(c => c.id === entry.classroomId)!,
+                involvedGroups,
+                resourceBookings,
+                data,
+                config.strictness / 5.0,
+                refinedSchedule.filter(e => e.id !== entry.id), // Pass schedule without the current entry
+                config
+            );
+            return { entry, cost };
+        }).filter(item => item.cost > 0);
+
+        if (entriesWithCosts.length === 0) {
+            console.log("No entries with positive cost. Refinement finished early.");
+            break;
+        }
+
+        entriesWithCosts.sort((a, b) => b.cost - a.cost);
+        const candidatesToRefine = entriesWithCosts.slice(0, Math.ceil(entriesWithCosts.length * REFINEMENT_CANDIDATE_PERCENTAGE));
+
+        let improvementsThisPass = 0;
+
+        for (const { entry: entryToMove, cost: currentCost } of candidatesToRefine) {
+            const currentEntryInSchedule = refinedSchedule.find(e => e.id === entryToMove.id);
+            if (!currentEntryInSchedule) continue;
+
+            const originalBookingKey = `${currentEntryInSchedule.date}-${currentEntryInSchedule.timeSlotId}`;
+            resourceBookings.get(`teacher-${currentEntryInSchedule.teacherId}`)?.delete(originalBookingKey);
+            resourceBookings.get(`classroom-${currentEntryInSchedule.classroomId}`)?.delete(originalBookingKey);
+            (currentEntryInSchedule.groupIds || [currentEntryInSchedule.groupId]).forEach(gid => {
+                if (gid) resourceBookings.get(`group-${gid}`)?.delete(originalBookingKey);
+            });
+
+            let bestAlternativeSlot: { date: Date, timeSlotId: string, classroom: Classroom, cost: number } | null = null;
+            
+            const involvedGroups = data.groups.filter(g => (entryToMove.groupIds || (entryToMove.groupId ? [entryToMove.groupId] : [])).includes(g.id));
+            const subGroup = data.subgroups.find(sg => sg.id === entryToMove.subgroupId);
+            const studentCount = subGroup ? subGroup.studentCount : involvedGroups.reduce((sum, g) => sum + g.studentCount, 0);
+            
+            // FIX: Explicitly create an UnscheduledEntry from the ScheduleEntry to match function signatures.
+            // This resolves the type error.
+            const unscheduledVersion = { ...entryToMove, studentCount, uid: entryToMove.unscheduledUid! } as unknown as UnscheduledEntry;
+
+            const subject = data.subjects.find(s => s.id === unscheduledVersion.subjectId);
+            if (!subject) continue;
+            const requiredClassroomTypes = subject?.classroomTypeRequirements?.[unscheduledVersion.classType] || [];
+            
+            const suitableClassrooms = data.classrooms.filter(c => {
+                 if (c.capacity < unscheduledVersion.studentCount) return false;
+                 if (!requiredClassroomTypes.includes(c.typeId)) return false;
+                 const requiredTags = subject.requiredClassroomTagIds || [];
+                 if (requiredTags.length > 0) {
+                     const classroomTags = c.tagIds || [];
+                     if (!requiredTags.every(tagId => classroomTags.includes(tagId))) return false;
+                 }
+                 return true;
+            });
+            
+            for (const date of workDays) {
+                for (const timeSlot of data.timeSlots) {
+                    const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
+                    if (resourceBookings.get(`teacher-${unscheduledVersion.teacherId}`)?.has(bookingKey)) continue;
+                    if (involvedGroups.some(g => resourceBookings.get(`group-${g.id}`)?.has(bookingKey))) continue;
+                    
+                    for (const classroom of suitableClassrooms) {
+                        if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
+
+                        const cost = calculateSlotCost(unscheduledVersion, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, config.strictness / 5.0, refinedSchedule.filter(e => e.id !== entryToMove.id), config);
+
+                        if (cost < (bestAlternativeSlot?.cost ?? Infinity)) {
+                            bestAlternativeSlot = { date, timeSlotId: timeSlot.id, classroom, cost };
+                        }
+                    }
+                }
+            }
+
+            if (bestAlternativeSlot && bestAlternativeSlot.cost < currentCost) {
+                improvementsThisPass++;
+                const entryIndex = refinedSchedule.findIndex(e => e.id === entryToMove.id);
+                if (entryIndex > -1) {
+                    const newEntryData = bestAlternativeSlot;
+                    refinedSchedule[entryIndex] = {
+                        ...refinedSchedule[entryIndex],
+                        date: toYYYYMMDD(newEntryData.date),
+                        day: DAYS_OF_WEEK[newEntryData.date.getDay() === 0 ? 6 : newEntryData.date.getDay() - 1],
+                        timeSlotId: newEntryData.timeSlotId,
+                        classroomId: newEntryData.classroom.id,
+                    };
+
+                    const newBookingKey = `${toYYYYMMDD(newEntryData.date)}-${newEntryData.timeSlotId}`;
+                    resourceBookings.get(`teacher-${entryToMove.teacherId}`)?.add(newBookingKey);
+                    resourceBookings.get(`classroom-${newEntryData.classroom.id}`)?.add(newBookingKey);
+                    (entryToMove.groupIds || [entryToMove.groupId]).forEach(gid => {
+                        if (gid) resourceBookings.get(`group-${gid}`)?.add(newBookingKey);
+                    });
+                }
+            } else {
+                resourceBookings.get(`teacher-${currentEntryInSchedule.teacherId}`)?.add(originalBookingKey);
+                resourceBookings.get(`classroom-${currentEntryInSchedule.classroomId}`)?.add(originalBookingKey);
+                (currentEntryInSchedule.groupIds || [currentEntryInSchedule.groupId]).forEach(gid => {
+                    if (gid) resourceBookings.get(`group-${gid}`)?.add(originalBookingKey);
+                });
+            }
+        }
+        
+        console.log(`Refinement Pass ${pass + 1} made ${improvementsThisPass} improvements.`);
+        if (improvementsThisPass === 0) {
+            console.log("No further improvements found. Stopping refinement.");
+            break;
+        }
+    }
+
+    console.log("Refinement phase finished.");
+    return refinedSchedule;
+}

@@ -51,7 +51,7 @@ const UnscheduledDeck: React.FC = () => {
   return (
     // FIX: Cast the react-dnd connector to 'any' to resolve type conflicts,
     // which is a consistent pattern in this codebase due to likely library version mismatches.
-    <div ref={drop as any} className={`p-6 rounded-lg shadow-lg transition-all border-2 ${dropzoneClasses}`}>
+    <div ref={drop as any} className={`p-6 rounded-xl shadow-lg transition-all border-2 ${dropzoneClasses}`}>
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-xl font-bold text-gray-800">Нераспределенные занятия ({filteredEntries.length})</h3>
         {canDrop && (

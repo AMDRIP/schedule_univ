@@ -276,7 +276,7 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
     );
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-40">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center z-40">
             <div className="bg-gray-50 p-6 rounded-lg shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col animation-fade-in-scale">
                 <h2 className="text-2xl font-bold text-gray-900">Мастер создания нового проекта</h2>
                 

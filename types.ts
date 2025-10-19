@@ -155,7 +155,9 @@ export interface Subject extends BaseItem {
   name: string;
   availabilityGrid?: AvailabilityGrid;
   pinnedClassroomId?: string;
-  suitableClassroomTypeIds?: string[];
+  classroomTypeRequirements?: {
+    [key in ClassType]?: string[];
+  };
   requiredClassroomTagIds?: string[];
   color?: string;
 }

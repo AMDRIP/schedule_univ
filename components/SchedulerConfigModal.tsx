@@ -56,7 +56,7 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
 
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center z-50">
             <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg animation-fade-in-scale">
                 <div className="flex items-center mb-4">
                     <CogIcon className="h-6 w-6 text-blue-600 mr-3" />

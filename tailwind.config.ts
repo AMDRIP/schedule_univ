@@ -11,6 +11,9 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Inter', 'sans-serif'],
+      },
       keyframes: {
         'fade-in-scale': {
           '0%': { opacity: '0', transform: 'scale(0.95)' },

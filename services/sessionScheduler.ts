@@ -54,7 +54,7 @@ const generateSessionEventPool = (data: SessionGenerationData, config: SessionSc
             if (planEntry.semester !== currentSemester) return;
             
             const isExam = planEntry.attestation === AttestationType.Exam;
-            const isTest = planEntry.attestation === AttestationType.Test;
+            const isTest = planEntry.attestation === AttestationType.Test || planEntry.attestation === AttestationType.DifferentiatedTest;
 
             if (!isExam && !(isTest && config.scheduleTests !== 'none')) return;
 
@@ -68,10 +68,17 @@ const generateSessionEventPool = (data: SessionGenerationData, config: SessionSc
             
             let teacherId: string | undefined;
             if (isExam) {
+                // Priority: Lecturer -> Anyone linked to Exam -> Any teacher for subject
                 teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
+                if (!teacherId) {
+                     teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Exam))?.teacherId;
+                }
             } else { // isTest
-                teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Test))?.teacherId;
+                // Priority: Anyone linked to Test -> Anyone linked to Practical -> Any teacher for subject
+                teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && (l.classTypes.includes(ClassType.Test) || l.classTypes.includes(ClassType.Practical)))?.teacherId;
             }
+    
+            // General fallback for both
             if (!teacherId) {
                  teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId)?.teacherId;
             }
@@ -143,11 +150,15 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
     existingSchedule.forEach(entry => {
         if (!entry.date) return;
         const bookingKey = `${entry.date}-${entry.timeSlotId}`;
-        const bookingSet = resourceBookings.get(bookingKey) || new Set();
+        
+        if (!resourceBookings.has(bookingKey)) {
+            resourceBookings.set(bookingKey, new Set());
+        }
+        const bookingSet = resourceBookings.get(bookingKey)!;
+
         bookingSet.add(`classroom-${entry.classroomId}`);
         bookingSet.add(`teacher-${entry.teacherId}`);
         (entry.groupIds || [entry.groupId]).forEach(gid => gid && bookingSet.add(`group-${gid}`));
-        resourceBookings.set(bookingKey, bookingSet);
     });
 
     const workDays: Date[] = [];
@@ -174,37 +185,50 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
     for (const event of attestationsToPlace) {
         let bestSlot: { date: Date, timeSlotId: string, classroom: Classroom } | null = null;
         
-        for (const date of workDays) {
-            for (const timeSlot of timeSlots) {
-                if (!isSlotFreeForAttestation(date, timeSlot.id, event, resourceBookings, placements, config, data)) continue;
-                
-                const subject = subjects.find(s => s.id === event.subjectId);
-                const suitableClassrooms = classrooms
-                    .filter(c => {
-                        if (c.capacity < event.studentCount) return false;
-                        if (event.type === 'exam') {
-                           return data.classroomTypes.find(ct => ct.id === c.typeId)?.name === 'Лекционная';
-                        }
-                        if (subject?.suitableClassroomTypeIds && subject.suitableClassroomTypeIds.length > 0) {
-                            return subject.suitableClassroomTypeIds.includes(c.typeId);
-                        }
-                        // Fallback for tests: any non-lecture room
-                        const classroomType = data.classroomTypes.find(ct => ct.id === c.typeId);
-                        return classroomType?.name !== 'Лекционная';
-                    })
-                    .sort((a,b) => a.capacity - b.capacity);
+        const subject = subjects.find(s => s.id === event.subjectId);
 
+        const findSlotInClassrooms = (roomList: Classroom[]) => {
+            for (const date of workDays) {
+                for (const timeSlot of timeSlots) {
+                    if (!isSlotFreeForAttestation(date, timeSlot.id, event, resourceBookings, placements, config, data)) continue;
 
-                for (const classroom of suitableClassrooms) {
-                    const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
-                    if (resourceBookings.get(bookingKey)?.has(`classroom-${classroom.id}`)) continue;
-                    
-                    bestSlot = { date, timeSlotId: timeSlot.id, classroom };
-                    break;
+                    for (const classroom of roomList) {
+                        const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
+                        if (resourceBookings.get(bookingKey)?.has(`classroom-${classroom.id}`)) continue;
+                        
+                        return { date, timeSlotId: timeSlot.id, classroom };
+                    }
                 }
-                if (bestSlot) break;
             }
-            if (bestSlot) break;
+            return null;
+        };
+        
+        // Pass 1: Ideal classrooms
+        const idealClassrooms = classrooms.filter(c => {
+            if (c.capacity < event.studentCount) return false;
+            
+            const classType = event.type === 'exam' ? ClassType.Exam : ClassType.Test;
+            const requiredTypes = subject?.classroomTypeRequirements?.[classType];
+
+            if (requiredTypes && requiredTypes.length > 0) {
+                return requiredTypes.includes(c.typeId);
+            }
+            
+            // Fallback logic
+            if (event.type === 'exam') {
+                return data.classroomTypes.find(ct => ct.id === c.typeId)?.name === 'Лекционная';
+            }
+            const classroomType = data.classroomTypes.find(ct => ct.id === c.typeId);
+            return classroomType?.name !== 'Лекционная';
+        }).sort((a,b) => a.capacity - b.capacity);
+
+        bestSlot = findSlotInClassrooms(idealClassrooms);
+
+        // Pass 2: Fallback for exams if ideal failed
+        if (!bestSlot && event.type === 'exam') {
+            const fallbackClassrooms = classrooms.filter(c => c.capacity >= event.studentCount)
+                .sort((a, b) => a.capacity - b.capacity);
+            bestSlot = findSlotInClassrooms(fallbackClassrooms);
         }
 
         if (bestSlot) {
@@ -235,9 +259,13 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
              if(consult.groupIds.some(gid => resourceBookings.get(bookingKey)?.has(`group-${gid}`))) continue;
              
              const subject = subjects.find(s => s.id === consult.subjectId);
+             const requiredTypes = subject?.classroomTypeRequirements?.[ClassType.Consultation];
+
              const suitableClassroom = classrooms.find(c => {
                  if (c.capacity < consult.studentCount) return false;
-                 if (subject?.suitableClassroomTypeIds && !subject.suitableClassroomTypeIds.includes(c.typeId)) return false;
+                 if (requiredTypes && requiredTypes.length > 0) {
+                    if (!requiredTypes.includes(c.typeId)) return false;
+                 }
                  if (resourceBookings.get(bookingKey)?.has(`classroom-${c.id}`)) return false;
                  return true;
              });
@@ -268,9 +296,10 @@ const isSlotFreeForAttestation = (
 ): boolean => {
     const dateStr = toYYYYMMDD(date);
     const bookingKey = `${dateStr}-${timeSlotId}`;
+    const dayBookingSet = bookings.get(bookingKey);
 
-    if(bookings.get(bookingKey)?.has(`teacher-${event.teacherId}`)) return false;
-    if(event.groupIds.some(gid => bookings.get(bookingKey)?.has(`group-${gid}`))) return false;
+    if(dayBookingSet?.has(`teacher-${event.teacherId}`)) return false;
+    if(event.groupIds.some(gid => dayBookingSet?.has(`group-${gid}`))) return false;
 
     for(const gid of event.groupIds) {
         for(const placement of placements.values()) {

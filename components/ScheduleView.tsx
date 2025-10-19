@@ -9,6 +9,7 @@ import { PlusIcon, ChevronDownIcon, BookmarkIcon, DocumentDownloadIcon, TrashIco
 import DatePicker from './DatePicker';
 import { exportScheduleAsPdf } from '../services/pdfExporter';
 import { exportScheduleAsTxt } from '../services/textExporter';
+import TemplateConfirmModal from './TemplateConfirmModal';
 
 // Save Template Modal
 const SaveTemplateModal: React.FC<{onSave: (name: string, description: string) => void; onClose: () => void;}> = ({ onSave, onClose }) => {
@@ -47,7 +48,7 @@ const LoadTemplateModal: React.FC<{templates: ScheduleTemplate[]; onLoad: (id: s
     const [selectedId, setSelectedId] = useState<string>(templates[0]?.id || '');
 
     const handleLoad = () => {
-        if (selectedId && window.confirm("Текущее расписание будет полностью заменено. Продолжить?")) {
+        if (selectedId) {
             onLoad(selectedId);
             onClose();
         }
@@ -187,6 +188,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
   const [isSaveTemplateModalOpen, setIsSaveTemplateModalOpen] = useState(false);
   const [isLoadTemplateModalOpen, setIsLoadTemplateModalOpen] = useState(false);
+  const [templateConfirm, setTemplateConfirm] = useState<{ templateId: string } | null>(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isTemplateDropdownOpen, setTemplateDropdownOpen] = useState(false);
   const [isClearDropdownOpen, setClearDropdownOpen] = useState(false);
@@ -309,7 +311,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   const handleCopyWeek = (type: 'even' | 'odd') => {
     const typeName = type === 'even' ? 'чётную' : 'нечётную';
     if(window.confirm(`Вы уверены, что хотите скопировать расписание этой ${typeName} недели на весь семестр? Все существующие ДАТИРОВАННЫЕ занятия для ${typeName} недель будут заменены.`)) {
-      propagateWeekSchedule(type);
+      propagateWeekSchedule(type, viewDate);
     }
   };
 
@@ -420,6 +422,32 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
       alert("Не удалось сгенерировать TXT файл. Проверьте консоль для подробностей.");
     }
   };
+  
+    const handleSaveTemplate = (name: string, description: string) => {
+        saveCurrentScheduleAsTemplate(name, description, viewDate);
+    };
+
+    const handleLoadTemplate = (templateId: string) => {
+        setIsLoadTemplateModalOpen(false); // Close the selection modal
+        
+        const targetWeekDays = getWeekDays(new Date(viewDate));
+        const targetWeekStart = toYYYYMMDD(targetWeekDays[0]);
+        const targetWeekEnd = toYYYYMMDD(targetWeekDays[5]);
+        const hasExistingEntries = schedule.some(e => e.date && e.date >= targetWeekStart && e.date <= targetWeekEnd);
+
+        if (hasExistingEntries) {
+            setTemplateConfirm({ templateId });
+        } else {
+            loadScheduleFromTemplate(templateId, viewDate, 'replace');
+        }
+    };
+
+    const handleTemplateConfirm = (method: 'replace' | 'merge') => {
+        if (templateConfirm) {
+            loadScheduleFromTemplate(templateConfirm.templateId, viewDate, method);
+        }
+        setTemplateConfirm(null);
+    };
 
   const displayTimeSlots = useMemo(() => {
     // Check if there's any pre-holiday day in the current week.
@@ -530,8 +558,8 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                 </button>
                  {isTemplateDropdownOpen && (
                   <div className="absolute top-full mt-2 w-60 bg-white rounded-lg shadow-xl z-20 border">
-                    <a href="#" onClick={(e) => { e.preventDefault(); setIsSaveTemplateModalOpen(true); setTemplateDropdownOpen(false);}} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Сохранить текущее как шаблон...</a>
-                    <a href="#" onClick={(e) => { e.preventDefault(); setIsLoadTemplateModalOpen(true); setTemplateDropdownOpen(false);}} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Загрузить шаблон...</a>
+                    <a href="#" onClick={(e) => { e.preventDefault(); setIsSaveTemplateModalOpen(true); setTemplateDropdownOpen(false);}} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Сохранить текущую неделю как шаблон...</a>
+                    <a href="#" onClick={(e) => { e.preventDefault(); setIsLoadTemplateModalOpen(true); setTemplateDropdownOpen(false);}} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Загрузить шаблон на эту неделю...</a>
                   </div>
                 )}
             </div>
@@ -656,8 +684,9 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
       </div>
       {isMethodist && <UnscheduledDeck />}
       <SessionEntryModal isOpen={isSessionModalOpen} onClose={() => setIsSessionModalOpen(false)} selectedFilter={{ type: filterType, id: selectedId }} />
-      {isSaveTemplateModalOpen && <SaveTemplateModal onClose={() => setIsSaveTemplateModalOpen(false)} onSave={saveCurrentScheduleAsTemplate} />}
-      {isLoadTemplateModalOpen && <LoadTemplateModal templates={scheduleTemplates} onClose={() => setIsLoadTemplateModalOpen(false)} onLoad={loadScheduleFromTemplate} />}
+      {isSaveTemplateModalOpen && <SaveTemplateModal onClose={() => setIsSaveTemplateModalOpen(false)} onSave={handleSaveTemplate} />}
+      {isLoadTemplateModalOpen && <LoadTemplateModal templates={scheduleTemplates} onClose={() => setIsLoadTemplateModalOpen(false)} onLoad={handleLoadTemplate} />}
+      {templateConfirm && <TemplateConfirmModal onConfirm={handleTemplateConfirm} onCancel={() => setTemplateConfirm(null)} />}
     </div>
   );
 };
