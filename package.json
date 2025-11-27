@@ -1,0 +1,83 @@
+{
+  "name": "schedule-system-app",
+  "version": "3002.2811.2025",
+  "releaseType": "функциональный релиз",
+  "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "prestart": "npm run build:js && npm run build:css",
+    "build": "npm run build:js && npm run build:css",
+    "dist": "npm run build && electron-builder --publish always",
+    "predist": "npm run build:js && npm run build:css && git add . && git commit -m \"Pre-release commit\" || echo Nothing to commit && git push origin main || echo Push failed or not needed",
+    "build:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css",
+    "watch:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css --watch",
+    "build:js": "node esbuild.config.js",
+    "rebuild": "electron-builder install-app-deps",
+    "build:native": "node-gyp rebuild"
+  },
+  "author": "Дмитрий Власов",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^28.2.3",
+    "electron-builder": "^24.9.1",
+    "tailwindcss": "^3.4.3",
+    "esbuild": "^0.21.4"
+  },
+  "dependencies": {
+    "@google/genai": "^1.24.0",
+    "electron-log": "^5.1.5",
+    "electron-updater": "^6.2.1",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.8.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-dnd": "^16.0.1",
+    "react-dnd-html5-backend": "^16.0.1",
+    "node-addon-api": "^7.1.0",
+    "bindings": "^1.5.0"
+  },
+  "gypfile": true,
+  "build": {
+    "productName": "Расписание ВУЗ",
+    "appId": "com.schedule-system.app",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "AMDRIP",
+        "repo": "schedule_univ",
+        "releaseType": "release"
+      }
+    ],
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "dist/",
+      "TWD/output.css",
+      "icon.svg",
+      "1631285.ico",
+      "CHANGELOG.md",
+      "package.json",
+      "native/build/Release/*.node"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "1631285.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "1631285.ico"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "1631285.ico"
+    }
+  }
+}

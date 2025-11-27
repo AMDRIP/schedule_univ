@@ -1,0 +1,694 @@
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { useStore } from '../hooks/useStore';
+import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType, Teacher, Group, Classroom } from '../types';
+import { DAYS_OF_WEEK, PRODUCTION_CALENDAR_COLORS } from '../constants';
+import { getWeekType, toYYYYMMDD, getWeekDays, getWeekNumber } from '../utils/dateUtils';
+import ScheduleCell from './ScheduleCell';
+import UnscheduledDeck from './UnscheduledDeck';
+import { PlusIcon, ChevronDownIcon, BookmarkIcon, DocumentDownloadIcon, TrashIcon, DocumentTextIcon, ChevronLeftIcon, ChevronRightIcon } from './icons';
+import DatePicker from './DatePicker';
+import { exportScheduleAsPdf } from '../services/pdfExporter';
+import { exportScheduleAsTxt } from '../services/textExporter';
+import TemplateConfirmModal from './TemplateConfirmModal';
+
+// Save Template Modal
+const SaveTemplateModal: React.FC<{onSave: (name: string, description: string) => void; onClose: () => void;}> = ({ onSave, onClose }) => {
+    const [name, setName] = useState('');
+    const [description, setDescription] = useState('');
+    
+    const handleSave = () => {
+        if (name) {
+            onSave(name, description);
+            onClose();
+        } else {
+            alert("Введите название шаблона");
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg">
+                <h2 className="text-xl font-bold mb-4">Сохранить как шаблон</h2>
+                <div className="space-y-4">
+                    <input type="text" value={name} onChange={e => setName(e.target.value)} placeholder="Название шаблона" className="w-full p-2 border rounded"/>
+                    <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Описание (необязательно)" className="w-full p-2 border rounded h-24"></textarea>
+                </div>
+                <div className="flex justify-end space-x-4 mt-6">
+                    <button onClick={onClose} className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">Отмена</button>
+                    <button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Сохранить</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+// Load Template Modal
+const LoadTemplateModal: React.FC<{templates: ScheduleTemplate[]; onLoad: (id: string) => void; onClose: () => void;}> = ({ templates, onLoad, onClose }) => {
+    const [selectedId, setSelectedId] = useState<string>(templates[0]?.id || '');
+
+    const handleLoad = () => {
+        if (selectedId) {
+            onLoad(selectedId);
+            onClose();
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg">
+                <h2 className="text-xl font-bold mb-4">Загрузить шаблон</h2>
+                {templates.length > 0 ? (
+                    <select value={selectedId} onChange={e => setSelectedId(e.target.value)} className="w-full p-2 border rounded">
+                        {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                ) : <p>Нет сохраненных шаблонов.</p>}
+                <div className="flex justify-end space-x-4 mt-6">
+                    <button onClick={onClose} className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">Отмена</button>
+                    {templates.length > 0 && <button onClick={handleLoad} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Загрузить</button>}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+const SessionEntryModal: React.FC<{ 
+    isOpen: boolean; 
+    onClose: () => void; 
+    selectedFilter: { type: 'group' | 'teacher' | 'classroom', id: string };
+}> = ({ isOpen, onClose, selectedFilter }) => {
+    const { groups, teachers, subjects, classrooms, timeSlots, addScheduleEntry, settings } = useStore();
+    const [error, setError] = useState('');
+    const [formData, setFormData] = useState<Partial<ScheduleEntry>>({});
+
+    useEffect(() => {
+        if (isOpen) {
+            setError('');
+            const initialGroupId = (selectedFilter.type === 'group' && selectedFilter.id) ? selectedFilter.id : groups[0]?.id || '';
+            const initialTeacherId = (selectedFilter.type === 'teacher' && selectedFilter.id) ? selectedFilter.id : teachers[0]?.id || '';
+            const initialClassroomId = (selectedFilter.type === 'classroom' && selectedFilter.id) ? selectedFilter.id : classrooms[0]?.id || '';
+
+
+            setFormData({
+                date: settings.sessionStart || settings.semesterStart || toYYYYMMDD(new Date()),
+                timeSlotId: timeSlots[0]?.id || '',
+                groupId: initialGroupId,
+                subjectId: subjects[0]?.id || '',
+                teacherId: initialTeacherId,
+                classroomId: initialClassroomId,
+                classType: ClassType.Consultation,
+                deliveryMode: DeliveryMode.Offline,
+                weekType: 'every'
+            });
+        }
+    }, [isOpen, timeSlots, groups, subjects, teachers, classrooms, settings, selectedFilter]);
+
+
+    const handleChange = (e: React.ChangeEvent<HTMLSelectElement | HTMLInputElement>) => {
+        setFormData({ ...formData, [e.target.name]: e.target.value });
+    };
+
+    const handleSubmit = (e: React.FormEvent) => {
+        e.preventDefault();
+        setError('');
+
+        if (!formData.date || !settings.sessionStart || !settings.sessionEnd) {
+            setError('Даты сессии не установлены в настройках. Пожалуйста, укажите их.');
+            return;
+        }
+
+        const eventDate = new Date(formData.date + 'T00:00:00'); 
+        const sessionStart = new Date(settings.sessionStart + 'T00:00:00');
+        const sessionEnd = new Date(settings.sessionEnd + 'T23:59:59');
+        
+        if (isNaN(eventDate.getTime()) || isNaN(sessionStart.getTime()) || isNaN(sessionEnd.getTime())) {
+            setError('Некорректный формат дат сессии в настройках.');
+            return;
+        }
+
+        if (eventDate < sessionStart || eventDate > sessionEnd) {
+            setError(`Дата события должна быть в пределах сессии (с ${settings.sessionStart} по ${settings.sessionEnd}).`);
+            return;
+        }
+
+        const dayOfWeek = eventDate.getDay();
+        const dayName = DAYS_OF_WEEK[dayOfWeek === 0 ? 6 : dayOfWeek - 1];
+
+        addScheduleEntry({
+            ...formData,
+            day: dayName,
+        } as Omit<ScheduleEntry, 'id'>);
+        onClose();
+    };
+
+    if (!isOpen) return null;
+    const defaultInputClass = "w-full p-2 border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75 transition";
+
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex justify-center items-center z-50">
+            <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg">
+                <h2 className="text-xl font-bold mb-4">Добавить сессионное событие</h2>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                       <div><label>Дата</label><input type="date" name="date" value={formData.date} onChange={handleChange} className={defaultInputClass} /></div>
+                       <div><label>Время</label><select name="timeSlotId" value={formData.timeSlotId} onChange={handleChange} className={defaultInputClass}>{timeSlots.map(t => <option key={t.id} value={t.id}>{t.time}</option>)}</select></div>
+                       <div><label>Группа</label><select name="groupId" value={formData.groupId} onChange={handleChange} className={defaultInputClass}>{groups.map(i => <option key={i.id} value={i.id}>{i.number}</option>)}</select></div>
+                       <div><label>Преподаватель</label><select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass}>{teachers.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
+                       <div><label>Дисциплина</label><select name="subjectId" value={formData.subjectId} onChange={handleChange} className={defaultInputClass}>{subjects.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
+                       <div><label>Аудитория</label><select name="classroomId" value={formData.classroomId} onChange={handleChange} className={defaultInputClass}>{classrooms.map(i => <option key={i.id} value={i.id}>{i.number}</option>)}</select></div>
+                       <div><label>Тип занятия</label><select name="classType" value={formData.classType} onChange={handleChange} className={defaultInputClass}>
+                        {[ClassType.Consultation, ClassType.Test, ClassType.Exam].map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                        <div><label>Тип проведения</label><select name="deliveryMode" value={formData.deliveryMode} onChange={handleChange} className={defaultInputClass}>
+                        {Object.values(DeliveryMode).map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                    </div>
+                     {error && <p className="text-red-600 text-sm mt-2">{error}</p>}
+                    <div className="flex justify-end space-x-4 mt-6">
+                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400">Отмена</button>
+                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Сохранить</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
+interface ScheduleViewProps {
+  currentRole: Role;
+  viewDate: string;
+  setViewDate: (date: string) => void;
+}
+
+const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setViewDate }) => {
+  const store = useStore();
+  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, updateSettings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks, streams } = store;
+  const [filterType, setFilterType] = useState<'group' | 'teacher' | 'classroom'>('group');
+  const [selectedId, setSelectedId] = useState<string>(groups[0]?.id || '');
+  const [colorBy, setColorBy] = useState<'type' | 'teacher' | 'subject'>('type');
+  const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
+  const [isSaveTemplateModalOpen, setIsSaveTemplateModalOpen] = useState(false);
+  const [isLoadTemplateModalOpen, setIsLoadTemplateModalOpen] = useState(false);
+  const [templateConfirm, setTemplateConfirm] = useState<{ templateId: string } | null>(null);
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const [isTemplateDropdownOpen, setTemplateDropdownOpen] = useState(false);
+  const [isClearDropdownOpen, setClearDropdownOpen] = useState(false);
+  const datePickerRef = useRef<HTMLDivElement>(null);
+  const templateDropdownRef = useRef<HTMLDivElement>(null);
+  const clearDropdownRef = useRef<HTMLDivElement>(null);
+  
+  const weekDays = useMemo(() => getWeekDays(new Date(viewDate)), [viewDate]);
+  const weekStart = useMemo(() => toYYYYMMDD(weekDays[0]), [weekDays]);
+  const weekEnd = useMemo(() => toYYYYMMDD(weekDays[5]), [weekDays]);
+  
+  const weekNumber = useMemo(() => {
+    return getWeekNumber(new Date(viewDate));
+  }, [viewDate]);
+
+  const weekType = useMemo(() => {
+    return getWeekType(new Date(viewDate), new Date(settings.semesterStart));
+  }, [viewDate, settings.semesterStart]);
+
+  const effectiveWeekType = settings.useEvenOddWeekSeparation ? weekType : 'every';
+  
+  const teacherDisplayNames = useMemo(() => {
+    if (!settings.showTeacherDetailsInLists) {
+      return new Map(teachers.map(t => [t.id, t.name]));
+    }
+    return new Map(teachers.map(teacher => {
+        const departmentName = departments.find(d => d.id === teacher.departmentId)?.name || 'Б/К';
+        const teacherSubjects = teacherSubjectLinks
+            .filter(link => link.teacherId === teacher.id)
+            .map(link => subjects.find(s => s.id === link.subjectId)?.name)
+            .filter(Boolean)
+            .slice(0, 2)
+            .join(', ');
+        const subjectsText = teacherSubjects ? ` [${teacherSubjects}... ]` : '';
+        return [teacher.id, `${teacher.name} (${departmentName})${subjectsText}`];
+    }));
+  }, [settings, teachers, departments, teacherSubjectLinks, subjects]);
+
+
+  const filterOptions = useMemo(() => {
+    return filterType === 'group' ? groups : filterType === 'teacher' ? teachers : classrooms;
+  }, [filterType, groups, teachers, classrooms]);
+
+  const selectedItemName = useMemo(() => {
+      const item = filterOptions.find(o => o.id === selectedId);
+      if (!item) return '';
+      if (filterType === 'teacher') {
+          return teacherDisplayNames.get(item.id) || (item as Teacher).name;
+      }
+      if (filterType === 'classroom') {
+        return (item as Classroom).number;
+      }
+      return (item as Group).number;
+  }, [selectedId, filterOptions, filterType, teacherDisplayNames]);
+  
+  useEffect(() => {
+    if (filterOptions.length > 0 && !filterOptions.find(o => o.id === selectedId)) {
+        setSelectedId(filterOptions[0].id);
+    } else if (filterOptions.length > 0 && !selectedId) {
+        setSelectedId(filterOptions[0].id);
+    }
+  }, [filterType, filterOptions, selectedId]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (datePickerRef.current && !datePickerRef.current.contains(event.target as Node)) {
+        setIsDatePickerOpen(false);
+      }
+      if (templateDropdownRef.current && !templateDropdownRef.current.contains(event.target as Node)) {
+        setTemplateDropdownOpen(false);
+      }
+       if (clearDropdownRef.current && !clearDropdownRef.current.contains(event.target as Node)) {
+        setClearDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filteredSchedule = useMemo(() => {
+    if (!selectedId) return [];
+
+    const isEntryInCurrentWeek = (entry: ScheduleEntry) => {
+        if (entry.date) {
+            return entry.date >= weekStart && entry.date <= weekEnd;
+        }
+        return entry.weekType === 'every' || entry.weekType === effectiveWeekType;
+    };
+    
+    return schedule.filter(entry => {
+      if (!isEntryInCurrentWeek(entry)) return false;
+
+      if (filterType === 'group') {
+        return entry.groupId === selectedId || (entry.groupIds || []).includes(selectedId);
+      }
+      if (filterType === 'teacher') return entry.teacherId === selectedId;
+      if (filterType === 'classroom') return entry.classroomId === selectedId;
+      return false;
+    });
+
+  }, [schedule, filterType, selectedId, effectiveWeekType, weekStart, weekEnd]);
+  
+  const handleDateSelect = (date: Date) => {
+    setViewDate(toYYYYMMDD(date));
+    setIsDatePickerOpen(false);
+  };
+
+  const handlePrevWeek = () => {
+    const date = new Date(viewDate);
+    date.setDate(date.getDate() - 7);
+    setViewDate(toYYYYMMDD(date));
+  };
+
+  const handleNextWeek = () => {
+    const date = new Date(viewDate);
+    date.setDate(date.getDate() + 7);
+    setViewDate(toYYYYMMDD(date));
+  };
+  
+  const handleCopyWeek = (type: 'even' | 'odd') => {
+    const typeName = type === 'even' ? 'чётную' : 'нечётную';
+    if(window.confirm(`Вы уверены, что хотите скопировать расписание этой ${typeName} недели на весь семестр? Все существующие ДАТИРОВАННЫЕ занятия для ${typeName} недель будут заменены.`)) {
+      propagateWeekSchedule(type, viewDate);
+    }
+  };
+
+  const handleClearWeek = () => {
+    const idsToClear = filteredSchedule.map(e => e.id);
+    if (idsToClear.length === 0) {
+        alert(`На этой неделе для ${selectedItemName} нет занятий для очистки.`);
+        return;
+    }
+    const confirmationMessage = `Вы уверены, что хотите удалить все ${idsToClear.length} занятий на этой неделе для ${selectedItemName}?`;
+    if (window.confirm(confirmationMessage)) {
+        removeScheduleEntries(idsToClear);
+    }
+  };
+
+  const handleClearDay = (date: Date) => {
+    const dateStr = toYYYYMMDD(date);
+    const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+    const idsToClear = filteredSchedule.filter(e => 
+        (e.date && e.date === dateStr) || (!e.date && e.day === dayName)
+    ).map(e => e.id);
+
+    if (idsToClear.length === 0) {
+        alert(`В этот день (${date.toLocaleDateString()}) нет занятий для очистки.`);
+        return;
+    }
+
+    const confirmationMessage = `Вы уверены, что хотите удалить все ${idsToClear.length} занятий за ${date.toLocaleDateString()} для ${selectedItemName}?`;
+    if (window.confirm(confirmationMessage)) {
+        removeScheduleEntries(idsToClear);
+    }
+  };
+
+  const getFormattedDate = () => {
+      const date = new Date(viewDate);
+      const formatted = date.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+      return formatted.charAt(0).toUpperCase() + formatted.slice(1);
+  };
+  
+  const handleExportPdf = async () => {
+    if (!selectedId) {
+      alert("Выберите группу, преподавателя или аудиторию для экспорта.");
+      return;
+    }
+    const selectedItem = filterOptions.find(o => o.id === selectedId);
+    if (!selectedItem) return;
+    
+    let itemTitle = '';
+    let itemType = '';
+    if (filterType === 'group') {
+        itemType = 'группы';
+        itemTitle = (selectedItem as Group).number;
+    } else if (filterType === 'teacher') {
+        itemType = 'преподавателя';
+        itemTitle = (selectedItem as Teacher).name;
+    } else {
+        itemType = 'аудитории';
+        itemTitle = (selectedItem as Classroom).number;
+    }
+
+    const title = `Расписание для ${itemType}: ${itemTitle}`;
+    const subtitle = `Неделя: ${weekStart} - ${weekEnd} (${settings.useEvenOddWeekSeparation ? (effectiveWeekType === 'odd' ? 'нечётная' : 'чётная') : 'общая'})`;
+
+    try {
+        await exportScheduleAsPdf({
+          schedule: filteredSchedule,
+          title,
+          subtitle,
+          weekDays,
+          timeSlots,
+          groups,
+          teachers,
+          subjects,
+          classrooms,
+          // Add new data for handling shortened days
+          timeSlotsShortened,
+          productionCalendar,
+        }, settings);
+    } catch(e) {
+      console.error("PDF export failed:", e);
+      alert("Не удалось сгенерировать PDF. Проверьте консоль для подробностей.");
+    }
+  };
+
+  const handleExportTxt = () => {
+    if (!selectedId) {
+      alert("Выберите группу или преподавателя для экспорта.");
+      return;
+    }
+    const selectedItem = filterOptions.find(o => o.id === selectedId);
+    if (!selectedItem) return;
+
+    const fileName = `schedule_${selectedItemName.replace(/\s/g, '_')}_${weekStart}.txt`;
+    
+    try {
+        exportScheduleAsTxt({
+          schedule: filteredSchedule,
+          fileName,
+          weekDays,
+          timeSlots,
+          groups,
+          teachers,
+          subjects,
+          classrooms,
+        });
+    } catch(e) {
+      console.error("TXT export failed:", e);
+      alert("Не удалось сгенерировать TXT файл. Проверьте консоль для подробностей.");
+    }
+  };
+  
+    const handleSaveTemplate = (name: string, description: string) => {
+        saveCurrentScheduleAsTemplate(name, description, viewDate);
+    };
+
+    const handleLoadTemplate = (templateId: string) => {
+        setIsLoadTemplateModalOpen(false); // Close the selection modal
+        
+        const targetWeekDays = getWeekDays(new Date(viewDate));
+        const targetWeekStart = toYYYYMMDD(targetWeekDays[0]);
+        const targetWeekEnd = toYYYYMMDD(targetWeekDays[5]);
+        const hasExistingEntries = schedule.some(e => e.date && e.date >= targetWeekStart && e.date <= targetWeekEnd);
+
+        if (hasExistingEntries) {
+            setTemplateConfirm({ templateId });
+        } else {
+            loadScheduleFromTemplate(templateId, viewDate, 'replace');
+        }
+    };
+
+    const handleTemplateConfirm = (method: 'replace' | 'merge') => {
+        if (templateConfirm) {
+            loadScheduleFromTemplate(templateConfirm.templateId, viewDate, method);
+        }
+        setTemplateConfirm(null);
+    };
+
+  const displayTimeSlots = useMemo(() => {
+    // Check if there's any pre-holiday day in the current week.
+    const hasPreHolidayInWeek = weekDays.some(date => {
+        if (!settings.useShortenedPreHolidaySchedule) return false;
+        const dateStr = toYYYYMMDD(date);
+        const dayInfo = productionCalendar.find(e => e.date === dateStr);
+        return dayInfo?.type === ProductionCalendarEventType.PreHoliday;
+    });
+
+    // If there are no pre-holidays this week, only show regular time slots.
+    if (!hasPreHolidayInWeek) {
+        return [...timeSlots].sort((a, b) => a.time.localeCompare(b.time));
+    }
+
+    // Otherwise, show all unique time slots (regular + shortened).
+    const allSlots = [...timeSlots, ...timeSlotsShortened];
+    const uniqueSlots = Array.from(new Map(allSlots.map(item => [item.time, item])).values());
+    return uniqueSlots.sort((a, b) => a.time.localeCompare(b.time));
+  }, [timeSlots, timeSlotsShortened, weekDays, productionCalendar, settings.useShortenedPreHolidaySchedule]);
+
+  const handleColorToggle = (e: React.ChangeEvent<HTMLInputElement>) => {
+    updateSettings({ ...settings, showScheduleColors: e.target.checked });
+  };
+
+
+  const isMethodist = currentRole === Role.Methodist || currentRole === Role.Admin;
+  const todayStr = toYYYYMMDD(new Date());
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white p-6 rounded-lg shadow-lg">
+        <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
+          <h2 className="text-2xl font-bold text-gray-800">Просмотр расписания</h2>
+          <div className="flex items-center flex-wrap gap-2 sm:gap-4">
+            <div className="flex items-center gap-1">
+                <button onClick={handlePrevWeek} title="Предыдущая неделя" className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 transition-colors">
+                    <ChevronLeftIcon className="w-5 h-5" />
+                </button>
+                <div ref={datePickerRef} className="relative">
+                    <button 
+                      onClick={() => setIsDatePickerOpen(!isDatePickerOpen)} 
+                      className="w-64 bg-blue-600 text-white font-semibold py-2 px-4 rounded-md flex justify-between items-center hover:bg-blue-700 transition"
+                    >
+                      <span>{getFormattedDate()}</span>
+                      <ChevronDownIcon className={`w-5 h-5 transition-transform ${isDatePickerOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    {isDatePickerOpen && <DatePicker selectedDate={new Date(viewDate)} onSelect={handleDateSelect} onClose={() => setIsDatePickerOpen(false)} />}
+                </div>
+                 <button onClick={handleNextWeek} title="Следующая неделя" className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 transition-colors">
+                    <ChevronRightIcon className="w-5 h-5" />
+                </button>
+            </div>
+            
+            <span className="px-3 py-2 text-sm rounded-md font-semibold bg-gray-100 text-gray-800" title="Номер недели в году">
+              {weekNumber}-я неделя
+            </span>
+            
+            {settings.useEvenOddWeekSeparation && (
+              <span className={`px-3 py-2 text-sm rounded-md font-semibold ${weekType === 'odd' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+                  {weekType === 'odd' ? 'Нечётная' : 'Чётная'}
+              </span>
+            )}
+
+            <select
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value as 'group' | 'teacher' | 'classroom')}
+              className="p-2 border rounded-md bg-white text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="group">По группе</option>
+              <option value="teacher">По преподавателю</option>
+              <option value="classroom">По аудитории</option>
+            </select>
+            <select
+              value={selectedId}
+              onChange={(e) => setSelectedId(e.target.value)}
+              className="p-2 border rounded-md bg-white min-w-[180px] text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={filterOptions.length === 0}
+            >
+              {filterOptions.length === 0 && <option>Нет данных</option>}
+              {filterOptions.map(option => (
+                <option key={option.id} value={option.id}>
+                  { filterType === 'teacher' ? teacherDisplayNames.get(option.id) : (option as any).number || (option as Teacher).name }
+                </option>
+              ))}
+            </select>
+             {isMethodist && (
+                <button onClick={() => setIsSessionModalOpen(true)} className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm">
+                    <PlusIcon className="w-4 h-4 mr-1"/>
+                    Событие
+                </button>
+            )}
+          </div>
+        </div>
+         {isMethodist && (
+          <div className="flex flex-wrap gap-4 mb-4 pb-4 border-b">
+            {settings.useEvenOddWeekSeparation && (
+              <>
+                <button onClick={() => handleCopyWeek('odd')} className="bg-sky-500 hover:bg-sky-600 text-white font-bold py-2 px-3 rounded-lg text-sm">Копировать нечётную неделю на семестр</button>
+                <button onClick={() => handleCopyWeek('even')} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-3 rounded-lg text-sm">Копировать чётную неделю на семестр</button>
+              </>
+            )}
+             <div ref={templateDropdownRef} className="relative">
+                <button onClick={() => setTemplateDropdownOpen(prev => !prev)} className="bg-purple-500 hover:bg-purple-600 text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm">
+                    <BookmarkIcon className="w-4 h-4 mr-2"/>
+                    Шаблоны
+                    <ChevronDownIcon className={`w-5 h-5 ml-1 transition-transform ${isTemplateDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                 {isTemplateDropdownOpen && (
+                  <div className="absolute top-full mt-2 w-60 bg-white rounded-lg shadow-xl z-20 border">
+                    <a href="#" onClick={(e) => { e.preventDefault(); setIsSaveTemplateModalOpen(true); setTemplateDropdownOpen(false);}} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Сохранить текущую неделю как шаблон...</a>
+                    <a href="#" onClick={(e) => { e.preventDefault(); setIsLoadTemplateModalOpen(true); setTemplateDropdownOpen(false);}} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Загрузить шаблон на эту неделю...</a>
+                  </div>
+                )}
+            </div>
+             <div ref={clearDropdownRef} className="relative">
+                <button onClick={() => setClearDropdownOpen(prev => !prev)} className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm">
+                    <TrashIcon className="w-4 h-4 mr-2"/>
+                    Очистить...
+                    <ChevronDownIcon className={`w-5 h-5 ml-1 transition-transform ${isClearDropdownOpen ? 'rotate-180' : ''}`} />
+                </button>
+                 {isClearDropdownOpen && (
+                  <div className="absolute top-full mt-2 w-60 bg-white rounded-lg shadow-xl z-20 border">
+                    <a href="#" onClick={(e) => { e.preventDefault(); handleClearWeek(); setClearDropdownOpen(false);}} className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Очистить текущую неделю</a>
+                  </div>
+                )}
+            </div>
+             <button onClick={handleExportPdf} className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm">
+                <DocumentDownloadIcon className="w-4 h-4 mr-2"/>
+                Экспорт в PDF
+            </button>
+            <button onClick={handleExportTxt} className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm">
+                <DocumentTextIcon className="w-4 h-4 mr-2"/>
+                Экспорт в TXT
+            </button>
+            <div className="flex items-center gap-4">
+              <label htmlFor="showScheduleColors" className="flex items-center cursor-pointer text-sm">
+                <div className="relative">
+                  <input type="checkbox" id="showScheduleColors" name="showScheduleColors" className="sr-only" checked={settings.showScheduleColors} onChange={handleColorToggle} />
+                  <div className={`block w-10 h-6 rounded-full transition ${settings.showScheduleColors ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+                  <div className={`dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${settings.showScheduleColors ? 'translate-x-4' : ''}`}></div>
+                </div>
+                <div className="ml-2 text-gray-700">
+                    Цветовые метки
+                </div>
+              </label>
+
+              <div className={`flex items-center p-0.5 rounded-lg bg-gray-200 transition-opacity ${!settings.showScheduleColors ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  <span className="text-sm text-gray-600 mr-2 ml-1 font-medium">Цвет по:</span>
+                  {(['type', 'teacher', 'subject'] as const).map(type => (
+                      <button
+                          key={type}
+                          onClick={() => setColorBy(type)}
+                          disabled={!settings.showScheduleColors}
+                          className={`px-2 py-1 text-sm rounded-md transition-all font-medium ${colorBy === type ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:bg-gray-300/50'}`}
+                      >
+                          {{ type: 'Типу', teacher: 'Преподавателю', subject: 'Предмету'}[type]}
+                      </button>
+                  ))}
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="bg-gray-100 border-b-2 border-gray-200">
+                <th className="p-2 border-r text-sm font-semibold text-gray-600 w-32">Время</th>
+                {weekDays.map(date => {
+                    const dateStr = toYYYYMMDD(date);
+                    const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+                    const isToday = dateStr === todayStr;
+                    const dayInfo = productionCalendar.find(e => e.date === dateStr);
+                    const thClass = dayInfo ? PRODUCTION_CALENDAR_COLORS[dayInfo.type].bg : isToday ? 'bg-blue-100' : '';
+                    
+                    return (
+                      <th key={dateStr} className={`p-2 border-r text-sm font-semibold text-gray-600 relative group ${thClass}`}>
+                        <div className="flex items-center justify-center">
+                            <span>{dayName}, {date.getDate()}</span>
+                            {isMethodist && (
+                                <button 
+                                    onClick={() => handleClearDay(date)}
+                                    title={`Очистить расписание на ${date.toLocaleDateString()}`}
+                                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1 text-red-400 hover:text-red-600 hover:bg-red-100 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                >
+                                    <TrashIcon className="w-3.5 h-3.5"/>
+                                </button>
+                            )}
+                        </div>
+                      </th>
+                    );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {displayTimeSlots.map(slot => (
+                <tr key={slot.id} className="transition-colors hover:bg-gray-50">
+                  <td className="p-2 border font-semibold text-center align-top h-32 text-gray-700">{slot.time}</td>
+                  {weekDays.map(date => {
+                    const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+                    const dateStr = toYYYYMMDD(date);
+                    
+                    const dayInfo = productionCalendar.find(e => e.date === dateStr);
+                    const isPreHoliday = settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
+                    const activeTimeSlots = isPreHoliday ? timeSlotsShortened : timeSlots;
+
+                    if (!activeTimeSlots.some(ts => ts.id === slot.id)) {
+                        return <td key={dateStr} className="p-1 border bg-gray-100"></td>;
+                    }
+                    
+                    const entriesForCell = filteredSchedule.filter(e => 
+                      e.timeSlotId === slot.id &&
+                      ((e.date && e.date === dateStr) || (!e.date && e.day === dayName))
+                    );
+                    
+                    return (
+                      <ScheduleCell 
+                        key={dateStr} 
+                        day={dayName}
+                        date={dateStr}
+                        timeSlotId={slot.id} 
+                        entries={entriesForCell}
+                        weekType={effectiveWeekType}
+                        isEditable={isMethodist}
+                        colorBy={colorBy}
+                      />
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {isMethodist && <UnscheduledDeck />}
+      <SessionEntryModal isOpen={isSessionModalOpen} onClose={() => setIsSessionModalOpen(false)} selectedFilter={{ type: filterType, id: selectedId }} />
+      {isSaveTemplateModalOpen && <SaveTemplateModal onClose={() => setIsSaveTemplateModalOpen(false)} onSave={handleSaveTemplate} />}
+      {isLoadTemplateModalOpen && <LoadTemplateModal templates={scheduleTemplates} onClose={() => setIsLoadTemplateModalOpen(false)} onLoad={handleLoadTemplate} />}
+      {templateConfirm && <TemplateConfirmModal onConfirm={handleTemplateConfirm} onCancel={() => setTemplateConfirm(null)} />}
+    </div>
+  );
+};
+
+export default ScheduleView;
