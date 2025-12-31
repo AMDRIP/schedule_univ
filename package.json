@@ -30,7 +30,7 @@
     "electron-updater": "^6.2.1",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^3.8.2",
-    "react": "^19.2.0",
+    "react": "^19.2.1",
     "react-dom": "^19.2.0",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
