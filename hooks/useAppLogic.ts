@@ -143,6 +143,7 @@ export const useAppLogic = () => {
         handleResetSchedule,
         handleNewProjectConfirm,
         handleCloseWizard,
+        startNewProject,
         handleOpen,
         handleSave,
         handleSaveAs

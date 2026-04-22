@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { DndProvider } from 'react-dnd';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { StoreProvider } from './hooks/useStore';
@@ -12,7 +12,7 @@ import SchedulerConfigModal from './components/SchedulerConfigModal';
 import SessionSchedulerModal from './components/SessionSchedulerModal';
 import SplashScreen from './components/SplashScreen';
 
-const AppContent: React.FC = () => {
+const AppContent: React.FC<{ initialAction: 'new' | 'open' | null }> = ({ initialAction }) => {
   const {
     currentRole,
     setCurrentRole,
@@ -34,10 +34,28 @@ const AppContent: React.FC = () => {
     handleResetSchedule,
     handleNewProjectConfirm,
     handleCloseWizard,
+    startNewProject,
     handleOpen,
     handleSave,
     handleSaveAs
   } = useAppLogic();
+  const handledInitialAction = useRef(false);
+
+  useEffect(() => {
+    if (!initialAction || handledInitialAction.current) return;
+
+    handledInitialAction.current = true;
+
+    if (initialAction === 'new') {
+      startNewProject();
+      setNewProjectWizardOpen(true);
+      return;
+    }
+
+    if (initialAction === 'open') {
+      handleOpen();
+    }
+  }, [initialAction, startNewProject, setNewProjectWizardOpen, handleOpen]);
 
   return (
     <>
@@ -97,17 +115,14 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => {
   const [showSplash, setShowSplash] = useState(true);
+  const [initialAction, setInitialAction] = useState<'new' | 'open' | null>(null);
 
   const handleNewProject = () => {
-    // The new project wizard will be opened via the logic in useAppLogic
-    console.log('Creating new project');
+    setInitialAction('new');
   };
 
   const handleOpenProject = () => {
-    // Trigger the open file dialog
-    if (window.electronAPI?.openFile) {
-      window.electronAPI.openFile();
-    }
+    setInitialAction('open');
   };
 
   return (
@@ -120,7 +135,7 @@ const App: React.FC = () => {
         />
       ) : (
         <DndProvider backend={HTML5Backend}>
-          <AppContent />
+          <AppContent initialAction={initialAction} />
         </DndProvider>
       )}
     </StoreProvider>
