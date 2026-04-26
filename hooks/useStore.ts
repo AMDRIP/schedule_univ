@@ -295,12 +295,20 @@ interface StoreState {
   resetSchedule: () => void;
   startNewProject: () => void;
   handleOpen: () => Promise<void>;
+  openRecentProject: (filePath: string) => Promise<boolean>;
   handleSave: () => Promise<void>;
   handleSaveAs: () => Promise<void>;
   getFullState: () => any;
   loadFullState: (data: any) => void;
   mergeFullState: (data: any) => void;
   clearAllData: () => void;
+}
+
+interface RecentProjectInfo {
+  name: string;
+  path: string;
+  lastModified: string;
+  size: string;
 }
 
 const StoreContext = createContext<StoreState | undefined>(undefined);
@@ -1210,6 +1218,30 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     clearAllData();
   };
 
+  const formatFileSize = (bytes: number) => {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 КБ';
+    if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+  };
+
+  const rememberRecentProject = (filePath: string, byteLength?: number, lastModified?: string) => {
+    if (!filePath) return;
+    try {
+      const stored = localStorage.getItem('recentProjects');
+      const current = stored ? JSON.parse(stored) as RecentProjectInfo[] : [];
+      const nextProject: RecentProjectInfo = {
+        name: filePath.split(/[\\/]/).pop() || filePath,
+        path: filePath,
+        lastModified: lastModified || new Date().toISOString(),
+        size: formatFileSize(byteLength || 0),
+      };
+      const next = [nextProject, ...current.filter(project => project.path !== filePath)].slice(0, 10);
+      localStorage.setItem('recentProjects', JSON.stringify(next));
+    } catch (error) {
+      console.warn('Failed to update recent projects:', error);
+    }
+  };
+
   // FIX: Corrected the return type annotation of `runScheduler` to match the `StoreState` interface. This fixes multiple errors.
   const runScheduler = async (method: 'heuristic' | 'gemini' | 'openrouter', config?: HeuristicConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }> => {
     setSchedulingProgress(null);
@@ -1378,6 +1410,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (currentFilePath) {
       const stateString = JSON.stringify(getFullState());
       await window.electronAPI.saveFile(currentFilePath, stateString);
+      rememberRecentProject(currentFilePath, new Blob([stateString]).size);
     } else {
       await handleSaveAs();
     }
@@ -1389,6 +1422,24 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const filePath = await window.electronAPI.saveAsFile(stateString);
     if (filePath) {
       setCurrentFilePath(filePath);
+      rememberRecentProject(filePath, new Blob([stateString]).size);
+    }
+  };
+
+  const openRecentProject = async (filePath: string): Promise<boolean> => {
+    if (!window.electronAPI?.openRecentFile) return false;
+    const result = await window.electronAPI.openRecentFile(filePath);
+    if (!result) return false;
+    try {
+      const parsedData = JSON.parse(result.data);
+      loadFullState(parsedData);
+      setCurrentFilePath(result.filePath);
+      rememberRecentProject(result.filePath, result.stats?.size, result.stats?.lastModified);
+      return true;
+    } catch (e) {
+      alert("Ошибка: Не удалось прочитать файл. Возможно, он поврежден или имеет неверный формат.");
+      console.error("Recent file open parse error:", e);
+      return false;
     }
   };
   
@@ -1401,6 +1452,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 const parsedData = JSON.parse(result.data);
                 loadFullState(parsedData);
                 setCurrentFilePath(result.filePath);
+                rememberRecentProject(result.filePath, result.stats?.size, result.stats?.lastModified);
             } catch(e) {
                 alert("Ошибка: Не удалось прочитать файл. Возможно, он поврежден или имеет неверный формат.");
                 console.error("File open parse error:", e);
@@ -1418,7 +1470,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, placeItemInGrid, updateScheduleEntry, updateSettings, updateApiKey, updateOpenRouterApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
     runScheduler, runSessionScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,
-    startNewProject, handleOpen, handleSave, handleSaveAs,
+    startNewProject, handleOpen, openRecentProject, handleSave, handleSaveAs,
     getFullState, loadFullState, clearAllData, mergeFullState
   };
 

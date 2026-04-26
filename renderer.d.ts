@@ -12,7 +12,8 @@ interface IElectronAPI {
   setOpenRouterApiKey: (key: string) => Promise<{ success: boolean }>;
   isAiForced: () => Promise<boolean>;
   setWindowTitle: (title: string) => Promise<void>;
-  openFile: () => Promise<{ filePath: string; data: string } | null>;
+  openFile: () => Promise<{ filePath: string; data: string; stats?: { size: number; lastModified: string } } | null>;
+  openRecentFile: (filePath: string) => Promise<{ filePath: string; data: string; stats?: { size: number; lastModified: string } } | null>;
   saveFile: (filePath: string, data: string) => Promise<{ success: boolean; error?: string }>;
   saveAsFile: (data: string) => Promise<string | null>;
   autosave: (data: string) => Promise<void>;

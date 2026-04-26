@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // --- File System and Window API ---
   setWindowTitle: (title) => ipcRenderer.invoke('set-window-title', title),
   openFile: () => ipcRenderer.invoke('open-file'),
+  openRecentFile: (filePath) => ipcRenderer.invoke('open-recent-file', filePath),
   saveFile: (filePath, data) => ipcRenderer.invoke('save-file', filePath, data),
   saveAsFile: (data) => ipcRenderer.invoke('save-as-file', data),
   autosave: (data) => ipcRenderer.invoke('autosave', data),

@@ -146,10 +146,27 @@ app.whenReady().then(async () => {
     const filePath = filePaths[0];
     try {
       const data = await fs.readFile(filePath, 'utf-8');
+      const stats = await fs.stat(filePath);
       console.log(`Main process: Opened file ${filePath}`);
-      return { filePath, data };
+      return { filePath, data, stats: { size: stats.size, lastModified: stats.mtime.toISOString() } };
     } catch (error) {
       console.error('Failed to open file:', error);
+      dialog.showErrorBox('Ошибка открытия файла', `Не удалось прочитать файл: ${error.message}`);
+      return null;
+    }
+  });
+
+  ipcMain.handle('open-recent-file', async (event, filePath) => {
+    try {
+      await fs.access(filePath);
+      const data = await fs.readFile(filePath, 'utf-8');
+      const stats = await fs.stat(filePath);
+      console.log(`Main process: Opened recent file ${filePath}`);
+      appSettings.lastProjectPath = filePath;
+      await saveAppSettings();
+      return { filePath, data, stats: { size: stats.size, lastModified: stats.mtime.toISOString() } };
+    } catch (error) {
+      console.error('Failed to open recent file:', error);
       dialog.showErrorBox('Ошибка открытия файла', `Не удалось прочитать файл: ${error.message}`);
       return null;
     }
