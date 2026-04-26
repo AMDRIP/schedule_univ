@@ -9,6 +9,7 @@ import { PlusIcon, ChevronDownIcon, BookmarkIcon, DocumentDownloadIcon, TrashIco
 import DatePicker from './DatePicker';
 import { exportScheduleAsPdf } from '../services/pdfExporter';
 import { exportScheduleAsTxt } from '../services/textExporter';
+import { exportScheduleAsExcel } from '../services/excelExporter';
 import TemplateConfirmModal from './TemplateConfirmModal';
 
 // Save Template Modal
@@ -192,6 +193,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isTemplateDropdownOpen, setTemplateDropdownOpen] = useState(false);
   const [isClearDropdownOpen, setClearDropdownOpen] = useState(false);
+  const [exportScope, setExportScope] = useState<'week' | 'semester'>('week');
   const datePickerRef = useRef<HTMLDivElement>(null);
   const templateDropdownRef = useRef<HTMLDivElement>(null);
   const clearDropdownRef = useRef<HTMLDivElement>(null);
@@ -290,6 +292,21 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
     });
 
   }, [schedule, filterType, selectedId, effectiveWeekType, weekStart, weekEnd]);
+
+  const semesterSchedule = useMemo(() => {
+    if (!selectedId) return [];
+    return schedule.filter(entry => {
+      if (entry.date && (entry.date < settings.semesterStart || entry.date > settings.semesterEnd)) return false;
+      if (filterType === 'group') {
+        return entry.groupId === selectedId || (entry.groupIds || []).includes(selectedId);
+      }
+      if (filterType === 'teacher') return entry.teacherId === selectedId;
+      if (filterType === 'classroom') return entry.classroomId === selectedId;
+      return false;
+    });
+  }, [schedule, selectedId, settings.semesterStart, settings.semesterEnd, filterType]);
+
+  const exportSchedule = exportScope === 'semester' ? semesterSchedule : filteredSchedule;
   
   const handleDateSelect = (date: Date) => {
     setViewDate(toYYYYMMDD(date));
@@ -377,7 +394,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
 
     try {
         await exportScheduleAsPdf({
-          schedule: filteredSchedule,
+          schedule: exportSchedule,
           title,
           subtitle,
           weekDays,
@@ -396,6 +413,67 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
     }
   };
 
+  const handleExportExcel = () => {
+    if (!selectedId) {
+      alert("Выберите группу, преподавателя или аудиторию для экспорта.");
+      return;
+    }
+    const safeName = selectedItemName.replace(/\s/g, '_');
+    const suffix = exportScope === 'semester' ? `${settings.semesterStart}_${settings.semesterEnd}` : weekStart;
+    exportScheduleAsExcel({
+      schedule: exportSchedule,
+      fileName: `schedule_${safeName}_${suffix}.xlsx`,
+      timeSlots: [...timeSlots, ...timeSlotsShortened],
+      groups,
+      teachers,
+      subjects,
+      classrooms,
+    });
+  };
+
+  const handlePrint = () => {
+    if (exportSchedule.length === 0) {
+      alert('Нет данных для печати.');
+      return;
+    }
+    const rows = exportSchedule.map(entry => {
+      const time = [...timeSlots, ...timeSlotsShortened].find(ts => ts.id === entry.timeSlotId)?.time || entry.timeSlotId;
+      const subject = subjects.find(s => s.id === entry.subjectId)?.name || entry.subjectId;
+      const teacher = teachers.find(t => t.id === entry.teacherId)?.name || entry.teacherId;
+      const classroom = classrooms.find(c => c.id === entry.classroomId)?.number || entry.classroomId;
+      const groupNames = entry.groupIds?.map(id => groups.find(g => g.id === id)?.number || id).join(', ') || groups.find(g => g.id === entry.groupId)?.number || '';
+      return `<tr><td>${entry.date || entry.day}</td><td>${time}</td><td>${subject}</td><td>${entry.classType}</td><td>${teacher}</td><td>${groupNames}</td><td>${classroom}</td></tr>`;
+    }).join('');
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Печатная форма расписания</title>
+          <style>
+            body { font-family: Arial, sans-serif; padding: 24px; color: #111827; }
+            h1 { font-size: 20px; margin-bottom: 4px; }
+            p { margin-top: 0; color: #4b5563; }
+            table { width: 100%; border-collapse: collapse; font-size: 12px; }
+            th, td { border: 1px solid #d1d5db; padding: 6px; text-align: left; vertical-align: top; }
+            th { background: #f3f4f6; }
+          </style>
+        </head>
+        <body>
+          <h1>Расписание: ${selectedItemName}</h1>
+          <p>${exportScope === 'semester' ? `Семестр ${settings.semesterStart} - ${settings.semesterEnd}` : `Неделя ${weekStart} - ${weekEnd}`}</p>
+          <table>
+            <thead><tr><th>Дата/день</th><th>Время</th><th>Дисциплина</th><th>Тип</th><th>Преподаватель</th><th>Группы</th><th>Аудитория</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  };
+
   const handleExportTxt = () => {
     if (!selectedId) {
       alert("Выберите группу или преподавателя для экспорта.");
@@ -408,7 +486,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
     
     try {
         exportScheduleAsTxt({
-          schedule: filteredSchedule,
+          schedule: exportSchedule,
           fileName,
           weekDays,
           timeSlots,
@@ -583,6 +661,25 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                 <DocumentTextIcon className="w-4 h-4 mr-2"/>
                 Экспорт в TXT
             </button>
+            <button onClick={handleExportExcel} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm">
+                <DocumentDownloadIcon className="w-4 h-4 mr-2"/>
+                Excel
+            </button>
+            <button onClick={handlePrint} className="bg-slate-600 hover:bg-slate-700 text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm">
+                <DocumentTextIcon className="w-4 h-4 mr-2"/>
+                Печать
+            </button>
+            <div className="flex rounded-md bg-gray-100 p-1 text-sm border border-gray-200">
+                {(['week', 'semester'] as const).map(scope => (
+                    <button
+                        key={scope}
+                        onClick={() => setExportScope(scope)}
+                        className={`px-3 py-1 rounded-md transition-all font-medium ${exportScope === scope ? 'bg-white shadow text-blue-600' : 'text-gray-600 hover:bg-gray-200'}`}
+                    >
+                        {scope === 'week' ? 'Неделя' : 'Семестр'}
+                    </button>
+                ))}
+            </div>
             <div className="flex items-center gap-4">
               <label htmlFor="showScheduleColors" className="flex items-center cursor-pointer text-sm">
                 <div className="relative">
@@ -611,7 +708,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
             </div>
           </div>
         )}
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto print:overflow-visible">
           <table className="w-full border-collapse">
             <thead>
               <tr className="bg-gray-100 border-b-2 border-gray-200">

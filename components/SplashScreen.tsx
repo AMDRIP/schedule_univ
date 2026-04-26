@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FolderIcon, PlusIcon, DocumentTextIcon, ClockIcon } from './icons';
+import { FolderIcon, PlusIcon, DocumentTextIcon, ClockIcon, DocumentSearchIcon, DocumentDownloadIcon, UploadIcon } from './icons';
 
 interface SplashScreenProps {
     onFinish: () => void;
@@ -9,6 +9,11 @@ interface SplashScreenProps {
 
 const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish, onOpenProject, onNewProject }) => {
     const [recentProjects, setRecentProjects] = useState<Array<{ name: string; path: string; lastModified: Date; size: string }>>([]);
+    const features = [
+        { title: 'Объяснимость генерации', text: 'Конфликты, узкие места и причины нераспределения после каждого прогона.', icon: DocumentSearchIcon },
+        { title: 'Импорт данных', text: 'JSON, XLSX и CSV для учебных планов, преподавателей, групп и аудиторий.', icon: UploadIcon },
+        { title: 'Печатные формы', text: 'Экспорт по группе, преподавателю, аудитории, на неделю и на семестр.', icon: DocumentDownloadIcon },
+    ];
 
     // Load recent projects from localStorage
     React.useEffect(() => {
@@ -67,6 +72,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish, onOpenProject, on
                     <p className="text-2xl font-light text-blue-100 tracking-wider">
                         Система интеллектуального планирования
                     </p>
+                    <p className="text-sm text-blue-200 mt-2">Версия 3400.2604.2026</p>
                 </div>
 
                 {/* Action Cards */}
@@ -98,6 +104,19 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish, onOpenProject, on
                             <p className="text-blue-100 text-lg">Продолжите работу с сохранённым проектом расписания</p>
                         </div>
                     </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                    {features.map(feature => {
+                        const Icon = feature.icon;
+                        return (
+                            <div key={feature.title} className="bg-white/10 backdrop-blur-md rounded-2xl p-5 border border-white/15">
+                                <Icon className="w-8 h-8 text-blue-200 mb-3" />
+                                <h3 className="text-lg font-bold text-white">{feature.title}</h3>
+                                <p className="text-sm text-blue-100 mt-1">{feature.text}</p>
+                            </div>
+                        );
+                    })}
                 </div>
 
                 {/* Recent Projects */}

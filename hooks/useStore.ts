@@ -4,7 +4,7 @@ import {
     UnscheduledEntry, DataItem, DataType, ClassroomType, ClassType, TeacherSubjectLink, SchedulingRule, 
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
     EducationalPlan, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective,
-    AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag, HeuristicConfig, SessionSchedulerConfig
+    AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag, HeuristicConfig, SessionSchedulerConfig, SchedulingExplanation
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
@@ -267,6 +267,8 @@ interface StoreState {
   openRouterApiKey: string;
   unscheduledTimeHorizon: 'semester' | 'week' | 'twoWeeks';
   schedulingProgress: { current: number; total: number } | null;
+  schedulingExplanations: Record<string, SchedulingExplanation>;
+  lastSchedulingRunSummary: string | null;
   viewDate: string;
   
   addItem: (dataType: DataType, item: Omit<DataItem, 'id'>) => void;
@@ -365,6 +367,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [lastAutosave, setLastAutosave] = useState<Date | null>(null);
   const [unscheduledTimeHorizon, setUnscheduledTimeHorizon] = useState<'semester' | 'week' | 'twoWeeks'>('semester');
   const [schedulingProgress, setSchedulingProgress] = useState<{ current: number; total: number } | null>(null);
+  const [schedulingExplanations, setSchedulingExplanations] = useState<Record<string, SchedulingExplanation>>({});
+  const [lastSchedulingRunSummary, setLastSchedulingRunSummary] = useState<string | null>(null);
   const [viewDate, setViewDate] = useState(toYYYYMMDD(new Date()));
 
   useEffect(() => {
@@ -379,7 +383,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     // If view is 'semester', show everything unscheduled.
     if (unscheduledTimeHorizon === 'semester') {
-      setUnscheduledEntries(allUnscheduledForSemester);
+      setUnscheduledEntries(allUnscheduledForSemester.map(entry => ({
+        ...entry,
+        explanation: schedulingExplanations[entry.uid],
+      })));
       return;
     }
 
@@ -389,13 +396,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     // Fallback to showing all if dates are invalid.
     if (isNaN(semesterStartDate.getTime()) || isNaN(semesterEndDate.getTime()) || semesterEndDate <= semesterStartDate) {
-        setUnscheduledEntries(allUnscheduledForSemester);
+        setUnscheduledEntries(allUnscheduledForSemester.map(entry => ({
+          ...entry,
+          explanation: schedulingExplanations[entry.uid],
+        })));
         return;
     }
 
     const weeksInSemester = Math.ceil((semesterEndDate.getTime() - semesterStartDate.getTime()) / (1000 * 60 * 60 * 24 * 7));
     if (weeksInSemester <= 0) {
-        setUnscheduledEntries(allUnscheduledForSemester);
+        setUnscheduledEntries(allUnscheduledForSemester.map(entry => ({
+          ...entry,
+          explanation: schedulingExplanations[entry.uid],
+        })));
         return;
     }
 
@@ -444,8 +457,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         newUnscheduled.push(...entriesToShow);
     });
 
-    setUnscheduledEntries(newUnscheduled);
-  }, [groups, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives, unscheduledTimeHorizon, settings.semesterStart, settings.semesterEnd, viewDate]);
+    setUnscheduledEntries(newUnscheduled.map(entry => ({
+      ...entry,
+      explanation: schedulingExplanations[entry.uid],
+    })));
+  }, [groups, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives, unscheduledTimeHorizon, settings.semesterStart, settings.semesterEnd, viewDate, schedulingExplanations]);
 
   useEffect(() => {
     const initializeApiKeys = async () => {
@@ -489,7 +505,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const getFullState = () => ({
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
-    classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave
+    classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave,
+    schedulingExplanations, lastSchedulingRunSummary
   });
   
   const stateRef = useRef(getFullState());
@@ -521,6 +538,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setClassroomTags(data.classroomTags || initialClassroomTags);
     setSubgroups(data.subgroups || []);
     setElectives(data.electives || []);
+    setSchedulingExplanations(data.schedulingExplanations || {});
+    setLastSchedulingRunSummary(data.lastSchedulingRunSummary || null);
     setCurrentFilePath(data.currentFilePath || null);
   };
 
@@ -563,6 +582,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     merge(setClassroomTags, data.classroomTags);
     merge(setSubgroups, data.subgroups);
     merge(setElectives, data.electives);
+    if (data.schedulingExplanations && typeof data.schedulingExplanations === 'object') {
+      setSchedulingExplanations(prev => ({ ...prev, ...data.schedulingExplanations }));
+    }
+    if (data.lastSchedulingRunSummary) {
+      setLastSchedulingRunSummary(data.lastSchedulingRunSummary);
+    }
 
     if (data.settings) {
       setSettings(prev => ({ ...prev, ...data.settings }));
@@ -1176,6 +1201,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setUgs([]); setSpecialties([]); setEducationalPlans([]); setTeacherSubjectLinks([]);
     setSchedulingRules([]); setProductionCalendar([]); setSettings(getInitialEmptySettings());
     setScheduleTemplates([]); setClassroomTypes([]); setClassroomTags([]); setSubgroups([]); setElectives([]);
+    setSchedulingExplanations({});
+    setLastSchedulingRunSummary(null);
     setCurrentFilePath(null);
   };
 
@@ -1239,8 +1266,21 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                  return { scheduled: 0, unscheduled: 0, failedEntries: [] };
              }
         }
-        
-        setSchedule([...finalSchedule, ...result.schedule]);
+        const previousByUid = new Map(schedule.filter(e => e.unscheduledUid).map(e => [e.unscheduledUid!, e]));
+        const added = result.schedule.filter(entry => !previousByUid.has(entry.unscheduledUid || '')).length;
+        const changed = result.schedule.filter(entry => {
+            const previous = entry.unscheduledUid ? previousByUid.get(entry.unscheduledUid) : undefined;
+            return previous && (
+                previous.date !== entry.date ||
+                previous.timeSlotId !== entry.timeSlotId ||
+                previous.classroomId !== entry.classroomId
+            );
+        }).length;
+        const removed = Math.max(0, schedule.length - finalSchedule.length);
+        const nextSchedule = [...finalSchedule, ...result.schedule];
+        setSchedulingExplanations(result.explanations || {});
+        setLastSchedulingRunSummary(`Последний прогон: добавлено ${added}, изменено ${changed}, очищено перед генерацией ${removed}, осталось нераспределенных ${result.unschedulable.length}.`);
+        setSchedule(nextSchedule);
         return { scheduled: result.schedule.length, unscheduled: result.unschedulable.length, failedEntries: result.unschedulable };
     
     } else if (method === 'gemini') {
@@ -1280,6 +1320,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
         const validatedSchedule: ScheduleEntry[] = newSchedule.map((entry: any, index: number) => ({ ...entry, id: `gen-${Date.now()}-${index}` }));
         if (window.confirm(`Сгенерировано ${validatedSchedule.length} занятий. Заменить текущее расписание?`)) {
+            setSchedulingExplanations({});
+            setLastSchedulingRunSummary(`Последний AI-прогон: расписание заменено, размещено ${validatedSchedule.length}, осталось нераспределенных ${unschedulable.length}.`);
             setSchedule(validatedSchedule);
             return { scheduled: validatedSchedule.length, unscheduled: unschedulable.length, failedEntries: unschedulable };
         }
@@ -1372,7 +1414,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, scheduleTemplates,
     classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, currentFilePath, lastAutosave, apiKey, openRouterApiKey, unscheduledTimeHorizon,
-    schedulingProgress, viewDate,
+    schedulingProgress, schedulingExplanations, lastSchedulingRunSummary, viewDate,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, placeItemInGrid, updateScheduleEntry, updateSettings, updateApiKey, updateOpenRouterApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
     runScheduler, runSessionScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,

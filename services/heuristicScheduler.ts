@@ -2,7 +2,7 @@ import {
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType,
     SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS,
     Specialty, EducationalPlan, UnscheduledEntry, AvailabilityType, WeekType, DeliveryMode, ClassroomType, Subgroup, Elective, HeuristicConfig,
-    RuleSeverity, RuleAction, RuleCondition, ProductionCalendarEventType
+    RuleSeverity, RuleAction, RuleCondition, ProductionCalendarEventType, SchedulingExplanation, SchedulingBottleneck
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { getWeekNumber, toYYYYMMDD } from '../utils/dateUtils';
@@ -31,7 +31,55 @@ interface GenerationData {
 export interface SchedulerResult {
     schedule: ScheduleEntry[];
     unschedulable: UnscheduledEntry[];
+    explanations: Record<string, SchedulingExplanation>;
 }
+
+type RejectionStats = Record<SchedulingBottleneck, number> & {
+    checkedSlots: number;
+    checkedClassrooms: number;
+};
+
+const createEmptyRejectionStats = (): RejectionStats => ({
+    teacher: 0,
+    classroom: 0,
+    group: 0,
+    stream: 0,
+    calendar: 0,
+    rules: 0,
+    data: 0,
+    checkedSlots: 0,
+    checkedClassrooms: 0,
+});
+
+const explainEntry = (
+    entry: UnscheduledEntry,
+    stats: RejectionStats,
+    conflicts: string[],
+    resource: string,
+    summary?: string
+): SchedulingExplanation => {
+    const bottleneck = (['teacher', 'classroom', 'group', 'stream', 'calendar', 'rules', 'data'] as SchedulingBottleneck[])
+        .sort((a, b) => stats[b] - stats[a])[0];
+    return {
+        summary: summary || 'Не найден слот, который одновременно удовлетворяет всем жестким ограничениям.',
+        bottleneck,
+        conflicts: Array.from(new Set(conflicts)).slice(0, 6),
+        resource,
+        checkedSlots: stats.checkedSlots,
+        checkedClassrooms: stats.checkedClassrooms,
+        lastRunAt: new Date().toISOString(),
+    };
+};
+
+const markUnscheduled = (
+    entry: UnscheduledEntry,
+    unschedulable: UnscheduledEntry[],
+    explanations: Record<string, SchedulingExplanation>,
+    explanation: SchedulingExplanation
+) => {
+    explanations[entry.uid] = explanation;
+    unschedulable.push({ ...entry, explanation });
+};
 
 // Generates the initial pool of classes to be scheduled from educational plans
 const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
@@ -166,6 +214,7 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
 
 
 export const generateScheduleWithHeuristics = async (data: GenerationData, config: HeuristicConfig): Promise<SchedulerResult> => {
+    const explanations: Record<string, SchedulingExplanation> = {};
 
     // Check for native scheduler availability
     // We import dynamically to avoid issues if the module is not built
@@ -190,9 +239,19 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
 
             // Native scheduler returns placed entries. We need to calculate unschedulable.
             const placedUids = new Set(nativeSchedule.map((e: any) => e.unscheduledUid));
-            const unschedulable = classPool.filter(e => !placedUids.has(e.uid));
+            const unschedulable = classPool.filter(e => !placedUids.has(e.uid)).map(entry => {
+                const explanation = explainEntry(
+                    entry,
+                    { ...createEmptyRejectionStats(), data: 1 },
+                    ['Нативный планировщик не вернул размещение для этого занятия. Запустите эвристический режим без native-сборки для подробной диагностики.'],
+                    'Нативный планировщик',
+                    'Занятие осталось нераспределенным после нативного прогона.'
+                );
+                explanations[entry.uid] = explanation;
+                return { ...entry, explanation };
+            });
 
-            return { schedule: nativeSchedule, unschedulable };
+            return { schedule: nativeSchedule, unschedulable, explanations };
         } catch (e) {
             console.error("Native scheduler failed, falling back to JS implementation:", e);
         }
@@ -312,16 +371,49 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         const TOP_N_CANDIDATES = 5;
 
         const involvedGroupIds = entryToPlace.groupIds || (entryToPlace.groupId ? [entryToPlace.groupId] : []);
-        if (involvedGroupIds.length === 0) { unschedulable.push(entryToPlace); continue; }
+        if (involvedGroupIds.length === 0) {
+            markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
+                entryToPlace,
+                { ...createEmptyRejectionStats(), data: 1 },
+                ['У занятия не указана группа, подгруппа или поток.'],
+                'Учебный план',
+                'Недостаточно данных для определения участников занятия.'
+            ));
+            continue;
+        }
         const involvedGroups = groups.filter(g => involvedGroupIds.includes(g.id));
-        if (involvedGroups.length !== involvedGroupIds.length) { unschedulable.push(entryToPlace); continue; }
+        if (involvedGroups.length !== involvedGroupIds.length) {
+            markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
+                entryToPlace,
+                { ...createEmptyRejectionStats(), data: 1 },
+                ['Одна или несколько групп из учебного плана не найдены в справочнике групп.'],
+                'Группы',
+                'Невозможно проверить занятость группы из-за несогласованных справочников.'
+            ));
+            continue;
+        }
 
         const subject = subjects.find(s => s.id === entryToPlace.subjectId);
-        if (!subject) { unschedulable.push(entryToPlace); continue; }
+        if (!subject) {
+            markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
+                entryToPlace,
+                { ...createEmptyRejectionStats(), data: 1 },
+                ['Дисциплина из учебного плана отсутствует в справочнике дисциплин.'],
+                'Дисциплины',
+                'Невозможно подобрать аудиторию и правила без карточки дисциплины.'
+            ));
+            continue;
+        }
 
         const requiredClassroomTypes = subject?.classroomTypeRequirements?.[entryToPlace.classType];
         if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) {
-            unschedulable.push(entryToPlace);
+            markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
+                entryToPlace,
+                { ...createEmptyRejectionStats(), classroom: 1 },
+                [`Для типа занятия "${entryToPlace.classType}" не заданы требуемые типы аудиторий.`],
+                'Аудитории',
+                'Не задано правило подбора аудитории для этой дисциплины и типа занятия.'
+            ));
             continue;
         }
 
@@ -339,6 +431,23 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             return true;
         });
 
+        if (suitableClassrooms.length === 0) {
+            markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
+                entryToPlace,
+                { ...createEmptyRejectionStats(), classroom: 1 },
+                [
+                    'Нет аудитории с подходящим типом, вместимостью и обязательными тегами.',
+                    `Требуется мест: ${entryToPlace.studentCount}.`
+                ],
+                'Аудитории',
+                'Аудиторный фонд стал узким местом для этого занятия.'
+            ));
+            continue;
+        }
+
+        const stats = createEmptyRejectionStats();
+        const conflicts: string[] = [];
+
         for (const date of workDays) {
             const dateStr = toYYYYMMDD(date);
             const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
@@ -349,17 +458,39 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
 
             for (const timeSlot of activeTimeSlots) {
                 const bookingKey = `${dateStr}-${timeSlot.id}`;
+                stats.checkedSlots++;
 
                 // Hard constraints (pre-classroom)
-                if (resourceBookings.get(`teacher-${entryToPlace.teacherId}`)?.has(bookingKey)) continue;
-                if (involvedGroups.some(g => resourceBookings.get(`group-${g.id}`)?.has(bookingKey))) continue;
-                if (teachers.find(t => t.id === entryToPlace.teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden) continue;
+                if (resourceBookings.get(`teacher-${entryToPlace.teacherId}`)?.has(bookingKey)) {
+                    stats.teacher++;
+                    conflicts.push(`Преподаватель занят: ${dateStr}, ${timeSlot.time}.`);
+                    continue;
+                }
+                if (involvedGroups.some(g => resourceBookings.get(`group-${g.id}`)?.has(bookingKey))) {
+                    stats.group++;
+                    conflicts.push(`Группа или поток уже заняты: ${dateStr}, ${timeSlot.time}.`);
+                    continue;
+                }
+                if (teachers.find(t => t.id === entryToPlace.teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden) {
+                    stats.teacher++;
+                    conflicts.push(`У преподавателя запрещен слот: ${dayName}, ${timeSlot.time}.`);
+                    continue;
+                }
 
                 for (const classroom of suitableClassrooms) {
-                    if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
+                    stats.checkedClassrooms++;
+                    if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) {
+                        stats.classroom++;
+                        conflicts.push(`Аудитория ${classroom.number} занята: ${dateStr}, ${timeSlot.time}.`);
+                        continue;
+                    }
 
                     const cost = calculateSlotCost(entryToPlace, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, softPenaltyMultiplier, newSchedule, config, activeTimeSlots);
-                    if (cost === Infinity) continue;
+                    if (cost === Infinity) {
+                        stats.rules++;
+                        conflicts.push(`Строгое пользовательское правило запрещает ${dayName}, ${timeSlot.time}.`);
+                        continue;
+                    }
 
                     if (bestSlots.length < TOP_N_CANDIDATES) {
                         bestSlots.push({ date, timeSlotId: timeSlot.id, classroom, cost });
@@ -401,7 +532,12 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             involvedGroups.forEach(g => resourceBookings.get(`group-${g.id}`)?.add(bookingKey));
 
         } else {
-            unschedulable.push(entryToPlace);
+            markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
+                entryToPlace,
+                stats,
+                conflicts.length > 0 ? conflicts : ['В выбранном диапазоне нет рабочих слотов после учета календаря, расписания звонков и ограничений.'],
+                stats.teacher >= stats.classroom && stats.teacher >= stats.group ? 'Преподаватель' : stats.classroom >= stats.group ? 'Аудитории' : 'Группы/поток'
+            ));
         }
     }
 
@@ -409,11 +545,11 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     if (newSchedule.length > 0) {
         console.log(`Initial placement finished. ${newSchedule.length} entries placed. Starting refinement.`);
         const refinedSchedule = await refineSchedule(newSchedule, data, config, resourceBookings);
-        return { schedule: refinedSchedule, unschedulable };
+        return { schedule: refinedSchedule, unschedulable, explanations };
     }
 
 
-    return { schedule: newSchedule, unschedulable };
+    return { schedule: newSchedule, unschedulable, explanations };
 };
 
 

@@ -51,7 +51,7 @@ export const runIterativeScheduler = async (
 
     // Fallback in case no iterations produced a valid result (highly unlikely)
     if (!bestResult) {
-        return { schedule: [], unschedulable: [] };
+    return { schedule: [], unschedulable: [], explanations: {} };
     }
 
     return bestResult;

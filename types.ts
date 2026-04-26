@@ -322,6 +322,18 @@ export interface ScheduleEntry extends BaseItem {
   lessonPlan?: LessonPlan;
 }
 
+export type SchedulingBottleneck = 'teacher' | 'classroom' | 'group' | 'stream' | 'calendar' | 'rules' | 'data';
+
+export interface SchedulingExplanation {
+  summary: string;
+  bottleneck: SchedulingBottleneck;
+  conflicts: string[];
+  resource: string;
+  checkedSlots: number;
+  checkedClassrooms: number;
+  lastRunAt: string;
+}
+
 export interface UnscheduledEntry {
   uid: string;
   subjectId: string;
@@ -333,6 +345,7 @@ export interface UnscheduledEntry {
   streamId?: string;
   studentCount: number;
   targetWeek?: number;
+  explanation?: SchedulingExplanation;
 }
 
 export interface ScheduleTemplate extends BaseItem {

@@ -3,7 +3,7 @@ import { useDrag } from 'react-dnd';
 import { useStore } from '../hooks/useStore';
 import { UnscheduledEntry, ClassroomTag } from '../types';
 import { CLASS_TYPE_COLORS, ItemTypes } from '../constants';
-import { CollectionIcon, AcademicCapIcon, UsersIcon } from './icons';
+import { CollectionIcon, AcademicCapIcon, UsersIcon, DocumentSearchIcon } from './icons';
 import { renderIcon } from './IconMap';
 
 interface UnscheduledCardProps {
@@ -86,6 +86,23 @@ const UnscheduledCard: React.FC<UnscheduledCardProps> = ({ entry }) => {
                     {renderIcon(tag.icon, { className: 'w-3.5 h-3.5 text-gray-600' })}
                 </span>
             ))}
+        </div>
+      )}
+
+      {entry.explanation && (
+        <div className="mt-1 pt-1 border-t border-black border-opacity-10 text-[11px] text-gray-700 space-y-1">
+          <div className="flex items-center gap-1 font-semibold">
+            <DocumentSearchIcon className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>Узкое место: {entry.explanation.resource}</span>
+          </div>
+          <p title={entry.explanation.conflicts.join('\n')} className="line-clamp-2">
+            {entry.explanation.summary}
+          </p>
+          {entry.explanation.conflicts[0] && (
+            <p className="text-gray-500 line-clamp-1" title={entry.explanation.conflicts.join('\n')}>
+              {entry.explanation.conflicts[0]}
+            </p>
+          )}
         </div>
       )}
     </div>
