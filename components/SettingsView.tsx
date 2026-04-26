@@ -3,6 +3,7 @@ import { useStore } from '../hooks/useStore';
 import { SchedulingSettings } from '../types';
 import { CogIcon, SparklesIcon } from './icons';
 import { exportAllDataAsPdf } from '../services/pdfExporter';
+import { readTabularImport } from '../services/tabularImport';
 
 const ImportConfirmModal: React.FC<{
     onConfirm: (method: 'replace' | 'merge') => void;
@@ -53,6 +54,7 @@ const SettingsView: React.FC = () => {
   const [formData, setFormData] = useState<SchedulingSettings>(settings);
   const [isSaved, setIsSaved] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const tableFileInputRef = useRef<HTMLInputElement>(null);
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [isGeminiKeySaved, setIsGeminiKeySaved] = useState(false);
@@ -142,6 +144,25 @@ const SettingsView: React.FC = () => {
         setImportTarget(file);
       }
       if(fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleImportTable = async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+          const data = await readTabularImport(file);
+          if (Object.keys(data).length === 0) {
+              alert('Не удалось определить раздел для импорта. Для CSV назовите файл как раздел данных, например teachers.csv или groups.csv. Для XLSX используйте листы с именами teachers, groups, classrooms, educationalPlans.');
+              return;
+          }
+          mergeFullState(data);
+          alert(`Импортировано разделов: ${Object.keys(data).join(', ')}`);
+      } catch (error) {
+          console.error('Ошибка импорта XLSX/CSV:', error);
+          alert('Не удалось импортировать XLSX/CSV. Проверьте заголовки и формат файла.');
+      } finally {
+          if (tableFileInputRef.current) tableFileInputRef.current.value = '';
+      }
   };
 
   const executeImport = (method: 'replace' | 'merge') => {
@@ -526,9 +547,17 @@ const SettingsView: React.FC = () => {
               <button onClick={handleExportJson} className="p-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-center">Экспорт в JSON</button>
               <button onClick={() => fileInputRef.current?.click()} className="p-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors text-center">Импорт из JSON</button>
               <input type="file" ref={fileInputRef} onChange={handleImportJson} className="hidden" accept=".json"/>
+              <button onClick={() => tableFileInputRef.current?.click()} className="p-3 bg-green-700 text-white rounded-lg hover:bg-green-800 transition-colors text-center">Импорт XLSX/CSV</button>
+              <input type="file" ref={tableFileInputRef} onChange={handleImportTable} className="hidden" accept=".xlsx,.xls,.csv"/>
               <button onClick={handleExportPdf} className="p-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors text-center">Экспорт всех данных в PDF</button>
           </div>
-          <p className="text-xs text-gray-500 mt-3">Используйте JSON для создания резервных копий и переноса данных. PDF подходит для печати и архивации.</p>
+          <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900 space-y-2">
+            <p className="font-semibold">Инструкция по импорту из JSON</p>
+            <p>JSON должен быть объектом резервной копии с разделами верхнего уровня: teachers, groups, classrooms, subjects, educationalPlans, teacherSubjectLinks, timeSlots, settings и другими справочниками приложения.</p>
+            <p>Для слияния записи сопоставляются по id: существующие обновляются, новые добавляются. Для полной замены текущие данные очищаются и загружается содержимое файла.</p>
+            <p>Для XLSX используйте имена листов как названия разделов данных. Для CSV назовите файл как раздел, например teachers.csv, groups.csv, classrooms.csv или educationalPlans.csv. Значения массивов и вложенных объектов можно передавать JSON-строкой в ячейке.</p>
+          </div>
+          <p className="text-xs text-gray-500 mt-3">JSON подходит для резервных копий, XLSX/CSV - для загрузки учебных планов, преподавателей, групп и аудиторий, PDF - для печати и архивации.</p>
        </div>
        {importTarget && (
             <ImportConfirmModal 

@@ -9,7 +9,7 @@ import { ScheduleEntry } from '../types';
 const UnscheduledDeck: React.FC = () => {
   const { 
     unscheduledEntries, groups, teachers, subjects, deleteScheduleEntry, 
-    unscheduledTimeHorizon, setUnscheduledTimeHorizon 
+    unscheduledTimeHorizon, setUnscheduledTimeHorizon, lastSchedulingRunSummary
   } = useStore();
   const [groupFilter, setGroupFilter] = useState<string>('');
   const [teacherFilter, setTeacherFilter] = useState<string>('');
@@ -53,7 +53,12 @@ const UnscheduledDeck: React.FC = () => {
     // which is a consistent pattern in this codebase due to likely library version mismatches.
     <div ref={drop as any} className={`p-6 rounded-xl shadow-lg transition-all border-2 ${dropzoneClasses}`}>
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-xl font-bold text-gray-800">Нераспределенные занятия ({filteredEntries.length})</h3>
+        <div>
+          <h3 className="text-xl font-bold text-gray-800">Нераспределенные занятия ({filteredEntries.length})</h3>
+          {lastSchedulingRunSummary && (
+            <p className="text-sm text-gray-500 mt-1">{lastSchedulingRunSummary}</p>
+          )}
+        </div>
         {canDrop && (
             <div className="flex items-center text-red-600 animate-pulse">
                 <TrashIcon className="w-6 h-6 mr-2"/>

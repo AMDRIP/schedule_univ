@@ -1,6 +1,6 @@
 {
   "name": "schedule-system-app",
-  "version": "3100.2204.2026",
+  "version": "3400.2604.2026",
   "releaseType": "функциональный релиз",
   "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
   "main": "main.js",
@@ -21,21 +21,22 @@
   "devDependencies": {
     "electron": "^28.2.3",
     "electron-builder": "^24.9.1",
-    "tailwindcss": "^3.4.3",
-    "esbuild": "^0.21.4"
+    "esbuild": "^0.21.4",
+    "tailwindcss": "^3.4.3"
   },
   "dependencies": {
     "@google/genai": "^1.24.0",
+    "bindings": "^1.5.0",
     "electron-log": "^5.1.5",
     "electron-updater": "^6.2.1",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^3.8.2",
+    "node-addon-api": "^7.1.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
-    "node-addon-api": "^7.1.0",
-    "bindings": "^1.5.0"
+    "react-dom": "^19.2.0",
+    "xlsx": "^0.18.5"
   },
   "gypfile": true,
   "build": {

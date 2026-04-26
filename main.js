@@ -12,26 +12,26 @@ autoUpdater.logger = log;
 const SETTINGS_FILE = 'app-settings.json';
 const getSettingsPath = () => path.join(app.getPath('userData'), SETTINGS_FILE);
 let appSettings = {
-    autoUpdateEnabled: true,
-    lastProjectPath: null,
+  autoUpdateEnabled: true,
+  lastProjectPath: null,
 };
 
 async function loadAppSettings() {
-    try {
-        const data = await fs.readFile(getSettingsPath(), 'utf-8');
-        appSettings = { ...appSettings, ...JSON.parse(data) };
-        console.log('Main process: App settings loaded.');
-    } catch (error) {
-        console.log('Main process: Could not load app settings, using defaults.');
-    }
+  try {
+    const data = await fs.readFile(getSettingsPath(), 'utf-8');
+    appSettings = { ...appSettings, ...JSON.parse(data) };
+    console.log('Main process: App settings loaded.');
+  } catch (error) {
+    console.log('Main process: Could not load app settings, using defaults.');
+  }
 }
 
 async function saveAppSettings() {
-    try {
-        await fs.writeFile(getSettingsPath(), JSON.stringify(appSettings, null, 2), 'utf-8');
-    } catch (error) {
-        console.error('Main process: Failed to save app settings:', error);
-    }
+  try {
+    await fs.writeFile(getSettingsPath(), JSON.stringify(appSettings, null, 2), 'utf-8');
+  } catch (error) {
+    console.error('Main process: Failed to save app settings:', error);
+  }
 }
 
 
@@ -71,27 +71,27 @@ async function createWindow() {
     }
     // Check for updates if enabled
     if (appSettings.autoUpdateEnabled) {
-        console.log('Main process: Auto-update enabled, checking for updates...');
-        autoUpdater.checkForUpdatesAndNotify();
+      console.log('Main process: Auto-update enabled, checking for updates...');
+      autoUpdater.checkForUpdatesAndNotify();
     } else {
-        console.log('Main process: Auto-update disabled.');
+      console.log('Main process: Auto-update disabled.');
     }
 
     // Load last project
     if (appSettings.lastProjectPath) {
-        try {
-            await fs.access(appSettings.lastProjectPath);
-            const data = await fs.readFile(appSettings.lastProjectPath, 'utf-8');
-            console.log(`Main process: Loading last project from ${appSettings.lastProjectPath}`);
-            mainWindow.webContents.send('load-initial-project', { filePath: appSettings.lastProjectPath, data });
-        } catch (error) {
-            console.warn(`Main process: Could not load last project from ${appSettings.lastProjectPath}:`, error.message);
-            appSettings.lastProjectPath = null;
-            await saveAppSettings();
-        }
+      try {
+        await fs.access(appSettings.lastProjectPath);
+        const data = await fs.readFile(appSettings.lastProjectPath, 'utf-8');
+        console.log(`Main process: Loading last project from ${appSettings.lastProjectPath}`);
+        mainWindow.webContents.send('load-initial-project', { filePath: appSettings.lastProjectPath, data });
+      } catch (error) {
+        console.warn(`Main process: Could not load last project from ${appSettings.lastProjectPath}:`, error.message);
+        appSettings.lastProjectPath = null;
+        await saveAppSettings();
+      }
     }
   });
-  
+
   // Open DevTools automatically if not in production
   if (!app.isPackaged) {
     mainWindow.webContents.openDevTools();
@@ -126,7 +126,7 @@ app.whenReady().then(async () => {
       mainWindow.setTitle(title);
     }
   });
-  
+
   // Log from renderer to main process
   ipcMain.on('log-to-main', (event, ...args) => {
     console.log('[Renderer]:', ...args);
@@ -251,30 +251,30 @@ app.whenReady().then(async () => {
     console.log('Main process: Manual update check triggered.');
     autoUpdater.checkForUpdates();
   });
-  
+
   ipcMain.on('restart-app', () => {
     autoUpdater.quitAndInstall();
   });
-  
+
   autoUpdater.on('update-available', (info) => {
     if (mainWindow) {
-        dialog.showMessageBox(mainWindow, {
-            type: 'info',
-            title: 'Найдено обновление',
-            message: `Доступна новая версия ${info.version}. Загрузка начнется в фоновом режиме.`
-        });
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'Найдено обновление',
+        message: `Доступна новая версия ${info.version}. Загрузка начнется в фоновом режиме.`
+      });
       mainWindow.webContents.send('update-available');
     }
   });
 
-   autoUpdater.on('update-not-available', (info) => {
+  autoUpdater.on('update-not-available', (info) => {
     dialog.showMessageBox(mainWindow, {
-        type: 'info',
-        title: 'Проверка обновлений',
-        message: 'У вас установлена последняя версия приложения.'
+      type: 'info',
+      title: 'Проверка обновлений',
+      message: 'У вас установлена последняя версия приложения.'
     });
   });
-  
+
   autoUpdater.on('update-downloaded', () => {
     if (mainWindow) {
       mainWindow.webContents.send('update-downloaded');
@@ -297,6 +297,6 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', function () {
   console.log('Main process: All windows closed.');
   // Clean up autosave file on normal exit
-  fs.unlink(getAutosavePath()).catch(() => {});
+  fs.unlink(getAutosavePath()).catch(() => { });
   if (process.platform !== 'darwin') app.quit();
 });

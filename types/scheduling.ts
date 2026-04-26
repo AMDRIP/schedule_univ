@@ -41,6 +41,18 @@ export interface SessionSchedulerConfig {
     scheduleTests: 'like_exams' | 'no_rest_days' | 'none';
 }
 
+export type SchedulingBottleneck = 'teacher' | 'classroom' | 'group' | 'stream' | 'calendar' | 'rules' | 'data';
+
+export interface SchedulingExplanation {
+    summary: string;
+    bottleneck: SchedulingBottleneck;
+    conflicts: string[];
+    resource: string;
+    checkedSlots: number;
+    checkedClassrooms: number;
+    lastRunAt: string;
+}
+
 export interface UnscheduledEntry {
     uid: string;
     subjectId: string;
@@ -52,4 +64,5 @@ export interface UnscheduledEntry {
     streamId?: string;
     studentCount: number;
     targetWeek?: number;
+    explanation?: SchedulingExplanation;
 }
