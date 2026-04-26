@@ -20,7 +20,7 @@ interface IElectronAPI {
   restoreAutosave: () => Promise<{ data: string } | null>;
   log: (...args: any[]) => void;
   savePdfFile: (data: ArrayBuffer, defaultPath: string) => Promise<string | null>;
-  
+
   // Auto Updater and App Settings API
   getAutoUpdateSetting: () => Promise<boolean>;
   setAutoUpdateSetting: (enabled: boolean) => Promise<void>;
@@ -40,4 +40,4 @@ declare global {
 }
 
 // FIX: Add an empty export to make this a module, allowing global augmentation.
-export {};
+export { };
