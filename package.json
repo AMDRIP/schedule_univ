@@ -33,6 +33,10 @@
     "jspdf-autotable": "^5.0.7",
     "node-addon-api": "^7.1.0",
     "react": "^19.2.0",
+<<<<<<< HEAD
+=======
+    "react-dom": "^19.2.1",
+>>>>>>> origin/snyk-upgrade-53c04935c668dbd5d7877bdedd52790e
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
     "react-dom": "^19.2.0",
