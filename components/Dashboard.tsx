@@ -16,6 +16,7 @@ import FacultyView from './FacultyView';
 import TeacherView from './TeacherView';
 import UniversityWideSchedule from './UniversityWideSchedule';
 import TeacherGroupLessons from './TeacherGroupLessons';
+import BuildingPlanEditor from './BuildingPlanEditor';
 
 
 interface DashboardProps {
@@ -39,6 +40,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
 
   const renderContent = () => {
     switch (activeView) {
+      case 'Планы зданий':
+        return <BuildingPlanEditor />;
       case 'Просмотр расписания':
         return <ScheduleView currentRole={currentRole} viewDate={viewDate} setViewDate={setViewDate} />;
       case 'Сводное расписание':

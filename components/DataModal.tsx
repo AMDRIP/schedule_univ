@@ -30,6 +30,7 @@ const TITLE_MAP: Record<DataType, { single: string }> = {
     subgroups: { single: 'подгруппу' },
     electives: { single: 'факультатив' },
     classroomTags: { single: 'тег аудитории' },
+    buildingPlans: { single: 'план здания' },
 };
 
 
@@ -85,6 +86,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'subgroups': return { name: '', parentGroupId: groups[0]?.id || '', studentCount: 12, teacherAssignments: [] };
       case 'electives': return { name: '', subjectId: subjects[0]?.id || '', teacherId: teachers[0]?.id || '', groupId: groups[0]?.id || '', hoursPerSemester: 32 };
       case 'classroomTags': return { name: '', icon: 'BookmarkIcon', color: 'gray' };
+      case 'buildingPlans': return { name: '', address: '', floors: [], updatedAt: new Date().toISOString() };
       default: return {};
     }
   };

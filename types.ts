@@ -148,8 +148,33 @@ export interface Group extends BaseItem {
   pinnedClassroomId?: string;
 }
 export interface Stream extends BaseItem { name: string; groupIds: string[]; }
-export interface Classroom extends BaseItem { number: string; capacity: number; typeId: string; availabilityGrid?: AvailabilityGrid; tagIds?: string[]; }
-export interface Cabinet extends BaseItem { number: string; departmentId: string; }
+export type RoomAssignmentCategory = 'educational' | 'administrative' | 'support' | 'utility' | 'public';
+
+export interface RoomResourceMetadata {
+  buildingPlanId?: string;
+  floorId?: string;
+  roomId?: string;
+  buildingName?: string;
+  floorNumber?: number;
+  assignmentCategory?: RoomAssignmentCategory;
+  assignmentName?: string;
+  color?: string;
+}
+
+export interface Classroom extends BaseItem {
+  number: string;
+  capacity: number;
+  typeId: string;
+  availabilityGrid?: AvailabilityGrid;
+  tagIds?: string[];
+  roomMetadata?: RoomResourceMetadata;
+}
+
+export interface Cabinet extends BaseItem {
+  number: string;
+  departmentId: string;
+  roomMetadata?: RoomResourceMetadata;
+}
 export interface TimeSlot extends BaseItem { time: string; }
 export interface Subject extends BaseItem {
   name: string;
@@ -288,6 +313,9 @@ export interface HeuristicConfig {
   iterations: number;
   enforceLectureOrder: boolean;
   distributeEvenly: boolean;
+  seed?: number | string;
+  stochasticity?: number; // 0 = always best candidate, 1 = broad randomized choice among top candidates
+  useNative?: boolean;
 }
 
 export interface SessionSchedulerConfig {
@@ -373,5 +401,65 @@ export interface Elective extends BaseItem {
   hoursPerSemester: number;
 }
 
-export type DataItem = Faculty | Department | Teacher | Group | Stream | Classroom | Subject | Cabinet | TimeSlot | TeacherSubjectLink | SchedulingRule | ProductionCalendarEvent | UGS | Specialty | EducationalPlan | ScheduleTemplate | ClassroomType | Subgroup | Elective | ClassroomTag;
-export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'streams' | 'classrooms' | 'subjects' | 'cabinets' | 'timeSlots' | 'teacherSubjectLinks' | 'schedulingRules' | 'productionCalendar' | 'ugs' | 'specialties' | 'educationalPlans' | 'scheduleTemplates' | 'classroomTypes' | 'subgroups' | 'electives' | 'timeSlotsShortened' | 'classroomTags';
+export type BuildingTool = 'select' | 'room' | 'door' | 'window' | 'furniture';
+export type BuildingRoomResourceKind = 'classroom' | 'cabinet' | 'none';
+export type BuildingOpeningKind = 'door' | 'window';
+export type FurnitureKind = 'desk' | 'chair' | 'teacherDesk' | 'board' | 'computer' | 'projector' | 'cabinet' | 'shelf' | 'sink' | 'table';
+
+export interface BuildingFurniture extends BaseItem {
+  kind: FurnitureKind;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number;
+  label?: string;
+}
+
+export interface BuildingOpening extends BaseItem {
+  kind: BuildingOpeningKind;
+  roomId?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation?: number;
+}
+
+export interface BuildingRoom extends BaseItem {
+  number: string;
+  name?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  capacity: number;
+  resourceKind: BuildingRoomResourceKind;
+  assignmentCategory: RoomAssignmentCategory;
+  assignmentName?: string;
+  classroomTypeId?: string;
+  departmentId?: string;
+  tagIds?: string[];
+  color: string;
+  notes?: string;
+  furniture: BuildingFurniture[];
+}
+
+export interface BuildingFloor extends BaseItem {
+  name: string;
+  number: number;
+  width: number;
+  height: number;
+  rooms: BuildingRoom[];
+  openings: BuildingOpening[];
+}
+
+export interface BuildingPlan extends BaseItem {
+  name: string;
+  address?: string;
+  floors: BuildingFloor[];
+  updatedAt: string;
+}
+
+export type DataItem = Faculty | Department | Teacher | Group | Stream | Classroom | Subject | Cabinet | TimeSlot | TeacherSubjectLink | SchedulingRule | ProductionCalendarEvent | UGS | Specialty | EducationalPlan | ScheduleTemplate | ClassroomType | Subgroup | Elective | ClassroomTag | BuildingPlan;
+export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'streams' | 'classrooms' | 'subjects' | 'cabinets' | 'timeSlots' | 'teacherSubjectLinks' | 'schedulingRules' | 'productionCalendar' | 'ugs' | 'specialties' | 'educationalPlans' | 'scheduleTemplates' | 'classroomTypes' | 'subgroups' | 'electives' | 'timeSlotsShortened' | 'classroomTags' | 'buildingPlans';

@@ -32,11 +32,100 @@ export interface SchedulerResult {
     schedule: ScheduleEntry[];
     unschedulable: UnscheduledEntry[];
     explanations: Record<string, SchedulingExplanation>;
+    score?: ScheduleScore;
+}
+
+export interface ScheduleScore {
+    total: number;
+    unscheduled: number;
+    hardViolations: number;
+    softPenalty: number;
+    placed: number;
+}
+
+interface SchedulerIndex {
+    teachersById: Map<string, Teacher>;
+    groupsById: Map<string, Group>;
+    classroomsById: Map<string, Classroom>;
+    subjectsById: Map<string, Subject>;
+    streamsById: Map<string, Stream>;
+    productionByDate: Map<string, ProductionCalendarEvent>;
+    subgroupsById: Map<string, Subgroup>;
+    subgroupsByParent: Map<string, Subgroup[]>;
+    plansBySpecialty: Map<string, EducationalPlan>;
+    groupToStreamId: Map<string, string>;
+    teacherLinksBySubjectType: Map<string, TeacherSubjectLink[]>;
+    classroomsByType: Map<string, Classroom[]>;
+    suitableClassroomCache: Map<string, Classroom[]>;
 }
 
 type RejectionStats = Record<SchedulingBottleneck, number> & {
     checkedSlots: number;
     checkedClassrooms: number;
+};
+
+const mapById = <T extends { id: string }>(items: T[]) => new Map(items.map(item => [item.id, item]));
+
+const makeSubjectTypeKey = (subjectId: string, classType: ClassType) => `${subjectId}::${classType}`;
+
+const createSchedulerIndex = (data: GenerationData): SchedulerIndex => {
+    const subgroupsByParent = new Map<string, Subgroup[]>();
+    data.subgroups.forEach(subgroup => {
+        const current = subgroupsByParent.get(subgroup.parentGroupId) || [];
+        current.push(subgroup);
+        subgroupsByParent.set(subgroup.parentGroupId, current);
+    });
+
+    const groupToStreamId = new Map<string, string>();
+    data.streams.forEach(stream => stream.groupIds.forEach(groupId => groupToStreamId.set(groupId, stream.id)));
+
+    const teacherLinksBySubjectType = new Map<string, TeacherSubjectLink[]>();
+    data.teacherSubjectLinks.forEach(link => {
+        link.classTypes.forEach(classType => {
+            const key = makeSubjectTypeKey(link.subjectId, classType);
+            const current = teacherLinksBySubjectType.get(key) || [];
+            current.push(link);
+            teacherLinksBySubjectType.set(key, current);
+        });
+    });
+
+    const classroomsByType = new Map<string, Classroom[]>();
+    data.classrooms.forEach(classroom => {
+        const current = classroomsByType.get(classroom.typeId) || [];
+        current.push(classroom);
+        classroomsByType.set(classroom.typeId, current);
+    });
+
+    return {
+        teachersById: mapById(data.teachers),
+        groupsById: mapById(data.groups),
+        classroomsById: mapById(data.classrooms),
+        subjectsById: mapById(data.subjects),
+        streamsById: mapById(data.streams),
+        productionByDate: new Map(data.productionCalendar.map(event => [event.date, event])),
+        subgroupsById: mapById(data.subgroups),
+        subgroupsByParent,
+        plansBySpecialty: new Map(data.educationalPlans.map(plan => [plan.specialtyId, plan])),
+        groupToStreamId,
+        teacherLinksBySubjectType,
+        classroomsByType,
+        suitableClassroomCache: new Map(),
+    };
+};
+
+const createSeededRandom = (seed?: number | string) => {
+    let value = 0;
+    const normalized = seed === undefined ? `${Date.now()}-${Math.random()}` : String(seed);
+    for (let i = 0; i < normalized.length; i++) {
+        value = (value * 31 + normalized.charCodeAt(i)) >>> 0;
+    }
+    return () => {
+        value = (value + 0x6D2B79F5) >>> 0;
+        let t = value;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
 };
 
 const createEmptyRejectionStats = (): RejectionStats => ({
@@ -81,22 +170,130 @@ const markUnscheduled = (
     unschedulable.push({ ...entry, explanation });
 };
 
+const getEntryGroupIds = (entry: Pick<ScheduleEntry, 'groupId' | 'groupIds'> | Pick<UnscheduledEntry, 'groupId' | 'groupIds'>) =>
+    entry.groupIds || (entry.groupId ? [entry.groupId] : []);
+
+const addBooking = (bookings: Map<string, Set<string>>, resourceKey: string, bookingKey: string) => {
+    if (!bookings.has(resourceKey)) bookings.set(resourceKey, new Set());
+    bookings.get(resourceKey)!.add(bookingKey);
+};
+
+const removeBooking = (bookings: Map<string, Set<string>>, resourceKey: string, bookingKey: string) => {
+    bookings.get(resourceKey)?.delete(bookingKey);
+};
+
+const createResourceBookings = (
+    teachers: Teacher[],
+    groups: Group[],
+    classrooms: Classroom[],
+    schedule: ScheduleEntry[]
+) => {
+    const resourceBookings = new Map<string, Set<string>>();
+    teachers.forEach(item => resourceBookings.set(`teacher-${item.id}`, new Set()));
+    groups.forEach(item => resourceBookings.set(`group-${item.id}`, new Set()));
+    classrooms.forEach(item => resourceBookings.set(`classroom-${item.id}`, new Set()));
+
+    schedule.forEach(entry => {
+        if (!entry.date) return;
+        const bookingKey = `${entry.date}-${entry.timeSlotId}`;
+        addBooking(resourceBookings, `teacher-${entry.teacherId}`, bookingKey);
+        getEntryGroupIds(entry).forEach(gid => addBooking(resourceBookings, `group-${gid}`, bookingKey));
+        addBooking(resourceBookings, `classroom-${entry.classroomId}`, bookingKey);
+    });
+
+    return resourceBookings;
+};
+
+const getRetainedExistingSchedule = (schedule: ScheduleEntry[], config: HeuristicConfig) => {
+    if (!config.clearExisting) return schedule;
+    const startDate = new Date(config.timeFrame.start + 'T00:00:00');
+    const endDate = new Date(config.timeFrame.end + 'T00:00:00');
+
+    return schedule.filter(entry => {
+        if (!entry.date) return true;
+        const entryDate = new Date(entry.date + 'T00:00:00');
+        if (entryDate < startDate || entryDate > endDate) return true;
+        if (!config.target) return false;
+        if (config.target.type === 'group') {
+            if (entry.groupId === config.target.id) return false;
+            if (entry.groupIds?.includes(config.target.id)) return false;
+        }
+        if (config.target.type === 'teacher' && entry.teacherId === config.target.id) return false;
+        if (config.target.type === 'classroom' && entry.classroomId === config.target.id) return false;
+        return true;
+    });
+};
+
+const createWorkDays = (data: GenerationData, config: HeuristicConfig, index: SchedulerIndex): Date[] => {
+    const workDays: Date[] = [];
+    let currentDate = new Date(config.timeFrame.start + 'T00:00:00');
+    const lastDate = new Date(config.timeFrame.end + 'T00:00:00');
+    while (currentDate <= lastDate) {
+        const dateStr = toYYYYMMDD(currentDate);
+        const dayInfo = index.productionByDate.get(dateStr);
+        if (!data.settings.respectProductionCalendar || !dayInfo || dayInfo.isWorkDay) {
+            if (currentDate.getDay() !== 0) {
+                workDays.push(new Date(currentDate));
+            }
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
+    return workDays;
+};
+
+const getActiveTimeSlotsForDate = (data: GenerationData, date: Date | string, index: SchedulerIndex) => {
+    const dateStr = typeof date === 'string' ? date : toYYYYMMDD(date);
+    const dayInfo = index.productionByDate.get(dateStr);
+    const isPreHoliday = data.settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
+    return isPreHoliday ? data.timeSlotsShortened : data.timeSlots;
+};
+
+const getInvolvedGroups = (entry: UnscheduledEntry | ScheduleEntry, index: SchedulerIndex) =>
+    getEntryGroupIds(entry).map(groupId => index.groupsById.get(groupId)).filter(Boolean) as Group[];
+
+const getSuitableClassrooms = (entry: UnscheduledEntry, subject: Subject, index: SchedulerIndex) => {
+    const requiredClassroomTypes = subject.classroomTypeRequirements?.[entry.classType];
+    if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) return null;
+
+    const requiredTags = subject.requiredClassroomTagIds || [];
+    const cacheKey = `${entry.subjectId}::${entry.classType}::${entry.studentCount}::${requiredClassroomTypes.join(',')}::${requiredTags.join(',')}`;
+    const cached = index.suitableClassroomCache.get(cacheKey);
+    if (cached) return cached;
+
+    const classrooms = requiredClassroomTypes.flatMap(typeId => index.classroomsByType.get(typeId) || [])
+        .filter((classroom, position, array) => array.findIndex(item => item.id === classroom.id) === position)
+        .filter(classroom => {
+            if (classroom.capacity < entry.studentCount) return false;
+            if (requiredTags.length > 0) {
+                const classroomTags = classroom.tagIds || [];
+                if (!requiredTags.every(tagId => classroomTags.includes(tagId))) return false;
+            }
+            return true;
+        });
+
+    index.suitableClassroomCache.set(cacheKey, classrooms);
+    return classrooms;
+};
+
+const chooseCandidate = <T>(candidates: T[], rng: () => number, stochasticity = 0): T => {
+    if (candidates.length === 1 || stochasticity <= 0) return candidates[0];
+    const spread = Math.max(1, Math.ceil(candidates.length * Math.min(1, stochasticity)));
+    return candidates[Math.floor(rng() * spread)];
+};
+
 // Generates the initial pool of classes to be scheduled from educational plans
-const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
-    const { groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives } = data;
+const generateClassPool = (data: GenerationData, index = createSchedulerIndex(data)): UnscheduledEntry[] => {
+    const { groups, streams, electives } = data;
     const entries: UnscheduledEntry[] = [];
     const currentSemester = 1;
-
-    const groupToStreamMap = new Map<string, string>();
-    streams.forEach(stream => stream.groupIds.forEach(groupId => groupToStreamMap.set(groupId, stream.id)));
 
     const processedGroupLectures = new Set<string>(); // key: `${subjectId}-${groupId}` to track handled groups
 
     groups.forEach(group => {
-        const plan = educationalPlans.find(p => p.specialtyId === group.specialtyId);
+        const plan = index.plansBySpecialty.get(group.specialtyId);
         if (!plan) return;
 
-        const groupSubgroups = subgroups.filter(sg => sg.parentGroupId === group.id);
+        const groupSubgroups = index.subgroupsByParent.get(group.id) || [];
         const relevantEntries = plan.entries.filter(e => e.semester === currentSemester);
 
         relevantEntries.forEach(planEntry => {
@@ -105,24 +302,24 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
             // 1. Handle Lectures
             if (planEntry.lectureHours > 0 && !processedGroupLectures.has(`${planEntry.subjectId}-${group.id}`)) {
                 const numClasses = Math.ceil(planEntry.lectureHours / 2);
-                const streamId = groupToStreamMap.get(group.id);
+                const streamId = index.groupToStreamId.get(group.id);
 
                 let lectureGroups: Group[] = [group];
 
                 // If in a stream, find all other groups in that stream with the same lecture
                 if (streamId) {
-                    const stream = streams.find(s => s.id === streamId)!;
+                    const stream = index.streamsById.get(streamId)!;
                     const otherStreamGroups = groups.filter(g => stream.groupIds.includes(g.id) && g.id !== group.id);
 
                     otherStreamGroups.forEach(otherGroup => {
-                        const otherPlan = educationalPlans.find(p => p.specialtyId === otherGroup.specialtyId);
+                        const otherPlan = index.plansBySpecialty.get(otherGroup.specialtyId);
                         if (otherPlan && otherPlan.entries.some(e => e.semester === currentSemester && e.subjectId === planEntry.subjectId && e.lectureHours > 0)) {
                             lectureGroups.push(otherGroup);
                         }
                     });
                 }
 
-                teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
+                teacherId = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(planEntry.subjectId, ClassType.Lecture))?.[0]?.teacherId;
                 if (teacherId) {
                     const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
                     const groupIds = lectureGroups.map(g => g.id);
@@ -138,7 +335,7 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
                         if (lectureGroups.length > 1) {
                             entry.groupIds = groupIds;
                             // Check if this is a full stream lecture
-                            const stream = streams.find(s => s.id === streamId);
+                            const stream = streamId ? index.streamsById.get(streamId) : undefined;
                             if (stream && stream.groupIds.length === groupIds.length) {
                                 entry.streamId = streamId;
                             }
@@ -165,7 +362,7 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
                 if (planEntry.splitForSubgroups && groupSubgroups.length > 0) {
                     groupSubgroups.forEach(subgroup => {
                         const assignment = subgroup.teacherAssignments?.find(a => a.subjectId === planEntry.subjectId && a.classType === type);
-                        teacherId = assignment?.teacherId ?? teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
+                        teacherId = assignment?.teacherId ?? index.teacherLinksBySubjectType.get(makeSubjectTypeKey(planEntry.subjectId, type))?.[0]?.teacherId;
                         if (teacherId) {
                             for (let i = 0; i < numClasses; i++) {
                                 entries.push({
@@ -177,7 +374,7 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
                         }
                     });
                 } else { // Whole group for practice/lab
-                    teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
+                    teacherId = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(planEntry.subjectId, type))?.[0]?.teacherId;
                     if (teacherId) {
                         for (let i = 0; i < numClasses; i++) {
                             entries.push({
@@ -194,7 +391,7 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
 
     electives.forEach(elective => {
         const numClasses = Math.ceil(elective.hoursPerSemester / 2);
-        const group = data.groups.find(g => g.id === elective.groupId);
+        const group = index.groupsById.get(elective.groupId);
         if (!group) return;
 
         for (let i = 0; i < numClasses; i++) {
@@ -215,6 +412,8 @@ const generateClassPool = (data: GenerationData): UnscheduledEntry[] => {
 
 export const generateScheduleWithHeuristics = async (data: GenerationData, config: HeuristicConfig): Promise<SchedulerResult> => {
     const explanations: Record<string, SchedulingExplanation> = {};
+    const index = createSchedulerIndex(data);
+    const rng = createSeededRandom(config.seed);
 
     // Check for native scheduler availability
     // We import dynamically to avoid issues if the module is not built
@@ -223,10 +422,10 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         nativeService = require('./nativeScheduler');
     } catch (e) { }
 
-    if (nativeService && nativeService.isNativeSchedulerAvailable() && !config.target) { // Native only supports full generation for now
+    if (config.useNative && data.schedulingRules.length === 0 && nativeService && nativeService.isNativeSchedulerAvailable() && !config.target) { // Native only supports full generation for now
         console.log("Using Native C++ Scheduler...");
         try {
-            const classPool = generateClassPool(data);
+            const classPool = generateClassPool(data, index);
             const nativeSchedule = await nativeService.generateScheduleWithNative(
                 data.teachers,
                 data.groups,
@@ -251,7 +450,8 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                 return { ...entry, explanation };
             });
 
-            return { schedule: nativeSchedule, unschedulable, explanations };
+            const result = { schedule: nativeSchedule, unschedulable, explanations };
+            return { ...result, score: calculateScheduleScore(data, result, config) };
         } catch (e) {
             console.error("Native scheduler failed, falling back to JS implementation:", e);
         }
@@ -259,55 +459,20 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
 
     // --- 1. INITIALIZATION ---
     const { strictness, target, timeFrame, clearExisting, enforceLectureOrder, distributeEvenly } = config;
-    const { teachers, groups, classrooms, subjects, timeSlots, settings } = data;
+    const { teachers, groups, classrooms, timeSlots, settings } = data;
 
     const newSchedule: ScheduleEntry[] = [];
     const unschedulable: UnscheduledEntry[] = [];
     const softPenaltyMultiplier = strictness / 5.0; // Scale strictness from 1-10 to a multiplier
 
-    // Grid to track resource usage: key is "resourceType-id", value is a Set of "YYYY-MM-DD-timeSlotId"
-    const resourceBookings = new Map<string, Set<string>>();
-    const initializeBookings = (items: (Teacher | Group | Classroom)[], type: string) => {
-        items.forEach(item => resourceBookings.set(`${type}-${item.id}`, new Set()));
-    };
-    initializeBookings(teachers, 'teacher');
-    initializeBookings(groups, 'group');
-    initializeBookings(classrooms, 'classroom');
-
     // Populate with existing schedule entries that are NOT being cleared
-    let existingSchedule = data.schedule;
-    if (clearExisting && target) {
-        existingSchedule = data.schedule.filter(entry => {
-            if (!entry.date) return true;
-            const entryDate = new Date(entry.date + 'T00:00:00');
-            const startDate = new Date(timeFrame.start + 'T00:00:00');
-            const endDate = new Date(timeFrame.end + 'T00:00:00');
-            if (entryDate >= startDate && entryDate <= endDate) {
-                if (target.type === 'group') {
-                    if (entry.groupId === target.id) return false;
-                    if (entry.groupIds?.includes(target.id)) return false;
-                }
-                if (target.type === 'teacher' && entry.teacherId === target.id) return false;
-                if (target.type === 'classroom' && entry.classroomId === target.id) return false;
-            }
-            return true;
-        });
-    }
+    const existingSchedule = getRetainedExistingSchedule(data.schedule, config);
+    const schedulingData = { ...data, schedule: existingSchedule };
 
-    existingSchedule.forEach(entry => {
-        if (!entry.date) return; // Only consider dated entries for conflict checking
-        const bookingKey = `${entry.date}-${entry.timeSlotId}`;
-        resourceBookings.get(`teacher-${entry.teacherId}`)?.add(bookingKey);
-        if (entry.groupIds) {
-            entry.groupIds.forEach(gid => resourceBookings.get(`group-${gid}`)?.add(bookingKey));
-        } else if (entry.groupId) {
-            resourceBookings.get(`group-${entry.groupId}`)?.add(bookingKey);
-        }
-        resourceBookings.get(`classroom-${entry.classroomId}`)?.add(bookingKey);
-    });
+    const resourceBookings = createResourceBookings(teachers, groups, classrooms, existingSchedule);
 
     // --- 2. PREPARE CLASS POOL AND WORKDAYS ---
-    let classPool = generateClassPool(data);
+    let classPool = generateClassPool(data, index);
     const existingUids = new Set(existingSchedule.map(e => e.unscheduledUid));
     classPool = classPool.filter(e => !existingUids.has(e.uid)); // Don't try to schedule what's already there
 
@@ -349,28 +514,15 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         });
     }
 
-    classPool.sort((a, b) => getConstraintScore(b, data) - getConstraintScore(a, data));
-
-    const workDays: Date[] = [];
-    let currentDate = new Date(timeFrame.start + 'T00:00:00');
-    const lastDate = new Date(timeFrame.end + 'T00:00:00');
-    while (currentDate <= lastDate) {
-        const dateStr = toYYYYMMDD(currentDate);
-        const dayInfo = data.productionCalendar.find(e => e.date === dateStr);
-        if (!settings.respectProductionCalendar || !dayInfo || dayInfo.isWorkDay) {
-            if (currentDate.getDay() !== 0) { // Exclude Sundays
-                workDays.push(new Date(currentDate));
-            }
-        }
-        currentDate.setDate(currentDate.getDate() + 1);
-    }
+    const workDays = createWorkDays(data, config, index);
+    classPool.sort((a, b) => getConstraintScore(b, data, index, workDays) - getConstraintScore(a, data, index, workDays));
 
     // --- 3. PLACEMENT LOOP ---
     for (const entryToPlace of classPool) {
         let bestSlots: { date: Date, timeSlotId: string, classroom: Classroom, cost: number }[] = [];
         const TOP_N_CANDIDATES = 5;
 
-        const involvedGroupIds = entryToPlace.groupIds || (entryToPlace.groupId ? [entryToPlace.groupId] : []);
+        const involvedGroupIds = getEntryGroupIds(entryToPlace);
         if (involvedGroupIds.length === 0) {
             markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
                 entryToPlace,
@@ -381,7 +533,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             ));
             continue;
         }
-        const involvedGroups = groups.filter(g => involvedGroupIds.includes(g.id));
+        const involvedGroups = getInvolvedGroups(entryToPlace, index);
         if (involvedGroups.length !== involvedGroupIds.length) {
             markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
                 entryToPlace,
@@ -393,7 +545,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             continue;
         }
 
-        const subject = subjects.find(s => s.id === entryToPlace.subjectId);
+        const subject = index.subjectsById.get(entryToPlace.subjectId);
         if (!subject) {
             markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
                 entryToPlace,
@@ -417,19 +569,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             continue;
         }
 
-        const suitableClassrooms = classrooms.filter(c => {
-            if (c.capacity < entryToPlace.studentCount) return false;
-            if (!requiredClassroomTypes.includes(c.typeId)) return false;
-
-            const requiredTags = subject.requiredClassroomTagIds || [];
-            if (requiredTags.length > 0) {
-                const classroomTags = c.tagIds || [];
-                if (!requiredTags.every(tagId => classroomTags.includes(tagId))) {
-                    return false;
-                }
-            }
-            return true;
-        });
+        const suitableClassrooms = getSuitableClassrooms(entryToPlace, subject, index) || [];
 
         if (suitableClassrooms.length === 0) {
             markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
@@ -452,9 +592,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             const dateStr = toYYYYMMDD(date);
             const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
 
-            const dayInfo = data.productionCalendar.find(e => e.date === dateStr);
-            const isPreHoliday = settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
-            const activeTimeSlots = isPreHoliday ? data.timeSlotsShortened : timeSlots;
+            const activeTimeSlots = getActiveTimeSlotsForDate(data, date, index);
 
             for (const timeSlot of activeTimeSlots) {
                 const bookingKey = `${dateStr}-${timeSlot.id}`;
@@ -471,7 +609,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                     conflicts.push(`Группа или поток уже заняты: ${dateStr}, ${timeSlot.time}.`);
                     continue;
                 }
-                if (teachers.find(t => t.id === entryToPlace.teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden) {
+                if (index.teachersById.get(entryToPlace.teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden) {
                     stats.teacher++;
                     conflicts.push(`У преподавателя запрещен слот: ${dayName}, ${timeSlot.time}.`);
                     continue;
@@ -485,7 +623,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                         continue;
                     }
 
-                    const cost = calculateSlotCost(entryToPlace, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, softPenaltyMultiplier, newSchedule, config, activeTimeSlots);
+                    const cost = calculateSlotCost(entryToPlace, date, timeSlot.id, classroom, involvedGroups, resourceBookings, schedulingData, softPenaltyMultiplier, newSchedule, config, activeTimeSlots, index);
                     if (cost === Infinity) {
                         stats.rules++;
                         conflicts.push(`Строгое пользовательское правило запрещает ${dayName}, ${timeSlot.time}.`);
@@ -504,12 +642,12 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         }
 
         if (bestSlots.length > 0) {
-            const chosenSlot = bestSlots[Math.floor(Math.random() * bestSlots.length)];
+            const chosenSlot = chooseCandidate(bestSlots, rng, config.stochasticity ?? 0);
             const bookingKey = `${toYYYYMMDD(chosenSlot.date)}-${chosenSlot.timeSlotId}`;
             const dayName = DAYS_OF_WEEK[chosenSlot.date.getDay() === 0 ? 6 : chosenSlot.date.getDay() - 1];
 
             const newEntry: ScheduleEntry = {
-                id: `sched-h-${entryToPlace.uid}-${Math.random()}`,
+                id: `sched-h-${entryToPlace.uid}-${Math.floor(rng() * 1_000_000_000)}`,
                 day: dayName,
                 date: toYYYYMMDD(chosenSlot.date),
                 timeSlotId: chosenSlot.timeSlotId,
@@ -527,9 +665,9 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             };
             newSchedule.push(newEntry);
 
-            resourceBookings.get(`teacher-${entryToPlace.teacherId}`)?.add(bookingKey);
-            resourceBookings.get(`classroom-${chosenSlot.classroom.id}`)?.add(bookingKey);
-            involvedGroups.forEach(g => resourceBookings.get(`group-${g.id}`)?.add(bookingKey));
+            addBooking(resourceBookings, `teacher-${entryToPlace.teacherId}`, bookingKey);
+            addBooking(resourceBookings, `classroom-${chosenSlot.classroom.id}`, bookingKey);
+            involvedGroups.forEach(g => addBooking(resourceBookings, `group-${g.id}`, bookingKey));
 
         } else {
             markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
@@ -544,22 +682,23 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     // --- 4. REFINEMENT PHASE ---
     if (newSchedule.length > 0) {
         console.log(`Initial placement finished. ${newSchedule.length} entries placed. Starting refinement.`);
-        const refinedSchedule = await refineSchedule(newSchedule, data, config, resourceBookings);
-        return { schedule: refinedSchedule, unschedulable, explanations };
+        const refinedSchedule = await refineSchedule(newSchedule, schedulingData, config, resourceBookings, index);
+        const result = { schedule: refinedSchedule, unschedulable, explanations };
+        return { ...result, score: calculateScheduleScore(data, result, config, index) };
     }
 
 
-    return { schedule: newSchedule, unschedulable, explanations };
+    const result = { schedule: newSchedule, unschedulable, explanations };
+    return { ...result, score: calculateScheduleScore(data, result, config, index) };
 };
 
 
 // Determines scheduling priority. Higher score = scheduled earlier.
-const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData): number => {
+const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData, index: SchedulerIndex, workDays: Date[]): number => {
     let score = 0;
-    const { groups, subjects, teachers, teacherSubjectLinks } = data;
-    const group = groups.find(g => g.id === (entry.groupId || entry.groupIds?.[0]));
-    const subject = subjects.find(s => s.id === entry.subjectId);
-    const teacher = teachers.find(t => t.id === entry.teacherId);
+    const group = index.groupsById.get(entry.groupId || entry.groupIds?.[0] || '');
+    const subject = index.subjectsById.get(entry.subjectId);
+    const teacher = index.teachersById.get(entry.teacherId);
 
     if (entry.streamId || (entry.groupIds && entry.groupIds.length > 1)) score += 200;
     if (entry.classType === ClassType.Lab) score += 100;
@@ -567,7 +706,7 @@ const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData): numb
     if (entry.subgroupId) score += 50;
     score += entry.studentCount * 2;
 
-    const teacherLinkCount = teacherSubjectLinks.filter(l => l.subjectId === entry.subjectId && l.classTypes.includes(entry.classType)).length;
+    const teacherLinkCount = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(entry.subjectId, entry.classType))?.length || 0;
     if (teacherLinkCount <= 1) score += 150;
     else score -= teacherLinkCount * 5;
 
@@ -575,11 +714,29 @@ const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData): numb
     if (subject?.pinnedClassroomId) score += 30;
     if (group?.pinnedClassroomId) score += 30;
 
+    if (subject) {
+        const suitableClassrooms = getSuitableClassrooms(entry, subject, index);
+        const suitableCount = suitableClassrooms?.length ?? 0;
+        if (suitableCount === 0) score += 1_000;
+        else score += Math.max(0, 250 - suitableCount * 12);
+    }
+
+    const teacherAvailableSlots = workDays.reduce((count, date) => {
+        const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+        return count + getActiveTimeSlotsForDate(data, date, index)
+            .filter(slot => teacher?.availabilityGrid?.[dayName]?.[slot.id] !== AvailabilityType.Forbidden)
+            .length;
+    }, 0);
+    score += Math.max(0, 300 - teacherAvailableSlots);
+
+    const applicableRuleCount = data.schedulingRules.filter(rule => rule.conditions.some(condition => doesConditionApply(condition, entry))).length;
+    score += applicableRuleCount * 25;
+
     return score;
 };
 
 const doesConditionApply = (condition: RuleCondition, entry: UnscheduledEntry): boolean => {
-    const groupIds = entry.groupIds || (entry.groupId ? [entry.groupId] : []);
+    const groupIds = getEntryGroupIds(entry);
     switch (condition.entityType) {
         case 'teacher':
             return condition.entityIds.includes(entry.teacherId);
@@ -597,6 +754,250 @@ const doesConditionApply = (condition: RuleCondition, entry: UnscheduledEntry): 
     }
 };
 
+type RuleContextEntry = UnscheduledEntry | ScheduleEntry;
+
+interface RuleEvaluationContext {
+    entry: RuleContextEntry;
+    classroom?: Classroom;
+    involvedGroups: Group[];
+    teacher?: Teacher;
+    dateStr: string;
+    dayName: string;
+    timeSlotId: string;
+    activeTimeSlots: TimeSlot[];
+    schedule: ScheduleEntry[];
+    index: SchedulerIndex;
+    penaltyMultiplier: number;
+}
+
+const getRulePenalty = (severity: RuleSeverity, penaltyMultiplier: number) => {
+    switch (severity) {
+        case RuleSeverity.Strict: return 1_000_000;
+        case RuleSeverity.Strong: return 500 * penaltyMultiplier;
+        case RuleSeverity.Medium: return 100 * penaltyMultiplier;
+        case RuleSeverity.Weak: return 20 * penaltyMultiplier;
+        default: return 0;
+    }
+};
+
+const conditionMatchesContext = (condition: RuleCondition, context: RuleEvaluationContext, entry: RuleContextEntry = context.entry): boolean => {
+    const groupIds = getEntryGroupIds(entry);
+    const teacher = context.index.teachersById.get(entry.teacherId);
+    const groups = groupIds.map(groupId => context.index.groupsById.get(groupId)).filter(Boolean) as Group[];
+
+    switch (condition.entityType) {
+        case 'teacher':
+            return condition.entityIds.includes(entry.teacherId);
+        case 'group':
+            return groupIds.some(gid => condition.entityIds.includes(gid));
+        case 'subject':
+            return condition.entityIds.includes(entry.subjectId) && (!condition.classType || condition.classType === entry.classType);
+        case 'classType':
+            return condition.entityIds.includes(entry.classType);
+        case 'classroom':
+            return 'classroomId' in entry
+                ? condition.entityIds.includes(entry.classroomId)
+                : !!context.classroom && condition.entityIds.includes(context.classroom.id);
+        case 'department':
+            return (!!teacher && condition.entityIds.includes(teacher.departmentId)) ||
+                groups.some(group => condition.entityIds.includes(group.departmentId));
+        default:
+            return false;
+    }
+};
+
+const evaluateRuleConditions = (rule: SchedulingRule, context: RuleEvaluationContext): boolean => {
+    if (rule.conditions.length === 0) return false;
+    let result = conditionMatchesContext(rule.conditions[0], context);
+    for (let i = 1; i < rule.conditions.length; i++) {
+        const operator = rule.logicalOperators?.[i - 1] || 'AND';
+        const next = conditionMatchesContext(rule.conditions[i], context);
+        result = operator === 'OR' ? result || next : result && next;
+    }
+    return result;
+};
+
+const ruleTimeMatches = (rule: SchedulingRule, context: RuleEvaluationContext) => {
+    const dayMatches = !rule.day || rule.day === context.dayName;
+    const timeMatches = !rule.timeSlotId || rule.timeSlotId === context.timeSlotId;
+    return dayMatches && timeMatches;
+};
+
+const slotIndexOf = (activeTimeSlots: TimeSlot[], timeSlotId?: string) =>
+    activeTimeSlots.findIndex(slot => slot.id === timeSlotId);
+
+const getMaxConsecutiveCount = (indices: number[]) => {
+    const sorted = Array.from(new Set(indices.filter(index => index >= 0))).sort((a, b) => a - b);
+    let max = 0;
+    let current = 0;
+    let previous = -2;
+    sorted.forEach(index => {
+        current = index === previous + 1 ? current + 1 : 1;
+        previous = index;
+        max = Math.max(max, current);
+    });
+    return max;
+};
+
+const getGapCount = (indices: number[]) => {
+    const sorted = Array.from(new Set(indices.filter(index => index >= 0))).sort((a, b) => a - b);
+    if (sorted.length <= 1) return 0;
+    return Math.max(0, sorted[sorted.length - 1] - sorted[0] + 1 - sorted.length);
+};
+
+const entriesMatchingCondition = (condition: RuleCondition, context: RuleEvaluationContext) =>
+    context.schedule.filter(entry => conditionMatchesContext(condition, context, entry));
+
+const compareCandidateWithEntry = (context: RuleEvaluationContext, other: ScheduleEntry) => {
+    const dateCompare = context.dateStr.localeCompare(other.date || '');
+    if (dateCompare !== 0) return dateCompare;
+    return slotIndexOf(context.activeTimeSlots, context.timeSlotId) - slotIndexOf(context.activeTimeSlots, other.timeSlotId);
+};
+
+const applySchedulingRules = (context: RuleEvaluationContext, rules: SchedulingRule[]) => {
+    let cost = 0;
+
+    for (const rule of rules) {
+        const penalty = getRulePenalty(rule.severity, context.penaltyMultiplier);
+        const isStrict = rule.severity === RuleSeverity.Strict;
+        const conditionsApply = evaluateRuleConditions(rule, context);
+        const currentConditionIndexes = rule.conditions
+            .map((condition, index) => conditionMatchesContext(condition, context) ? index : -1)
+            .filter(index => index >= 0);
+        const isPairRule = [
+            RuleAction.SameDay,
+            RuleAction.DifferentDay,
+            RuleAction.Consecutive,
+            RuleAction.Order,
+            RuleAction.NoOverlap,
+        ].includes(rule.action);
+
+        if (!conditionsApply && !(isPairRule && currentConditionIndexes.length > 0)) {
+            continue;
+        }
+
+        const rejectOrPenalize = (amount = penalty) => {
+            if (isStrict && amount > 0) return Infinity;
+            cost += amount;
+            return cost;
+        };
+
+        switch (rule.action) {
+            case RuleAction.AvoidTime:
+                if (ruleTimeMatches(rule, context) && rejectOrPenalize() === Infinity) return Infinity;
+                break;
+            case RuleAction.RequireTime:
+                if (!ruleTimeMatches(rule, context) && rejectOrPenalize() === Infinity) return Infinity;
+                break;
+            case RuleAction.PreferTime:
+                if (ruleTimeMatches(rule, context)) cost -= penalty;
+                break;
+            case RuleAction.StartAfter: {
+                const candidateIndex = slotIndexOf(context.activeTimeSlots, context.timeSlotId);
+                const requiredIndex = rule.timeSlotId ? slotIndexOf(context.activeTimeSlots, rule.timeSlotId) : (rule.param ?? 0);
+                if (candidateIndex < requiredIndex && rejectOrPenalize() === Infinity) return Infinity;
+                break;
+            }
+            case RuleAction.EndBefore: {
+                const candidateIndex = slotIndexOf(context.activeTimeSlots, context.timeSlotId);
+                const requiredIndex = rule.timeSlotId ? slotIndexOf(context.activeTimeSlots, rule.timeSlotId) : (rule.param ?? context.activeTimeSlots.length - 1);
+                if (candidateIndex > requiredIndex && rejectOrPenalize() === Infinity) return Infinity;
+                break;
+            }
+            case RuleAction.MaxPerDay: {
+                if (rule.param === undefined) break;
+                const count = context.schedule.filter(entry =>
+                    entry.date === context.dateStr &&
+                    rule.conditions.some(condition => conditionMatchesContext(condition, context, entry))
+                ).length + 1;
+                if (count > rule.param && rejectOrPenalize((count - rule.param) * penalty) === Infinity) return Infinity;
+                break;
+            }
+            case RuleAction.MinPerDay: {
+                if (rule.param === undefined) break;
+                const count = context.schedule.filter(entry =>
+                    entry.date === context.dateStr &&
+                    rule.conditions.some(condition => conditionMatchesContext(condition, context, entry))
+                ).length + 1;
+                if (count < rule.param) cost += (rule.param - count) * penalty * 0.5;
+                break;
+            }
+            case RuleAction.MaxConsecutive: {
+                if (rule.param === undefined) break;
+                const indices = context.schedule
+                    .filter(entry => entry.date === context.dateStr && rule.conditions.some(condition => conditionMatchesContext(condition, context, entry)))
+                    .map(entry => slotIndexOf(context.activeTimeSlots, entry.timeSlotId));
+                indices.push(slotIndexOf(context.activeTimeSlots, context.timeSlotId));
+                const maxConsecutive = getMaxConsecutiveCount(indices);
+                if (maxConsecutive > rule.param && rejectOrPenalize((maxConsecutive - rule.param) * penalty) === Infinity) return Infinity;
+                break;
+            }
+            case RuleAction.AtMostNGaps: {
+                if (rule.param === undefined) break;
+                const indices = context.schedule
+                    .filter(entry => entry.date === context.dateStr && rule.conditions.some(condition => conditionMatchesContext(condition, context, entry)))
+                    .map(entry => slotIndexOf(context.activeTimeSlots, entry.timeSlotId));
+                indices.push(slotIndexOf(context.activeTimeSlots, context.timeSlotId));
+                const gaps = getGapCount(indices);
+                if (gaps > rule.param && rejectOrPenalize((gaps - rule.param) * penalty) === Infinity) return Infinity;
+                break;
+            }
+            case RuleAction.SameDay: {
+                const related = rule.conditions
+                    .filter((_, index) => !currentConditionIndexes.includes(index))
+                    .flatMap(condition => entriesMatchingCondition(condition, context));
+                const effectiveRelated = related.length > 0 ? related : rule.conditions.flatMap(condition => entriesMatchingCondition(condition, context));
+                if (effectiveRelated.length > 0 && effectiveRelated.every(entry => entry.date !== context.dateStr)) {
+                    if (rejectOrPenalize() === Infinity) return Infinity;
+                }
+                break;
+            }
+            case RuleAction.DifferentDay: {
+                const related = rule.conditions
+                    .filter((_, index) => !currentConditionIndexes.includes(index))
+                    .flatMap(condition => entriesMatchingCondition(condition, context));
+                if (related.some(entry => entry.date === context.dateStr) && rejectOrPenalize() === Infinity) return Infinity;
+                break;
+            }
+            case RuleAction.Consecutive: {
+                const candidateIndex = slotIndexOf(context.activeTimeSlots, context.timeSlotId);
+                const related = rule.conditions
+                    .filter((_, index) => !currentConditionIndexes.includes(index))
+                    .flatMap(condition => entriesMatchingCondition(condition, context))
+                    .filter(entry => entry.date === context.dateStr);
+                if (related.length > 0 && !related.some(entry => Math.abs(slotIndexOf(context.activeTimeSlots, entry.timeSlotId) - candidateIndex) === 1)) {
+                    if (rejectOrPenalize() === Infinity) return Infinity;
+                }
+                break;
+            }
+            case RuleAction.Order: {
+                if (rule.conditions.length < 2) break;
+                const currentIsFirst = conditionMatchesContext(rule.conditions[0], context);
+                const currentIsSecond = conditionMatchesContext(rule.conditions[1], context);
+                if (currentIsFirst) {
+                    const secondEntries = entriesMatchingCondition(rule.conditions[1], context);
+                    if (secondEntries.some(entry => compareCandidateWithEntry(context, entry) >= 0) && rejectOrPenalize() === Infinity) return Infinity;
+                }
+                if (currentIsSecond) {
+                    const firstEntries = entriesMatchingCondition(rule.conditions[0], context);
+                    if (firstEntries.some(entry => compareCandidateWithEntry(context, entry) <= 0) && rejectOrPenalize() === Infinity) return Infinity;
+                }
+                break;
+            }
+            case RuleAction.NoOverlap: {
+                const hasOverlap = rule.conditions
+                    .filter((_, index) => !currentConditionIndexes.includes(index))
+                    .flatMap(condition => entriesMatchingCondition(condition, context))
+                    .some(entry => entry.date === context.dateStr && entry.timeSlotId === context.timeSlotId);
+                if (hasOverlap && rejectOrPenalize() === Infinity) return Infinity;
+                break;
+            }
+        }
+    }
+
+    return cost;
+};
+
 // Calculates the "cost" of placing a class in a specific slot.
 const calculateSlotCost = (
     entry: UnscheduledEntry,
@@ -609,19 +1010,21 @@ const calculateSlotCost = (
     penaltyMultiplier: number,
     newSchedule: ScheduleEntry[],
     config: HeuristicConfig,
-    activeTimeSlots: TimeSlot[]
+    activeTimeSlots: TimeSlot[],
+    index = createSchedulerIndex(data)
 ): number => {
     let cost = 0;
-    const { teachers, subjects, settings, schedulingRules } = data;
+    const { settings, schedulingRules } = data;
     const { enforceLectureOrder, distributeEvenly } = config;
-    const teacher = teachers.find(t => t.id === entry.teacherId);
-    const subject = subjects.find(s => s.id === entry.subjectId);
+    const teacher = index.teachersById.get(entry.teacherId);
+    const subject = index.subjectsById.get(entry.subjectId);
     const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
     const dateStr = toYYYYMMDD(date);
+    const allScheduleForScoring = [...data.schedule, ...newSchedule];
 
-    const allBookingsTodayForGroups = [...data.schedule, ...newSchedule].filter(e => {
+    const allBookingsTodayForGroups = allScheduleForScoring.filter(e => {
         if (e.date !== dateStr) return false;
-        const entryGroupIds = e.groupIds || (e.groupId ? [e.groupId] : []);
+        const entryGroupIds = getEntryGroupIds(e);
         return entryGroupIds.some(gid => involvedGroups.some(ig => ig.id === gid));
     });
 
@@ -669,7 +1072,7 @@ const calculateSlotCost = (
     }
 
     // Day Load Penalty
-    const teacherBookingsToday = [...data.schedule, ...newSchedule].filter(e => e.teacherId === teacher?.id && e.date === dateStr);
+    const teacherBookingsToday = allScheduleForScoring.filter(e => e.teacherId === teacher?.id && e.date === dateStr);
     const teacherClassesOnDay = teacherBookingsToday.length;
 
     if (settings.enforceStandardRules && teacherClassesOnDay >= 4) {
@@ -678,9 +1081,9 @@ const calculateSlotCost = (
 
     // FIX: Define groupClassesOnDay to calculate class load per group.
     const groupClassesOnDay = involvedGroups.map(group => {
-        return [...data.schedule, ...newSchedule].filter(e => {
+        return allScheduleForScoring.filter(e => {
             if (e.date !== dateStr) return false;
-            const entryGroupIds = e.groupIds || (e.groupId ? [e.groupId] : []);
+            const entryGroupIds = getEntryGroupIds(e);
             return entryGroupIds.includes(group.id);
         }).length;
     });
@@ -701,53 +1104,21 @@ const calculateSlotCost = (
     }
 
 
-    // --- NEW: Apply schedulingRules ---
-    const rulePenaltyMap = {
-        [RuleSeverity.Strict]: 1_000_000,
-        [RuleSeverity.Strong]: 500 * penaltyMultiplier,
-        [RuleSeverity.Medium]: 100 * penaltyMultiplier,
-        [RuleSeverity.Weak]: 20 * penaltyMultiplier,
-    };
-
-    for (const rule of schedulingRules) {
-        const conditionA = rule.conditions[0];
-        if (!conditionA || !doesConditionApply(conditionA, entry)) {
-            continue;
-        }
-        const penalty = rulePenaltyMap[rule.severity] || 0;
-        if (penalty >= 1_000_000 && rule.severity === RuleSeverity.Strict) {
-            if (rule.action === RuleAction.AvoidTime && rule.day === dayName && rule.timeSlotId === timeSlotId) return Infinity;
-        }
-
-        switch (rule.action) {
-            case RuleAction.AvoidTime:
-                if (rule.day === dayName && rule.timeSlotId === timeSlotId) {
-                    cost += penalty;
-                }
-                break;
-            case RuleAction.PreferTime:
-                if (rule.day === dayName && rule.timeSlotId === timeSlotId) {
-                    cost -= penalty;
-                }
-                break;
-            case RuleAction.MaxPerDay:
-                if (rule.param !== undefined) {
-                    const count = allBookingsTodayForGroups.filter(booking => {
-                        switch (conditionA.entityType) {
-                            case 'teacher': return conditionA.entityIds.includes(booking.teacherId);
-                            case 'group': return (booking.groupIds || [booking.groupId]).some(gid => gid && conditionA.entityIds.includes(gid));
-                            case 'subject': return conditionA.entityIds.includes(booking.subjectId) && (!conditionA.classType || conditionA.classType === booking.classType);
-                            default: return false;
-                        }
-                    }).length;
-
-                    if (count >= rule.param) {
-                        cost += penalty;
-                    }
-                }
-                break;
-        }
-    }
+    const ruleCost = applySchedulingRules({
+        entry,
+        classroom,
+        involvedGroups,
+        teacher,
+        dateStr,
+        dayName,
+        timeSlotId,
+        activeTimeSlots,
+        schedule: allScheduleForScoring,
+        index,
+        penaltyMultiplier,
+    }, schedulingRules);
+    if (ruleCost === Infinity) return Infinity;
+    cost += ruleCost;
 
     // --- NEW: Apply Standard Rules if enabled ---
     if (settings.enforceStandardRules) {
@@ -842,12 +1213,85 @@ const calculateSlotCost = (
     return cost;
 };
 
+export const calculateScheduleScore = (
+    data: GenerationData,
+    result: Pick<SchedulerResult, 'schedule' | 'unschedulable'>,
+    config: HeuristicConfig,
+    index = createSchedulerIndex(data)
+): ScheduleScore => {
+    const generatedSchedule = result.schedule.filter(entry => entry.date);
+    const retainedExistingSchedule = getRetainedExistingSchedule(data.schedule, config);
+    const bookings = createResourceBookings(data.teachers, data.groups, data.classrooms, [...retainedExistingSchedule, ...generatedSchedule]);
+    let softPenalty = 0;
+    let hardViolations = 0;
+
+    const seenResourceSlots = new Set<string>();
+    generatedSchedule.forEach(entry => {
+        const bookingKey = `${entry.date}-${entry.timeSlotId}`;
+        const resourceKeys = [
+            `teacher-${entry.teacherId}`,
+            `classroom-${entry.classroomId}`,
+            ...getEntryGroupIds(entry).map(groupId => `group-${groupId}`),
+        ];
+        resourceKeys.forEach(resourceKey => {
+            const key = `${resourceKey}-${bookingKey}`;
+            if (seenResourceSlots.has(key)) hardViolations++;
+            seenResourceSlots.add(key);
+        });
+
+        const involvedGroups = getInvolvedGroups(entry, index);
+        const subGroup = entry.subgroupId ? index.subgroupsById.get(entry.subgroupId) : undefined;
+        const studentCount = subGroup ? subGroup.studentCount : involvedGroups.reduce((sum, group) => sum + group.studentCount, 0);
+        const classroom = index.classroomsById.get(entry.classroomId);
+        if (!classroom || !entry.date) {
+            hardViolations++;
+            return;
+        }
+
+        const activeTimeSlots = getActiveTimeSlotsForDate(data, entry.date, index);
+        removeBooking(bookings, `teacher-${entry.teacherId}`, bookingKey);
+        removeBooking(bookings, `classroom-${entry.classroomId}`, bookingKey);
+        getEntryGroupIds(entry).forEach(groupId => removeBooking(bookings, `group-${groupId}`, bookingKey));
+
+        const cost = calculateSlotCost(
+            { ...entry, uid: entry.unscheduledUid || entry.id, studentCount } as unknown as UnscheduledEntry,
+            new Date(entry.date + 'T00:00:00'),
+            entry.timeSlotId,
+            classroom,
+            involvedGroups,
+            bookings,
+            { ...data, schedule: retainedExistingSchedule },
+            config.strictness / 5.0,
+            generatedSchedule.filter(item => item.id !== entry.id),
+            config,
+            activeTimeSlots,
+            index
+        );
+        if (cost === Infinity) hardViolations++;
+        else softPenalty += cost;
+
+        addBooking(bookings, `teacher-${entry.teacherId}`, bookingKey);
+        addBooking(bookings, `classroom-${entry.classroomId}`, bookingKey);
+        getEntryGroupIds(entry).forEach(groupId => addBooking(bookings, `group-${groupId}`, bookingKey));
+    });
+
+    const unscheduled = result.unschedulable.length;
+    return {
+        total: unscheduled * 1_000_000 + hardViolations * 250_000 + softPenalty,
+        unscheduled,
+        hardViolations,
+        softPenalty,
+        placed: generatedSchedule.length,
+    };
+};
+
 
 async function refineSchedule(
     initialSchedule: ScheduleEntry[],
     data: GenerationData,
     config: HeuristicConfig,
-    initialBookings: Map<string, Set<string>>
+    initialBookings: Map<string, Set<string>>,
+    index = createSchedulerIndex(data)
 ): Promise<ScheduleEntry[]> {
     console.log("Starting schedule refinement phase...");
     let refinedSchedule = [...initialSchedule];
@@ -861,7 +1305,7 @@ async function refineSchedule(
     const lastDate = new Date(config.timeFrame.end + 'T00:00:00');
     while (currentDateIterator <= lastDate) {
         const dateStr = toYYYYMMDD(currentDateIterator);
-        const dayInfo = data.productionCalendar.find(e => e.date === dateStr);
+        const dayInfo = index.productionByDate.get(dateStr);
         if (!data.settings.respectProductionCalendar || !dayInfo || dayInfo.isWorkDay) {
             if (currentDateIterator.getDay() !== 0) { // Exclude Sundays
                 workDays.push(new Date(currentDateIterator));
@@ -872,27 +1316,26 @@ async function refineSchedule(
 
     for (let pass = 0; pass < REFINEMENT_PASSES; pass++) {
         const entriesWithCosts = refinedSchedule.map(entry => {
-            const involvedGroups = data.groups.filter(g => (entry.groupIds || (entry.groupId ? [entry.groupId] : [])).includes(g.id));
-            const subGroup = data.subgroups.find(sg => sg.id === entry.subgroupId);
+            const involvedGroups = getInvolvedGroups(entry, index);
+            const subGroup = entry.subgroupId ? index.subgroupsById.get(entry.subgroupId) : undefined;
             const studentCount = subGroup ? subGroup.studentCount : involvedGroups.reduce((sum, g) => sum + g.studentCount, 0);
 
             const entryDate = new Date(entry.date + 'T00:00:00');
-            const dayInfo = data.productionCalendar.find(e => e.date === entry.date);
-            const isPreHoliday = data.settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
-            const activeTimeSlots = isPreHoliday ? data.timeSlotsShortened : data.timeSlots;
+            const activeTimeSlots = getActiveTimeSlotsForDate(data, entry.date, index);
 
             const cost = calculateSlotCost(
                 { ...entry, studentCount, uid: entry.unscheduledUid! } as unknown as UnscheduledEntry,
                 entryDate,
                 entry.timeSlotId,
-                data.classrooms.find(c => c.id === entry.classroomId)!,
+                index.classroomsById.get(entry.classroomId)!,
                 involvedGroups,
                 resourceBookings,
                 data,
                 config.strictness / 5.0,
                 refinedSchedule.filter(e => e.id !== entry.id), // Pass schedule without the current entry
                 config,
-                activeTimeSlots
+                activeTimeSlots,
+                index
             );
             return { entry, cost };
         }).filter(item => item.cost > 0);
@@ -912,39 +1355,24 @@ async function refineSchedule(
             if (!currentEntryInSchedule) continue;
 
             const originalBookingKey = `${currentEntryInSchedule.date}-${currentEntryInSchedule.timeSlotId}`;
-            resourceBookings.get(`teacher-${currentEntryInSchedule.teacherId}`)?.delete(originalBookingKey);
-            resourceBookings.get(`classroom-${currentEntryInSchedule.classroomId}`)?.delete(originalBookingKey);
-            (currentEntryInSchedule.groupIds || [currentEntryInSchedule.groupId]).forEach(gid => {
-                if (gid) resourceBookings.get(`group-${gid}`)?.delete(originalBookingKey);
-            });
+            removeBooking(resourceBookings, `teacher-${currentEntryInSchedule.teacherId}`, originalBookingKey);
+            removeBooking(resourceBookings, `classroom-${currentEntryInSchedule.classroomId}`, originalBookingKey);
+            getEntryGroupIds(currentEntryInSchedule).forEach(gid => removeBooking(resourceBookings, `group-${gid}`, originalBookingKey));
 
             let bestAlternativeSlot: { date: Date, timeSlotId: string, classroom: Classroom, cost: number } | null = null;
 
-            const involvedGroups = data.groups.filter(g => (entryToMove.groupIds || (entryToMove.groupId ? [entryToMove.groupId] : [])).includes(g.id));
-            const subGroup = data.subgroups.find(sg => sg.id === entryToMove.subgroupId);
+            const involvedGroups = getInvolvedGroups(entryToMove, index);
+            const subGroup = entryToMove.subgroupId ? index.subgroupsById.get(entryToMove.subgroupId) : undefined;
             const studentCount = subGroup ? subGroup.studentCount : involvedGroups.reduce((sum, g) => sum + g.studentCount, 0);
 
             const unscheduledVersion = { ...entryToMove, studentCount, uid: entryToMove.unscheduledUid! } as unknown as UnscheduledEntry;
 
-            const subject = data.subjects.find(s => s.id === unscheduledVersion.subjectId);
+            const subject = index.subjectsById.get(unscheduledVersion.subjectId);
             if (!subject) continue;
-            const requiredClassroomTypes = subject?.classroomTypeRequirements?.[unscheduledVersion.classType] || [];
-
-            const suitableClassrooms = data.classrooms.filter(c => {
-                if (c.capacity < unscheduledVersion.studentCount) return false;
-                if (!requiredClassroomTypes.includes(c.typeId)) return false;
-                const requiredTags = subject.requiredClassroomTagIds || [];
-                if (requiredTags.length > 0) {
-                    const classroomTags = c.tagIds || [];
-                    if (!requiredTags.every(tagId => classroomTags.includes(tagId))) return false;
-                }
-                return true;
-            });
+            const suitableClassrooms = getSuitableClassrooms(unscheduledVersion, subject, index) || [];
 
             for (const date of workDays) {
-                const dayInfo = data.productionCalendar.find(e => e.date === toYYYYMMDD(date));
-                const isPreHoliday = data.settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
-                const activeTimeSlots = isPreHoliday ? data.timeSlotsShortened : data.timeSlots;
+                const activeTimeSlots = getActiveTimeSlotsForDate(data, date, index);
 
                 for (const timeSlot of activeTimeSlots) {
                     const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
@@ -954,7 +1382,7 @@ async function refineSchedule(
                     for (const classroom of suitableClassrooms) {
                         if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
 
-                        const cost = calculateSlotCost(unscheduledVersion, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, config.strictness / 5.0, refinedSchedule.filter(e => e.id !== entryToMove.id), config, activeTimeSlots);
+                        const cost = calculateSlotCost(unscheduledVersion, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, config.strictness / 5.0, refinedSchedule.filter(e => e.id !== entryToMove.id), config, activeTimeSlots, index);
 
                         if (cost < (bestAlternativeSlot?.cost ?? Infinity)) {
                             bestAlternativeSlot = { date, timeSlotId: timeSlot.id, classroom, cost };
@@ -977,18 +1405,14 @@ async function refineSchedule(
                     };
 
                     const newBookingKey = `${toYYYYMMDD(newEntryData.date)}-${newEntryData.timeSlotId}`;
-                    resourceBookings.get(`teacher-${entryToMove.teacherId}`)?.add(newBookingKey);
-                    resourceBookings.get(`classroom-${newEntryData.classroom.id}`)?.add(newBookingKey);
-                    (entryToMove.groupIds || [entryToMove.groupId]).forEach(gid => {
-                        if (gid) resourceBookings.get(`group-${gid}`)?.add(newBookingKey);
-                    });
+                    addBooking(resourceBookings, `teacher-${entryToMove.teacherId}`, newBookingKey);
+                    addBooking(resourceBookings, `classroom-${newEntryData.classroom.id}`, newBookingKey);
+                    getEntryGroupIds(entryToMove).forEach(gid => addBooking(resourceBookings, `group-${gid}`, newBookingKey));
                 }
             } else {
-                resourceBookings.get(`teacher-${currentEntryInSchedule.teacherId}`)?.add(originalBookingKey);
-                resourceBookings.get(`classroom-${currentEntryInSchedule.classroomId}`)?.add(originalBookingKey);
-                (currentEntryInSchedule.groupIds || [currentEntryInSchedule.groupId]).forEach(gid => {
-                    if (gid) resourceBookings.get(`group-${gid}`)?.add(originalBookingKey);
-                });
+                addBooking(resourceBookings, `teacher-${currentEntryInSchedule.teacherId}`, originalBookingKey);
+                addBooking(resourceBookings, `classroom-${currentEntryInSchedule.classroomId}`, originalBookingKey);
+                getEntryGroupIds(currentEntryInSchedule).forEach(gid => addBooking(resourceBookings, `group-${gid}`, originalBookingKey));
             }
         }
 

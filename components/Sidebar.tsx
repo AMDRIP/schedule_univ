@@ -45,6 +45,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
         },
         { name: 'Планы занятий', icon: <DocumentTextIcon /> },
         { type: 'divider' },
+        { name: 'Планы зданий', icon: <BuildingOfficeIcon /> },
         { name: 'Учебные планы', icon: <BookOpenIcon /> },
         { name: 'Дисциплины', icon: <CollectionIcon /> },
         { name: 'Факультативы', icon: <SparklesIcon /> },
