@@ -404,6 +404,7 @@ export interface Elective extends BaseItem {
 export type BuildingTool = 'select' | 'room' | 'door' | 'window' | 'furniture';
 export type BuildingRoomResourceKind = 'classroom' | 'cabinet' | 'none';
 export type BuildingOpeningKind = 'door' | 'window';
+export type BuildingWallSide = 'top' | 'right' | 'bottom' | 'left';
 export type FurnitureKind = 'desk' | 'chair' | 'teacherDesk' | 'board' | 'computer' | 'projector' | 'cabinet' | 'shelf' | 'sink' | 'table';
 
 export interface BuildingFurniture extends BaseItem {
@@ -419,6 +420,7 @@ export interface BuildingFurniture extends BaseItem {
 export interface BuildingOpening extends BaseItem {
   kind: BuildingOpeningKind;
   roomId?: string;
+  wallSide?: BuildingWallSide;
   x: number;
   y: number;
   width: number;

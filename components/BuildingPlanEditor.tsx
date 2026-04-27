@@ -9,6 +9,7 @@ import {
   BuildingRoom,
   BuildingRoomResourceKind,
   BuildingTool,
+  BuildingWallSide,
   FurnitureKind,
   RoomAssignmentCategory,
 } from '../types';
@@ -49,6 +50,9 @@ const FURNITURE_LABELS: Record<FurnitureKind, string> = {
   table: 'Стол',
 };
 
+const GRID_SIZE = 25;
+const SNAP_THRESHOLD = 12;
+
 const createId = (prefix: string) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
 
 const createFloor = (number: number): BuildingFloor => ({
@@ -88,10 +92,17 @@ const createRoom = (x: number, y: number, classroomTypeId = '', departmentId = '
   furniture: [],
 });
 
-const createOpening = (kind: BuildingOpeningKind, x: number, y: number, roomId?: string): BuildingOpening => ({
+const createOpening = (
+  kind: BuildingOpeningKind,
+  x: number,
+  y: number,
+  roomId?: string,
+  wallSide?: BuildingWallSide
+): BuildingOpening => ({
   id: createId(kind),
   kind,
   roomId,
+  wallSide,
   x,
   y,
   width: kind === 'door' ? 36 : 54,
@@ -111,6 +122,74 @@ const createFurniture = (kind: FurnitureKind, x: number, y: number): BuildingFur
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
+const snapToGrid = (value: number) => Math.round(value / GRID_SIZE) * GRID_SIZE;
+
+const snapToTargets = (value: number, targets: number[]) => {
+  const nearest = targets.reduce<{ value: number; distance: number } | null>((best, target) => {
+    const distance = Math.abs(value - target);
+    if (distance > SNAP_THRESHOLD) return best;
+    if (!best || distance < best.distance) return { value: target, distance };
+    return best;
+  }, null);
+  return nearest?.value ?? value;
+};
+
+const renderFurnitureGraphic = (item: BuildingFurniture) => {
+  const baseClass = "absolute inset-0 rounded-sm border border-gray-600 bg-white/75";
+  switch (item.kind) {
+    case 'chair':
+      return <div className="absolute inset-1 rounded-full border-2 border-gray-700 bg-white/70" />;
+    case 'desk':
+    case 'teacherDesk':
+    case 'table':
+      return (
+        <div className={baseClass}>
+          <div className="absolute inset-x-1 top-1 h-1 rounded bg-gray-500/60" />
+          <div className="absolute bottom-1 left-1 h-1.5 w-1.5 rounded-full bg-gray-500" />
+          <div className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-gray-500" />
+        </div>
+      );
+    case 'board':
+      return <div className="absolute inset-0 rounded-sm border border-emerald-900 bg-emerald-700 shadow-inner" />;
+    case 'computer':
+      return (
+        <div className="absolute inset-0 rounded-sm border border-slate-700 bg-slate-200">
+          <div className="absolute left-1 right-1 top-1 bottom-2 rounded-sm bg-slate-800" />
+          <div className="absolute left-1/2 bottom-0 h-2 w-3 -translate-x-1/2 bg-slate-600" />
+        </div>
+      );
+    case 'projector':
+      return (
+        <div className="absolute inset-1 rounded-full border border-indigo-700 bg-indigo-100">
+          <div className="absolute left-1/2 top-1/2 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-indigo-600" />
+        </div>
+      );
+    case 'cabinet':
+      return (
+        <div className={baseClass}>
+          <div className="absolute left-1/2 top-0 bottom-0 w-px bg-gray-500" />
+          <div className="absolute left-1 top-1/2 h-1 w-1 rounded-full bg-gray-600" />
+          <div className="absolute right-1 top-1/2 h-1 w-1 rounded-full bg-gray-600" />
+        </div>
+      );
+    case 'shelf':
+      return (
+        <div className={baseClass}>
+          <div className="absolute left-1 right-1 top-1/3 h-px bg-gray-600" />
+          <div className="absolute left-1 right-1 top-2/3 h-px bg-gray-600" />
+        </div>
+      );
+    case 'sink':
+      return (
+        <div className="absolute inset-0 rounded-sm border border-sky-700 bg-sky-100">
+          <div className="absolute inset-1 rounded-full border border-sky-500 bg-white/70" />
+        </div>
+      );
+    default:
+      return <div className={baseClass} />;
+  }
+};
+
 const BuildingPlanEditor: React.FC = () => {
   const {
     buildingPlans,
@@ -126,9 +205,14 @@ const BuildingPlanEditor: React.FC = () => {
   const [selectedPlanId, setSelectedPlanId] = useState(buildingPlans[0]?.id || '');
   const [selectedFloorId, setSelectedFloorId] = useState(buildingPlans[0]?.floors[0]?.id || '');
   const [selectedRoomId, setSelectedRoomId] = useState('');
+  const [selectedOpeningId, setSelectedOpeningId] = useState('');
   const [tool, setTool] = useState<BuildingTool>('select');
   const [furnitureKind, setFurnitureKind] = useState<FurnitureKind>('desk');
-  const [dragState, setDragState] = useState<{ roomId: string; dx: number; dy: number } | null>(null);
+  const [dragState, setDragState] = useState<
+    | { kind: 'room'; roomId: string; dx: number; dy: number }
+    | { kind: 'opening'; openingId: string }
+    | null
+  >(null);
   const [syncMessage, setSyncMessage] = useState('');
   const canvasRef = useRef<HTMLDivElement | null>(null);
 
@@ -141,6 +225,7 @@ const BuildingPlanEditor: React.FC = () => {
     [activePlan, selectedFloorId]
   );
   const selectedRoom = activeFloor?.rooms.find(room => room.id === selectedRoomId);
+  const selectedOpening = activeFloor?.openings.find(opening => opening.id === selectedOpeningId);
 
   useEffect(() => {
     if (!activePlan && buildingPlans[0]) {
@@ -185,6 +270,7 @@ const BuildingPlanEditor: React.FC = () => {
     setSelectedPlanId(plan.id);
     setSelectedFloorId(plan.floors[0].id);
     setSelectedRoomId('');
+    setSelectedOpeningId('');
   };
 
   const handleAddFloor = () => {
@@ -194,6 +280,7 @@ const BuildingPlanEditor: React.FC = () => {
     updateActivePlan(plan => ({ ...plan, floors: [...plan.floors, floor] }));
     setSelectedFloorId(floor.id);
     setSelectedRoomId('');
+    setSelectedOpeningId('');
   };
 
   const handleDeleteRoom = () => {
@@ -204,6 +291,15 @@ const BuildingPlanEditor: React.FC = () => {
       openings: floor.openings.filter(opening => opening.roomId !== selectedRoomId),
     }));
     setSelectedRoomId('');
+  };
+
+  const handleDeleteOpening = () => {
+    if (!selectedOpeningId) return;
+    updateActiveFloor(floor => ({
+      ...floor,
+      openings: floor.openings.filter(opening => opening.id !== selectedOpeningId),
+    }));
+    setSelectedOpeningId('');
   };
 
   const getCanvasPoint = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -219,47 +315,147 @@ const BuildingPlanEditor: React.FC = () => {
   const findRoomAt = (x: number, y: number) =>
     activeFloor?.rooms.find(room => x >= room.x && x <= room.x + room.width && y >= room.y && y <= room.y + room.height);
 
+  const snapRoomPosition = (room: BuildingRoom, x: number, y: number) => {
+    if (!activeFloor) return { x, y };
+    const edgeTargets = activeFloor.rooms
+      .filter(item => item.id !== room.id)
+      .flatMap(item => [item.x, item.x + item.width]);
+    const verticalTargets = activeFloor.rooms
+      .filter(item => item.id !== room.id)
+      .flatMap(item => [item.y, item.y + item.height]);
+
+    const snappedX = snapToTargets(snapToTargets(snapToGrid(x), edgeTargets), edgeTargets.map(target => target - room.width));
+    const snappedY = snapToTargets(snapToTargets(snapToGrid(y), verticalTargets), verticalTargets.map(target => target - room.height));
+
+    return {
+      x: clamp(snappedX, 0, activeFloor.width - room.width),
+      y: clamp(snappedY, 0, activeFloor.height - room.height),
+    };
+  };
+
+  const getOpeningPlacement = (
+    kind: BuildingOpeningKind,
+    point: { x: number; y: number },
+    preferredRoomId?: string
+  ): Omit<BuildingOpening, 'id'> | null => {
+    if (!activeFloor) return null;
+    const candidateRooms = preferredRoomId
+      ? activeFloor.rooms.filter(room => room.id === preferredRoomId)
+      : activeFloor.rooms;
+    if (candidateRooms.length === 0) return null;
+
+    const nearest = candidateRooms
+      .flatMap(room => {
+        const distances: { room: BuildingRoom; wallSide: BuildingWallSide; distance: number }[] = [
+          { room, wallSide: 'top', distance: Math.abs(point.y - room.y) },
+          { room, wallSide: 'right', distance: Math.abs(point.x - (room.x + room.width)) },
+          { room, wallSide: 'bottom', distance: Math.abs(point.y - (room.y + room.height)) },
+          { room, wallSide: 'left', distance: Math.abs(point.x - room.x) },
+        ];
+        return distances;
+      })
+      .sort((a, b) => a.distance - b.distance)[0];
+
+    if (!nearest) return null;
+    const { room, wallSide } = nearest;
+    const length = kind === 'door' ? 42 : 64;
+    const thickness = kind === 'door' ? 10 : 8;
+    const isHorizontal = wallSide === 'top' || wallSide === 'bottom';
+
+    if (isHorizontal) {
+      return {
+        kind,
+        roomId: room.id,
+        wallSide,
+        x: clamp(snapToGrid(point.x - length / 2), room.x, room.x + room.width - length),
+        y: wallSide === 'top' ? room.y - thickness / 2 : room.y + room.height - thickness / 2,
+        width: length,
+        height: thickness,
+        rotation: 0,
+      };
+    }
+
+    return {
+      kind,
+      roomId: room.id,
+      wallSide,
+      x: wallSide === 'left' ? room.x - thickness / 2 : room.x + room.width - thickness / 2,
+      y: clamp(snapToGrid(point.y - length / 2), room.y, room.y + room.height - length),
+      width: thickness,
+      height: length,
+      rotation: 0,
+    };
+  };
+
   const handleCanvasClick = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!activeFloor || dragState) return;
     const point = getCanvasPoint(event);
     if (tool === 'room') {
-      const room = createRoom(point.x, point.y, classroomTypes[0]?.id || '', departments[0]?.id || '');
+      const room = createRoom(snapToGrid(point.x), snapToGrid(point.y), classroomTypes[0]?.id || '', departments[0]?.id || '');
       updateActiveFloor(floor => ({ ...floor, rooms: [...floor.rooms, room] }));
       setSelectedRoomId(room.id);
+      setSelectedOpeningId('');
       return;
     }
     if (tool === 'door' || tool === 'window') {
       const room = findRoomAt(point.x, point.y);
-      const opening = createOpening(tool, point.x, point.y, room?.id);
+      const placement = getOpeningPlacement(tool, point, room?.id);
+      if (!placement) return;
+      const opening = {
+        ...createOpening(tool, placement.x, placement.y, placement.roomId, placement.wallSide),
+        width: placement.width,
+        height: placement.height,
+        rotation: placement.rotation,
+      };
       updateActiveFloor(floor => ({ ...floor, openings: [...floor.openings, opening] }));
+      setSelectedOpeningId(opening.id);
       return;
     }
     if (tool === 'furniture') {
       const room = findRoomAt(point.x, point.y) || selectedRoom;
       if (!room) return;
-      const furniture = createFurniture(furnitureKind, point.x - room.x, point.y - room.y);
+      const furniture = createFurniture(furnitureKind, snapToGrid(point.x - room.x), snapToGrid(point.y - room.y));
       updateRoom(room.id, { furniture: [...room.furniture, furniture] });
       setSelectedRoomId(room.id);
+      setSelectedOpeningId('');
     }
   };
 
   const handleRoomMouseDown = (event: React.MouseEvent<HTMLDivElement>, room: BuildingRoom) => {
     event.stopPropagation();
     setSelectedRoomId(room.id);
+    setSelectedOpeningId('');
     if (tool !== 'select') return;
     const point = getCanvasPoint(event);
-    setDragState({ roomId: room.id, dx: point.x - room.x, dy: point.y - room.y });
+    setDragState({ kind: 'room', roomId: room.id, dx: point.x - room.x, dy: point.y - room.y });
+  };
+
+  const handleOpeningMouseDown = (event: React.MouseEvent<HTMLDivElement>, opening: BuildingOpening) => {
+    event.stopPropagation();
+    setSelectedOpeningId(opening.id);
+    setSelectedRoomId(opening.roomId || '');
+    if (tool !== 'select') return;
+    setDragState({ kind: 'opening', openingId: opening.id });
   };
 
   const handleCanvasMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
     if (!dragState || !activeFloor) return;
     const point = getCanvasPoint(event);
-    const room = activeFloor.rooms.find(item => item.id === dragState.roomId);
-    if (!room) return;
-    updateRoom(room.id, {
-      x: clamp(point.x - dragState.dx, 0, activeFloor.width - room.width),
-      y: clamp(point.y - dragState.dy, 0, activeFloor.height - room.height),
-    });
+    if (dragState.kind === 'room') {
+      const room = activeFloor.rooms.find(item => item.id === dragState.roomId);
+      if (!room) return;
+      updateRoom(room.id, snapRoomPosition(room, point.x - dragState.dx, point.y - dragState.dy));
+      return;
+    }
+
+    const opening = activeFloor.openings.find(item => item.id === dragState.openingId);
+    if (!opening) return;
+    const placement = getOpeningPlacement(opening.kind, point, opening.roomId);
+    if (!placement) return;
+    updateActiveFloor(floor => ({
+      ...floor,
+      openings: floor.openings.map(item => item.id === opening.id ? { ...item, ...placement } : item),
+    }));
   };
 
   const handleSync = () => {
@@ -323,6 +519,7 @@ const BuildingPlanEditor: React.FC = () => {
               setSelectedPlanId(event.target.value);
               setSelectedFloorId(plan?.floors[0]?.id || '');
               setSelectedRoomId('');
+              setSelectedOpeningId('');
             }} className="w-full p-2 border border-gray-300 rounded-md">
               {buildingPlans.map(plan => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
             </select>
@@ -335,7 +532,7 @@ const BuildingPlanEditor: React.FC = () => {
               {activePlan.floors.map(floor => (
                 <button
                   key={floor.id}
-                  onClick={() => { setSelectedFloorId(floor.id); setSelectedRoomId(''); }}
+                  onClick={() => { setSelectedFloorId(floor.id); setSelectedRoomId(''); setSelectedOpeningId(''); }}
                   className={`px-3 py-1.5 rounded-md text-sm border ${activeFloor.id === floor.id ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-gray-300 text-gray-700'}`}
                 >
                   {floor.name}
@@ -361,6 +558,14 @@ const BuildingPlanEditor: React.FC = () => {
                 {Object.entries(FURNITURE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             )}
+          </section>
+
+          <section className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+            <h2 className="font-semibold text-gray-900 mb-3">Привязки</h2>
+            <div className="space-y-2 text-sm text-gray-600">
+              <div>Комнаты притягиваются к сетке {GRID_SIZE}px и к стенам соседних помещений.</div>
+              <div>Двери и окна ставятся только на ближайшую стену комнаты и двигаются вдоль неё.</div>
+            </div>
           </section>
 
           <section className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
@@ -456,6 +661,19 @@ const BuildingPlanEditor: React.FC = () => {
               <div className="text-sm text-gray-500">Нет выбранного помещения</div>
             )}
           </section>
+          {selectedOpening && (
+            <section className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+              <h2 className="font-semibold text-gray-900 mb-3">{selectedOpening.kind === 'door' ? 'Дверь' : 'Окно'}</h2>
+              <div className="space-y-2 text-sm text-gray-600">
+                <div>Стена: {selectedOpening.wallSide === 'top' ? 'верхняя' : selectedOpening.wallSide === 'right' ? 'правая' : selectedOpening.wallSide === 'bottom' ? 'нижняя' : 'левая'}</div>
+                <div>Комната: {activeFloor.rooms.find(room => room.id === selectedOpening.roomId)?.number || 'не выбрана'}</div>
+              </div>
+              <button onClick={handleDeleteOpening} className="mt-3 inline-flex items-center gap-2 px-3 py-2 rounded-md border border-red-200 bg-red-50 text-red-700 hover:bg-red-100">
+                <TrashIcon className="h-4 w-4" />
+                Удалить проём
+              </button>
+            </section>
+          )}
         </aside>
 
         <section className="col-span-12 xl:col-span-9 min-h-0 flex flex-col gap-3">
@@ -489,7 +707,9 @@ const BuildingPlanEditor: React.FC = () => {
               <div
                 key={room.id}
                 onMouseDown={event => handleRoomMouseDown(event, room)}
-                onClick={event => event.stopPropagation()}
+                onClick={event => {
+                  if (tool === 'select') event.stopPropagation();
+                }}
                 className={`absolute border-2 rounded-sm shadow-sm overflow-hidden cursor-move ${selectedRoomId === room.id ? 'border-blue-700 ring-2 ring-blue-200' : 'border-gray-700'}`}
                 style={{
                   left: `${room.x / activeFloor.width * 100}%`,
@@ -508,7 +728,7 @@ const BuildingPlanEditor: React.FC = () => {
                 {room.furniture.map(item => (
                   <div
                     key={item.id}
-                    className="absolute rounded-sm border border-gray-500 bg-gray-800/15 text-[9px] text-gray-800 flex items-center justify-center"
+                    className="absolute"
                     style={{
                       left: `${item.x / room.width * 100}%`,
                       top: `${item.y / room.height * 100}%`,
@@ -517,7 +737,7 @@ const BuildingPlanEditor: React.FC = () => {
                     }}
                     title={FURNITURE_LABELS[item.kind]}
                   >
-                    {item.kind === 'computer' ? 'PC' : item.kind === 'projector' ? 'P' : item.kind === 'board' ? 'B' : ''}
+                    {renderFurnitureGraphic(item)}
                   </div>
                 ))}
               </div>
@@ -525,7 +745,8 @@ const BuildingPlanEditor: React.FC = () => {
             {activeFloor.openings.map(opening => (
               <div
                 key={opening.id}
-                className={`absolute ${opening.kind === 'door' ? 'bg-amber-700' : 'bg-cyan-500'} rounded-sm shadow`}
+                onMouseDown={event => handleOpeningMouseDown(event, opening)}
+                className={`absolute cursor-move rounded-sm shadow ${opening.kind === 'door' ? 'bg-amber-700' : 'bg-cyan-500'} ${selectedOpeningId === opening.id ? 'ring-2 ring-blue-700 ring-offset-1' : ''}`}
                 style={{
                   left: `${opening.x / activeFloor.width * 100}%`,
                   top: `${opening.y / activeFloor.height * 100}%`,
