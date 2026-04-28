@@ -61,6 +61,8 @@ const TeacherGroupLessons: React.FC = () => {
             case ClassType.Practical: return 'bg-green-100 text-green-800 border-green-300';
             case ClassType.Lab: return 'bg-purple-100 text-purple-800 border-purple-300';
             case ClassType.Consultation: return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+            case ClassType.PracticeConsultation: return 'bg-teal-100 text-teal-800 border-teal-300';
+            case ClassType.PracticeDefense: return 'bg-orange-100 text-orange-800 border-orange-300';
             case ClassType.Exam: return 'bg-red-100 text-red-800 border-red-300';
             case ClassType.Test: return 'bg-orange-100 text-orange-800 border-orange-300';
             default: return 'bg-gray-100 text-gray-800 border-gray-300';

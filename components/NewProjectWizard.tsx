@@ -44,6 +44,8 @@ const editableClassTypes = [
     ClassType.Test,
     ClassType.Exam,
     ClassType.Consultation,
+    ClassType.PracticeConsultation,
+    ClassType.PracticeDefense,
     ClassType.Elective,
 ];
 

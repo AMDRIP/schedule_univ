@@ -23,6 +23,8 @@ export enum ClassType {
   Practical = 'Практика',
   Lab = 'Лабораторная',
   Consultation = 'Консультация',
+  PracticeConsultation = 'Консультация по практике',
+  PracticeDefense = 'Защита практики',
   Test = 'Зачёт',
   Exam = 'Экзамен',
   Elective = 'Факультатив',
@@ -331,6 +333,9 @@ export interface SessionSchedulerConfig {
   clearExisting: boolean;
   timeFrame: { start: string; end: string };
   scheduleTests: 'like_exams' | 'no_rest_days' | 'none';
+  generationMode?: 'full' | 'consultations_only' | 'practice_only' | 'full_with_practice';
+  includePracticeConsultations?: boolean;
+  includePracticeDefenses?: boolean;
 }
 
 export interface LessonPlan {

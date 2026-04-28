@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useDrop, useDrag } from 'react-dnd';
 import { useStore } from '../hooks/useStore';
-import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag, AvailabilityType, TimeSlot } from '../types';
+import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag, AvailabilityType, TimeSlot, ClassType } from '../types';
 import { CLASS_TYPE_COLORS, ItemTypes, DAYS_OF_WEEK, COLOR_MAP } from '../constants';
 import LessonPlanModal from './LessonPlanModal';
 import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon, BookOpenIcon } from './icons';
@@ -17,7 +17,7 @@ interface ScheduleEntryCardProps {
 }
 
 const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable, colorBy, cellDate }) => {
-  const { subjects, teachers, classrooms, groups, subgroups, streams, schedule, updateScheduleEntry, deleteScheduleEntry, settings, classroomTags } = useStore();
+  const { subjects, teachers, classrooms, groups, subgroups, streams, electives, schedule, updateScheduleEntry, deleteScheduleEntry, settings, classroomTags } = useStore();
   const [isEditingClassroom, setIsEditingClassroom] = useState(false);
   const [isEditingDate, setIsEditingDate] = useState(false);
   const [isEditingDelivery, setIsEditingDelivery] = useState(false);
@@ -52,6 +52,19 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   }, [entry, groups]);
 
   const subject = useMemo(() => subjects.find(s => s.id === entry.subjectId), [entry, subjects]);
+  const elective = useMemo(() => {
+    const electiveIdFromUid = entry.unscheduledUid?.match(/^unsched-elective-(.+)-\d+$/)?.[1];
+    if (electiveIdFromUid) {
+      const byUid = electives.find(item => item.id === electiveIdFromUid);
+      if (byUid) return byUid;
+    }
+    return electives.find(item =>
+      item.subjectId === entry.subjectId &&
+      item.teacherId === entry.teacherId &&
+      item.groupId === entry.groupId &&
+      (item.classType || ClassType.Elective) === entry.classType
+    );
+  }, [entry, electives]);
   const subgroup = useMemo(() => entry.subgroupId ? subgroups.find(sg => sg.id === entry.subgroupId) : undefined, [entry, subgroups]);
 
   const studentCount = useMemo(() => {
@@ -212,7 +225,10 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     <>
       <div ref={isEditable ? drag as any : null} className={`shadow-sm p-1.5 rounded-lg text-xs cursor-grab relative group transition-all duration-200 hover:shadow-lg hover:-translate-y-1 ${colorClass} ${borderClass} ${warningClass} ${conflictClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
         <div>
-          <p className="font-bold truncate">{subject.name}</p>
+          <p className="truncate" title={elective ? `${subject.name} (${elective.name})` : subject.name}>
+            <span className="font-bold">{subject.name}</span>
+            {elective && <span className="font-normal text-gray-600"> ({elective.name})</span>}
+          </p>
           <p>{entry.classType}</p>
           <p className="font-medium text-gray-700 truncate">{groupName}</p>
           {entry.date && (

@@ -168,7 +168,7 @@ const SessionEntryModal: React.FC<{
                        <div><label>Дисциплина</label><select name="subjectId" value={formData.subjectId} onChange={handleChange} className={defaultInputClass}>{subjects.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
                        <div><label>Аудитория</label><select name="classroomId" value={formData.classroomId} onChange={handleChange} className={defaultInputClass}>{classrooms.map(i => <option key={i.id} value={i.id}>{i.number}</option>)}</select></div>
                        <div><label>Тип занятия</label><select name="classType" value={formData.classType} onChange={handleChange} className={defaultInputClass}>
-                        {[ClassType.Consultation, ClassType.Test, ClassType.Exam].map(t => <option key={t} value={t}>{t}</option>)}</select></div>
+                        {[ClassType.Consultation, ClassType.PracticeConsultation, ClassType.PracticeDefense, ClassType.Test, ClassType.Exam].map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                         <div><label>Тип проведения</label><select name="deliveryMode" value={formData.deliveryMode} onChange={handleChange} className={defaultInputClass}>
                         {Object.values(DeliveryMode).map(t => <option key={t} value={t}>{t}</option>)}</select></div>
                     </div>
@@ -384,6 +384,36 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
       alert(`Локальная оптимизация завершена.\nПроверено занятий: ${result.considered}\nУлучшено: ${result.improved}\nОценка: ${Math.round(result.before)} → ${Math.round(result.after)}`);
     } catch (error) {
       alert(`Не удалось выполнить локальную оптимизацию: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
+
+  const handleOptimizeAllSchedule = async () => {
+    if (isOptimizing) return;
+    const datedEntries = schedule.filter(entry => entry.date);
+    if (datedEntries.length === 0) {
+      alert('В расписании нет датированных занятий для глобальной оптимизации.');
+      return;
+    }
+
+    const dates = datedEntries.map(entry => entry.date!).sort();
+    const start = settings.semesterStart || dates[0];
+    const end = settings.semesterEnd || dates[dates.length - 1];
+
+    setIsOptimizing(true);
+    try {
+      const result = await runLocalOptimizer({
+        strictness: 9,
+        timeFrame: { start, end },
+        clearExisting: false,
+        iterations: 8,
+        enforceLectureOrder: true,
+        distributeEvenly: true,
+      });
+      alert(`Глобальная оптимизация завершена.\nПроверено занятий: ${result.considered}\nУлучшено: ${result.improved}\nОценка: ${Math.round(result.before)} → ${Math.round(result.after)}`);
+    } catch (error) {
+      alert(`Не удалось выполнить глобальную оптимизацию: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsOptimizing(false);
     }
@@ -720,7 +750,15 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
               className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-wait text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm"
             >
                 <SparklesIcon className="w-4 h-4 mr-2"/>
-                {isOptimizing ? 'Оптимизация...' : 'Оптимизировать'}
+                {isOptimizing ? 'Оптимизация...' : 'Оптимизировать неделю'}
+            </button>
+            <button
+              onClick={handleOptimizeAllSchedule}
+              disabled={isOptimizing}
+              className="bg-violet-600 hover:bg-violet-700 disabled:bg-violet-300 disabled:cursor-wait text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm"
+            >
+                <SparklesIcon className="w-4 h-4 mr-2"/>
+                Всё расписание
             </button>
             <div className="flex rounded-md bg-gray-100 p-1 text-sm border border-gray-200">
                 {(['week', 'semester'] as const).map(scope => (

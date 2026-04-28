@@ -7,6 +7,8 @@ export const CLASS_TYPE_COLORS: { [key in ClassType]: string } = {
     [ClassType.Practical]: 'bg-green-100 border-green-300 text-green-800',
     [ClassType.Lab]: 'bg-yellow-100 border-yellow-300 text-yellow-800',
     [ClassType.Consultation]: 'bg-indigo-100 border-indigo-300 text-indigo-800',
+    [ClassType.PracticeConsultation]: 'bg-teal-100 border-teal-300 text-teal-800',
+    [ClassType.PracticeDefense]: 'bg-orange-100 border-orange-300 text-orange-800',
     [ClassType.Test]: 'bg-pink-100 border-pink-300 text-pink-800',
     [ClassType.Exam]: 'bg-red-100 border-red-300 text-red-800',
     [ClassType.Elective]: 'bg-purple-100 border-purple-300 text-purple-800',

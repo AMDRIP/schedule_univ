@@ -559,7 +559,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
             <div className="pt-4 border-t">
               <h3 className="text-lg font-medium text-gray-800 mb-2">Требования к типам аудиторий</h3>
               <div className="space-y-3">
-                {[ClassType.Lecture, ClassType.Practical, ClassType.Lab, ClassType.Elective, ClassType.Consultation].map(classType => (
+                {[ClassType.Lecture, ClassType.Practical, ClassType.Lab, ClassType.Elective, ClassType.Consultation, ClassType.PracticeConsultation, ClassType.PracticeDefense].map(classType => (
                   <div key={classType}>
                     <label className="block text-sm font-medium text-gray-700">{classType}</label>
                     <select
@@ -621,7 +621,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
                       {teachers.map(t => <option key={t.id} value={t.id}>{teacherDisplayNames.get(t.id)}</option>)}
                     </select>
                     <select value={assignment.classType} onChange={e => handleAssignmentChange(index, 'classType', e.target.value)} className={defaultInputClass}>
-                      {[ClassType.Practical, ClassType.Lab, ClassType.Consultation].map(ct => <option key={ct} value={ct}>{ct}</option>)}
+                      {[ClassType.Practical, ClassType.Lab, ClassType.Consultation, ClassType.PracticeConsultation, ClassType.PracticeDefense].map(ct => <option key={ct} value={ct}>{ct}</option>)}
                     </select>
                     <button type="button" onClick={() => removeAssignment(index)} className="p-2 text-red-500 hover:text-red-700"><TrashIcon className="w-5 h-5"/></button>
                   </div>

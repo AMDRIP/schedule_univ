@@ -1501,9 +1501,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (config.clearExisting) {
         const sessionStart = new Date(config.timeFrame.start + 'T00:00:00').getTime();
         const sessionEnd = new Date(config.timeFrame.end + 'T23:59:59').getTime();
+        const mode = config.generationMode || 'full';
+        const classTypesToClear =
+            mode === 'consultations_only' ? [ClassType.Consultation] :
+            mode === 'practice_only' ? [ClassType.PracticeConsultation, ClassType.PracticeDefense] :
+            mode === 'full_with_practice' ? [ClassType.Exam, ClassType.Consultation, ClassType.Test, ClassType.PracticeConsultation, ClassType.PracticeDefense] :
+            [ClassType.Exam, ClassType.Consultation, ClassType.Test];
         finalSchedule = schedule.filter(entry => {
             if (!entry.date) return true;
-            if (![ClassType.Exam, ClassType.Consultation].includes(entry.classType)) return true;
+            if (!classTypesToClear.includes(entry.classType)) return true;
             
             const entryTime = new Date(entry.date).getTime();
             return entryTime < sessionStart || entryTime > sessionEnd;

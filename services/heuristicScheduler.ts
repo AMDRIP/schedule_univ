@@ -1413,8 +1413,8 @@ async function refineSchedule(
     let refinedSchedule = [...initialSchedule];
     const resourceBookings = new Map(Array.from(initialBookings.entries()).map(([key, value]) => [key, new Set(value)]));
 
-    const REFINEMENT_PASSES = 3;
-    const REFINEMENT_CANDIDATE_PERCENTAGE = 0.3; // Check the worst 30% of entries
+    const REFINEMENT_PASSES = Math.max(3, Math.min(10, config.iterations || 3));
+    const REFINEMENT_CANDIDATE_PERCENTAGE = config.target ? 0.35 : 0.65;
 
     const workDays: Date[] = [];
     let currentDateIterator = new Date(config.timeFrame.start + 'T00:00:00');
@@ -1499,7 +1499,7 @@ async function refineSchedule(
                     for (const classroom of suitableClassrooms) {
                         if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
 
-                        const cost = calculateSlotCost(unscheduledVersion, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, config.strictness / 5.0, refinedSchedule.filter(e => e.id !== entryToMove.id), config, activeTimeSlots, index);
+                        const cost = calculateSlotCost(unscheduledVersion, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, config.strictness / 4.0, refinedSchedule.filter(e => e.id !== entryToMove.id), config, activeTimeSlots, index);
 
                         if (cost < (bestAlternativeSlot?.cost ?? Infinity)) {
                             bestAlternativeSlot = { date, timeSlotId: timeSlot.id, classroom, cost };

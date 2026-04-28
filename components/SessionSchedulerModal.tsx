@@ -18,6 +18,9 @@ const SessionSchedulerModal: React.FC<SessionSchedulerModalProps> = ({ isOpen, o
     const [startDate, setStartDate] = useState(settings.sessionStart);
     const [endDate, setEndDate] = useState(settings.sessionEnd);
     const [scheduleTests, setScheduleTests] = useState<'like_exams' | 'no_rest_days' | 'none'>('like_exams');
+    const [generationMode, setGenerationMode] = useState<NonNullable<SessionSchedulerConfig['generationMode']>>('full');
+    const [includePracticeConsultations, setIncludePracticeConsultations] = useState(true);
+    const [includePracticeDefenses, setIncludePracticeDefenses] = useState(true);
 
     useEffect(() => {
         setStartDate(settings.sessionStart);
@@ -39,6 +42,9 @@ const SessionSchedulerModal: React.FC<SessionSchedulerModalProps> = ({ isOpen, o
             clearExisting,
             timeFrame: { start: startDate, end: endDate },
             scheduleTests,
+            generationMode,
+            includePracticeConsultations,
+            includePracticeDefenses,
         };
         onStart(config);
     };
@@ -64,6 +70,16 @@ const SessionSchedulerModal: React.FC<SessionSchedulerModalProps> = ({ isOpen, o
                     </div>
 
                     <div>
+                        <label htmlFor="generationMode" className="block text-sm font-medium text-gray-700">Что генерировать</label>
+                        <select id="generationMode" value={generationMode} onChange={e => setGenerationMode(e.target.value as any)} className={defaultInputClass}>
+                            <option value="full">Экзамены, зачёты и консультации</option>
+                            <option value="consultations_only">Только консультации</option>
+                            <option value="practice_only">Только практики: консультации и защиты</option>
+                            <option value="full_with_practice">Сессия + практики</option>
+                        </select>
+                    </div>
+
+                    <div>
                         <label htmlFor="consultationOffset" className="block text-sm font-medium text-gray-700">Размещение консультаций (к экзаменам)</label>
                         <select id="consultationOffset" value={consultationOffset} onChange={e => setConsultationOffset(Number(e.target.value))} className={defaultInputClass}>
                             <option value="0">Не размещать консультации</option>
@@ -71,6 +87,19 @@ const SessionSchedulerModal: React.FC<SessionSchedulerModalProps> = ({ isOpen, o
                             <option value="2">За 2 дня до экзамена</option>
                         </select>
                     </div>
+
+                    {(generationMode === 'practice_only' || generationMode === 'full_with_practice') && (
+                        <div className="rounded-md border border-gray-200 bg-gray-50 p-3 space-y-2">
+                            <label className="flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" checked={includePracticeConsultations} onChange={e => setIncludePracticeConsultations(e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                                Генерировать консультации по практике
+                            </label>
+                            <label className="flex items-center gap-2 text-sm text-gray-700">
+                                <input type="checkbox" checked={includePracticeDefenses} onChange={e => setIncludePracticeDefenses(e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                                Генерировать защиты практики
+                            </label>
+                        </div>
+                    )}
 
                      <div>
                         <label htmlFor="restDays" className="block text-sm font-medium text-gray-700">Дни отдыха между экзаменами</label>
