@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, FormOfStudy, Elective, Subgroup, ClassType, AcademicDegree, AcademicTitle, FieldOfScience, Teacher } from '../types';
+import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, FormOfStudy, Elective, Subgroup, ClassType, AcademicDegree, AcademicTitle, FieldOfScience, Teacher, DeliveryMode } from '../types';
 import AvailabilityGridEditor from './AvailabilityGridEditor';
 import { PlusIcon, TrashIcon } from './icons';
 import { OKSO_CODES, UGSN_FROM_OKSO } from '../data/codes';
 import { iconNames, renderIcon } from './IconMap';
 import { COLOR_PALETTE, COLOR_MAP } from '../constants';
+import { SHIFT_LABELS, TIME_SLOT_SHIFT_LABELS } from '../utils/shiftUtils';
 
 
 const TITLE_MAP: Record<DataType, { single: string }> = {
@@ -44,7 +45,7 @@ interface DataModalProps {
 
 const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, dataType }) => {
   const [formData, setFormData] = useState<any>({});
-  const { faculties, departments, groups, ugs, specialties, classrooms, classroomTypes, subjects, teachers, settings, teacherSubjectLinks, classroomTags } = useStore();
+  const { faculties, departments, groups, ugs, specialties, classrooms, classroomTypes, subjects, teachers, settings, teacherSubjectLinks, classroomTags, timeSlots } = useStore();
   const [selectedCourseForStream, setSelectedCourseForStream] = useState<number | null>(null);
   const [ugsNotFoundMessage, setUgsNotFoundMessage] = useState<string>('');
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -71,20 +72,20 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'faculties': return { name: '', deanId: '', address: '', phone: '', email: '', notes: '' };
       case 'departments': return { name: '', facultyId: faculties[0]?.id || '', specialtyIds: [], headTeacherId: '', address: '', phone: '', email: '', vkLink: '', telegramLink: '', notes: '' };
       case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', fieldOfScience: '', academicTitle: '', photoUrl: '', hireDate: '', color: '' };
-      case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, availabilityGrid: {}, pinnedClassroomId: '' };
+      case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, shift: 'both', availabilityGrid: {}, pinnedClassroomId: '' };
       case 'streams': return { name: '', groupIds: [] };
       case 'classrooms': return { number: '', capacity: 30, typeId: classroomTypes[0]?.id || '', availabilityGrid: {}, tagIds: [] };
       case 'subjects': return { name: '', pinnedClassroomId: '', classroomTypeRequirements: {}, requiredClassroomTagIds: [], color: '' };
       case 'cabinets': return { number: '', departmentId: departments[0]?.id || '' };
-      case 'timeSlots': return { time: '00:00-00:00' };
-      case 'timeSlotsShortened': return { time: '00:00-00:00' };
+      case 'timeSlots': return { time: '00:00-00:00', shift: 'first' };
+      case 'timeSlotsShortened': return { time: '00:00-00:00', shift: 'first' };
       case 'productionCalendar': return { date: '', name: '', isWorkDay: false, type: ProductionCalendarEventType.Holiday };
       case 'ugs': return { code: '', name: '' };
       case 'specialties': return { code: '', name: '', ugsId: ugs[0]?.id || '', oksoCode: '' };
       case 'scheduleTemplates': return { name: '', description: '', entries: [] };
       case 'classroomTypes': return { name: '' };
       case 'subgroups': return { name: '', parentGroupId: groups[0]?.id || '', studentCount: 12, teacherAssignments: [] };
-      case 'electives': return { name: '', subjectId: subjects[0]?.id || '', teacherId: teachers[0]?.id || '', groupId: groups[0]?.id || '', hoursPerSemester: 32 };
+      case 'electives': return { name: '', subjectId: subjects[0]?.id || '', teacherId: teachers[0]?.id || '', groupId: groups[0]?.id || '', hoursPerSemester: 32, classType: ClassType.Elective, deliveryMode: DeliveryMode.Offline, pinnedClassroomId: '', classroomTypeIds: [], requiredClassroomTagIds: [], preferredTimeSlotIds: [] };
       case 'classroomTags': return { name: '', icon: 'BookmarkIcon', color: 'gray' };
       case 'buildingPlans': return { name: '', address: '', floors: [], updatedAt: new Date().toISOString() };
       default: return {};
@@ -103,6 +104,12 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     if (['teachers', 'groups', 'classrooms'].includes(dataType) && !(initialData as any).availabilityGrid) {
         (initialData as any).availabilityGrid = {};
     }
+    if (dataType === 'groups' && !(initialData as any).shift) {
+        (initialData as any).shift = 'both';
+    }
+    if ((dataType === 'timeSlots' || dataType === 'timeSlotsShortened') && !(initialData as any).shift) {
+        (initialData as any).shift = 'first';
+    }
     if (dataType === 'subjects' && !(initialData as any).classroomTypeRequirements) {
         (initialData as any).classroomTypeRequirements = {};
     }
@@ -111,6 +118,13 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     }
     if (dataType === 'subjects' && !(initialData as any).requiredClassroomTagIds) {
         (initialData as any).requiredClassroomTagIds = [];
+    }
+    if (dataType === 'electives') {
+        if (!(initialData as any).classType) (initialData as any).classType = ClassType.Elective;
+        if (!(initialData as any).deliveryMode) (initialData as any).deliveryMode = DeliveryMode.Offline;
+        if (!(initialData as any).classroomTypeIds) (initialData as any).classroomTypeIds = [];
+        if (!(initialData as any).requiredClassroomTagIds) (initialData as any).requiredClassroomTagIds = [];
+        if (!(initialData as any).preferredTimeSlotIds) (initialData as any).preferredTimeSlotIds = [];
     }
     if (dataType === 'subgroups' && !(initialData as any).teacherAssignments) {
         (initialData as any).teacherAssignments = [];
@@ -274,15 +288,27 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const showAvailabilityGrid = ['teachers', 'groups', 'classrooms'].includes(dataType);
 
   const renderDefaultField = (key: string, isFirst: boolean) => {
-    if (key === 'id' || key === 'availabilityGrid' || key === 'entries' || key === 'teacherAssignments' || key === 'fieldOfScience' || key === 'tagIds' || key === 'requiredClassroomTagIds' || key === 'classroomTypeRequirements') return null;
+    if (key === 'id' || key === 'availabilityGrid' || key === 'entries' || key === 'teacherAssignments' || key === 'fieldOfScience' || key === 'tagIds' || key === 'requiredClassroomTagIds' || key === 'classroomTypeRequirements' || key === 'classroomTypeIds' || key === 'preferredTimeSlotIds') return null;
     
     const labelMap: Record<string, string> = {
         name: "ФИО / Название", number: "Номер/Название", time: "Время", capacity: "Вместимость", studentCount: "Кол-во студентов", 
         code: "Код", course: "Курс", oksoCode: "Код ОКСО", description: "Описание", date: "Дата",
         photoUrl: "URL Фотографии", regalia: "Регалии, звания", hireDate: "Дата приема на работу",
         hoursPerSemester: 'Часы за семестр', address: 'Адрес', phone: 'Телефон', email: 'Email', vkLink: 'Ссылка ВКонтакте',
-        telegramLink: 'Ссылка Telegram', notes: 'Заметки', icon: 'Иконка', color: 'Цвет'
+        telegramLink: 'Ссылка Telegram', notes: 'Заметки', icon: 'Иконка', color: 'Цвет', shift: 'Смена'
     };
+
+    if (key === 'shift') {
+      const options = dataType === 'groups' ? SHIFT_LABELS : TIME_SLOT_SHIFT_LABELS;
+      return (
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Смена</label>
+          <select name="shift" value={formData.shift || (dataType === 'groups' ? 'both' : 'first')} onChange={handleChange} className={defaultInputClass}>
+            {Object.entries(options).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </div>
+      );
+    }
     
     if (key === 'color' && (dataType === 'teachers' || dataType === 'subjects' || dataType === 'classroomTags')) {
       return (
@@ -395,6 +421,30 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'pinnedClassroomId': return (
            <div><label className="block text-sm font-medium text-gray-700">Закрепленная аудитория</label><select name="pinnedClassroomId" value={formData.pinnedClassroomId} onChange={handleChange} className={defaultInputClass}><option value="">Нет</option>{classrooms.map(c => <option key={c.id} value={c.id}>{c.number} ({classroomTypes.find(ct => ct.id === c.typeId)?.name})</option>)}</select></div>
         );
+      case 'classType':
+        if (dataType === 'electives') {
+          return (
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Тип занятия</label>
+              <select name="classType" value={formData.classType || ClassType.Elective} onChange={handleChange} className={defaultInputClass}>
+                {[ClassType.Elective, ClassType.Lecture, ClassType.Practical, ClassType.Lab, ClassType.Consultation].map(opt => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+            </div>
+          );
+        }
+        return null;
+      case 'deliveryMode':
+        if (dataType === 'electives') {
+          return (
+            <div>
+              <label className="block text-sm font-medium text-gray-700">Формат проведения</label>
+              <select name="deliveryMode" value={formData.deliveryMode || DeliveryMode.Offline} onChange={handleChange} className={defaultInputClass}>
+                {Object.values(DeliveryMode).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+              </select>
+            </div>
+          );
+        }
+        return null;
       case 'specialtyIds': return (
           <div><label className="block text-sm font-medium text-gray-700">Специальности (Ctrl/Cmd)</label><select multiple name="specialtyIds" value={formData.specialtyIds} onChange={handleMultiSelectChange} className={`${defaultInputClass} h-32`}>{specialties.map(s => <option key={s.id} value={s.id}>{s.code} {s.name}</option>)}</select></div>
         );
@@ -480,10 +530,11 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const modalTitle = `${item ? 'Редактировать' : 'Добавить'} ${TITLE_MAP[dataType]?.single || 'элемент'}`;
 
   const fields = Object.keys(getInitialFormData(dataType));
+  const hiddenLayoutFields = ['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'classroomTypeRequirements', 'classroomTypeIds', 'preferredTimeSlotIds', 'requiredClassroomTagIds'];
   const half = Math.ceil(fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes'].includes(f)).length / 2);
 
-  const column1Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'classroomTypeRequirements'].includes(f)).slice(0, half);
-  const column2Fields = fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'classroomTypeRequirements'].includes(f)).slice(half);
+  const column1Fields = fields.filter(f => !hiddenLayoutFields.includes(f)).slice(0, half);
+  const column2Fields = fields.filter(f => !hiddenLayoutFields.includes(f)).slice(half);
   const fullWidthFields = fields.filter(f => ['notes', 'description', 'specialtyIds', 'groupIds'].includes(f));
 
 
@@ -508,7 +559,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
             <div className="pt-4 border-t">
               <h3 className="text-lg font-medium text-gray-800 mb-2">Требования к типам аудиторий</h3>
               <div className="space-y-3">
-                {[ClassType.Lecture, ClassType.Practical, ClassType.Lab].map(classType => (
+                {[ClassType.Lecture, ClassType.Practical, ClassType.Lab, ClassType.Elective, ClassType.Consultation].map(classType => (
                   <div key={classType}>
                     <label className="block text-sm font-medium text-gray-700">{classType}</label>
                     <select
@@ -521,6 +572,38 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
                     </select>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {dataType === 'electives' && (
+            <div className="pt-4 border-t space-y-4">
+              <div>
+                <h3 className="text-lg font-medium text-gray-800 mb-2">Параметры планирования факультатива</h3>
+                <label className="block text-sm font-medium text-gray-700">Допустимые типы аудиторий</label>
+                <select
+                  multiple
+                  name="classroomTypeIds"
+                  value={formData.classroomTypeIds || []}
+                  onChange={handleMultiSelectChange}
+                  className={`${defaultInputClass} h-28`}
+                >
+                  {classroomTypes.map(ct => <option key={ct.id} value={ct.id}>{ct.name}</option>)}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Если не выбрать типы, генератор возьмет требования из дисциплины.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700">Предпочтительные слоты звонков</label>
+                <select
+                  multiple
+                  name="preferredTimeSlotIds"
+                  value={formData.preferredTimeSlotIds || []}
+                  onChange={handleMultiSelectChange}
+                  className={`${defaultInputClass} h-28`}
+                >
+                  {timeSlots.map(slot => <option key={slot.id} value={slot.id}>{slot.time}</option>)}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">Это мягкое предпочтение: при нехватке ресурсов генератор сможет поставить занятие в другой слот.</p>
               </div>
             </div>
           )}
@@ -569,7 +652,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
                 </div>
            )}
            
-          {dataType === 'subjects' && (
+          {(dataType === 'subjects' || dataType === 'electives') && (
               <div className="pt-4 border-t">
                   <label className="block text-sm font-medium text-gray-700">Обязательные теги аудитории</label>
                   <div className="mt-2 space-y-2 max-h-48 overflow-y-auto border p-3 rounded-md bg-gray-50">

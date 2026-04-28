@@ -5,12 +5,13 @@ import { DAYS_OF_WEEK, PRODUCTION_CALENDAR_COLORS } from '../constants';
 import { getWeekType, toYYYYMMDD, getWeekDays, getWeekNumber } from '../utils/dateUtils';
 import ScheduleCell from './ScheduleCell';
 import UnscheduledDeck from './UnscheduledDeck';
-import { PlusIcon, ChevronDownIcon, BookmarkIcon, DocumentDownloadIcon, TrashIcon, DocumentTextIcon, ChevronLeftIcon, ChevronRightIcon } from './icons';
+import { PlusIcon, ChevronDownIcon, BookmarkIcon, DocumentDownloadIcon, TrashIcon, DocumentTextIcon, ChevronLeftIcon, ChevronRightIcon, SparklesIcon } from './icons';
 import DatePicker from './DatePicker';
 import { exportScheduleAsPdf } from '../services/pdfExporter';
 import { exportScheduleAsTxt } from '../services/textExporter';
 import { exportScheduleAsExcel } from '../services/excelExporter';
 import TemplateConfirmModal from './TemplateConfirmModal';
+import { areGroupsCompatibleWithTimeSlot, getGroupsShiftMismatchText, getTimeSlotShiftLabel } from '../utils/shiftUtils';
 
 // Save Template Modal
 const SaveTemplateModal: React.FC<{onSave: (name: string, description: string) => void; onClose: () => void;}> = ({ onSave, onClose }) => {
@@ -133,6 +134,14 @@ const SessionEntryModal: React.FC<{
             return;
         }
 
+        const selectedTimeSlot = timeSlots.find(slot => slot.id === formData.timeSlotId);
+        const selectedGroup = groups.find(group => group.id === formData.groupId);
+        if (selectedGroup && !areGroupsCompatibleWithTimeSlot(selectedTimeSlot, [selectedGroup])) {
+            const mismatch = getGroupsShiftMismatchText(selectedTimeSlot, [selectedGroup]);
+            setError(`Слот ${selectedTimeSlot?.time || ''} (${getTimeSlotShiftLabel(selectedTimeSlot?.shift)}) не подходит для группы ${mismatch}.`);
+            return;
+        }
+
         const dayOfWeek = eventDate.getDay();
         const dayName = DAYS_OF_WEEK[dayOfWeek === 0 ? 6 : dayOfWeek - 1];
 
@@ -153,7 +162,7 @@ const SessionEntryModal: React.FC<{
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div className="grid grid-cols-2 gap-4">
                        <div><label>Дата</label><input type="date" name="date" value={formData.date} onChange={handleChange} className={defaultInputClass} /></div>
-                       <div><label>Время</label><select name="timeSlotId" value={formData.timeSlotId} onChange={handleChange} className={defaultInputClass}>{timeSlots.map(t => <option key={t.id} value={t.id}>{t.time}</option>)}</select></div>
+                       <div><label>Время</label><select name="timeSlotId" value={formData.timeSlotId} onChange={handleChange} className={defaultInputClass}>{timeSlots.map(t => <option key={t.id} value={t.id}>{t.time} · {getTimeSlotShiftLabel(t.shift)}</option>)}</select></div>
                        <div><label>Группа</label><select name="groupId" value={formData.groupId} onChange={handleChange} className={defaultInputClass}>{groups.map(i => <option key={i.id} value={i.id}>{i.number}</option>)}</select></div>
                        <div><label>Преподаватель</label><select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass}>{teachers.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
                        <div><label>Дисциплина</label><select name="subjectId" value={formData.subjectId} onChange={handleChange} className={defaultInputClass}>{subjects.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}</select></div>
@@ -180,9 +189,21 @@ interface ScheduleViewProps {
   setViewDate: (date: string) => void;
 }
 
+const getTimeSlotHeaderClass = (shift?: TimeSlot['shift']) => {
+  if (shift === 'second') return 'bg-amber-50 border-l-4 border-l-amber-500';
+  if (shift === 'first') return 'bg-sky-50 border-l-4 border-l-sky-500';
+  return 'bg-white border-l-4 border-l-gray-300';
+};
+
+const getTimeSlotBadgeClass = (shift?: TimeSlot['shift']) => {
+  if (shift === 'second') return 'bg-amber-100 text-amber-800 border border-amber-200';
+  if (shift === 'first') return 'bg-sky-100 text-sky-800 border border-sky-200';
+  return 'bg-gray-100 text-gray-700 border border-gray-200';
+};
+
 const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setViewDate }) => {
   const store = useStore();
-  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, updateSettings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks, streams } = store;
+  const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, updateSettings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks, streams, runLocalOptimizer } = store;
   const [filterType, setFilterType] = useState<'group' | 'teacher' | 'classroom'>('group');
   const [selectedId, setSelectedId] = useState<string>(groups[0]?.id || '');
   const [colorBy, setColorBy] = useState<'type' | 'teacher' | 'subject'>('type');
@@ -193,6 +214,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [isTemplateDropdownOpen, setTemplateDropdownOpen] = useState(false);
   const [isClearDropdownOpen, setClearDropdownOpen] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [exportScope, setExportScope] = useState<'week' | 'semester'>('week');
   const datePickerRef = useRef<HTMLDivElement>(null);
   const templateDropdownRef = useRef<HTMLDivElement>(null);
@@ -341,6 +363,29 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
     const confirmationMessage = `Вы уверены, что хотите удалить все ${idsToClear.length} занятий на этой неделе для ${selectedItemName}?`;
     if (window.confirm(confirmationMessage)) {
         removeScheduleEntries(idsToClear);
+    }
+  };
+
+  const handleOptimizeWeek = async () => {
+    if (weekDays.length === 0 || isOptimizing) return;
+    setIsOptimizing(true);
+    try {
+      const start = toYYYYMMDD(weekDays[0]);
+      const end = toYYYYMMDD(weekDays[weekDays.length - 1]);
+      const result = await runLocalOptimizer({
+        strictness: 7,
+        timeFrame: { start, end },
+        clearExisting: false,
+        iterations: 1,
+        enforceLectureOrder: true,
+        distributeEvenly: true,
+        target: selectedId ? { type: filterType, id: selectedId } : undefined,
+      });
+      alert(`Локальная оптимизация завершена.\nПроверено занятий: ${result.considered}\nУлучшено: ${result.improved}\nОценка: ${Math.round(result.before)} → ${Math.round(result.after)}`);
+    } catch (error) {
+      alert(`Не удалось выполнить локальную оптимизацию: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsOptimizing(false);
     }
   };
 
@@ -669,6 +714,14 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                 <DocumentTextIcon className="w-4 h-4 mr-2"/>
                 Печать
             </button>
+            <button
+              onClick={handleOptimizeWeek}
+              disabled={isOptimizing}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-wait text-white font-bold py-2 px-3 rounded-lg flex items-center text-sm"
+            >
+                <SparklesIcon className="w-4 h-4 mr-2"/>
+                {isOptimizing ? 'Оптимизация...' : 'Оптимизировать'}
+            </button>
             <div className="flex rounded-md bg-gray-100 p-1 text-sm border border-gray-200">
                 {(['week', 'semester'] as const).map(scope => (
                     <button
@@ -741,8 +794,13 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
             </thead>
             <tbody>
               {displayTimeSlots.map(slot => (
-                <tr key={slot.id} className="transition-colors hover:bg-gray-50">
-                  <td className="p-2 border font-semibold text-center align-top h-32 text-gray-700">{slot.time}</td>
+                <tr key={slot.id} className="transition-colors">
+                  <td className={`p-2 border font-semibold text-center align-top h-32 text-gray-700 ${getTimeSlotHeaderClass(slot.shift)}`}>
+                    <div>{slot.time}</div>
+                    <div className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${getTimeSlotBadgeClass(slot.shift)}`}>
+                      {getTimeSlotShiftLabel(slot.shift)}
+                    </div>
+                  </td>
                   {weekDays.map(date => {
                     const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
                     const dateStr = toYYYYMMDD(date);
@@ -766,6 +824,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
                         day={dayName}
                         date={dateStr}
                         timeSlotId={slot.id} 
+                        timeSlotShift={slot.shift}
                         entries={entriesForCell}
                         weekType={effectiveWeekType}
                         isEditable={isMethodist}

@@ -5,6 +5,7 @@ import {
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { toYYYYMMDD } from '../utils/dateUtils';
+import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
 
 interface SessionGenerationData {
   teachers: Teacher[];
@@ -190,6 +191,8 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
         const findSlotInClassrooms = (roomList: Classroom[]) => {
             for (const date of workDays) {
                 for (const timeSlot of timeSlots) {
+                    const involvedGroups = groups.filter(group => event.groupIds.includes(group.id));
+                    if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroups)) continue;
                     if (!isSlotFreeForAttestation(date, timeSlot.id, event, resourceBookings, placements, config, data)) continue;
 
                     for (const classroom of roomList) {
@@ -254,6 +257,8 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
         
         let placed = false;
         for (const timeSlot of timeSlots) {
+             const involvedGroups = groups.filter(group => consult.groupIds.includes(group.id));
+             if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroups)) continue;
              const bookingKey = `${toYYYYMMDD(consultDate)}-${timeSlot.id}`;
              if(resourceBookings.get(bookingKey)?.has(`teacher-${consult.teacherId}`)) continue;
              if(consult.groupIds.some(gid => resourceBookings.get(bookingKey)?.has(`group-${gid}`))) continue;
@@ -297,6 +302,9 @@ const isSlotFreeForAttestation = (
     const dateStr = toYYYYMMDD(date);
     const bookingKey = `${dateStr}-${timeSlotId}`;
     const dayBookingSet = bookings.get(bookingKey);
+    const timeSlot = data.timeSlots.find(slot => slot.id === timeSlotId);
+    const involvedGroupsForShift = data.groups.filter(group => event.groupIds.includes(group.id));
+    if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroupsForShift)) return false;
 
     if(dayBookingSet?.has(`teacher-${event.teacherId}`)) return false;
     if(event.groupIds.some(gid => dayBookingSet?.has(`group-${gid}`))) return false;

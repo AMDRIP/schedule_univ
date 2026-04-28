@@ -144,6 +144,7 @@ export interface Group extends BaseItem {
   course: number;
   specialtyId: string;
   formOfStudy: FormOfStudy;
+  shift?: StudyShift;
   availabilityGrid?: AvailabilityGrid;
   pinnedClassroomId?: string;
 }
@@ -175,7 +176,13 @@ export interface Cabinet extends BaseItem {
   departmentId: string;
   roomMetadata?: RoomResourceMetadata;
 }
-export interface TimeSlot extends BaseItem { time: string; }
+export type StudyShift = 'first' | 'second' | 'both';
+export type TimeSlotShift = 'first' | 'second';
+
+export interface TimeSlot extends BaseItem {
+  time: string;
+  shift?: TimeSlotShift;
+}
 export interface Subject extends BaseItem {
   name: string;
   availabilityGrid?: AvailabilityGrid;
@@ -372,6 +379,11 @@ export interface UnscheduledEntry {
   teacherId: string;
   streamId?: string;
   studentCount: number;
+  deliveryMode?: DeliveryMode;
+  classroomTypeIds?: string[];
+  requiredClassroomTagIds?: string[];
+  pinnedClassroomId?: string;
+  preferredTimeSlotIds?: string[];
   targetWeek?: number;
   explanation?: SchedulingExplanation;
 }
@@ -399,6 +411,12 @@ export interface Elective extends BaseItem {
   teacherId: string;
   groupId: string;
   hoursPerSemester: number;
+  classType?: ClassType;
+  deliveryMode?: DeliveryMode;
+  classroomTypeIds?: string[];
+  requiredClassroomTagIds?: string[];
+  pinnedClassroomId?: string;
+  preferredTimeSlotIds?: string[];
 }
 
 export type BuildingTool = 'select' | 'room' | 'door' | 'window' | 'furniture';

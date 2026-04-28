@@ -1,12 +1,13 @@
 import React, { useState, useMemo } from 'react';
 import { useDrop, useDrag } from 'react-dnd';
 import { useStore } from '../hooks/useStore';
-import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag, AvailabilityType } from '../types';
+import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag, AvailabilityType, TimeSlot } from '../types';
 import { CLASS_TYPE_COLORS, ItemTypes, DAYS_OF_WEEK, COLOR_MAP } from '../constants';
 import LessonPlanModal from './LessonPlanModal';
 import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon, BookOpenIcon } from './icons';
 import { renderIcon } from './IconMap';
 import { getWeekType } from '../utils/dateUtils';
+import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
 
 interface ScheduleEntryCardProps {
   entry: ScheduleEntry;
@@ -295,13 +296,20 @@ interface ScheduleCellProps {
   day: string;
   date: string; // YYYY-MM-DD
   timeSlotId: string;
+  timeSlotShift?: TimeSlot['shift'];
   weekType: 'even' | 'odd' | 'every';
   isEditable: boolean;
   colorBy: 'type' | 'teacher' | 'subject';
 }
 
-const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlotId, weekType, isEditable, colorBy }) => {
-  const { placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups } = useStore();
+const getShiftCellClass = (shift?: TimeSlot['shift']) => {
+  if (shift === 'second') return 'bg-amber-50 border-l-2 border-l-amber-200';
+  if (shift === 'first') return 'bg-sky-50 border-l-2 border-l-sky-200';
+  return 'bg-white';
+};
+
+const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlotId, timeSlotShift, weekType, isEditable, colorBy }) => {
+  const { placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups, timeSlots, timeSlotsShortened } = useStore();
 
   const [{ isOver, canDrop }, drop] = useDrop(() => ({
     accept: [ItemTypes.SCHEDULE_ENTRY, ItemTypes.UNSCHEDULED_ENTRY],
@@ -314,11 +322,14 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
         }
       }
 
+      const targetTimeSlot = [...timeSlots, ...timeSlotsShortened].find(slot => slot.id === timeSlotId);
+      const involvedGroupIds = item.groupIds || (item.groupId ? [item.groupId] : []);
+      const involvedGroups = groups.filter(g => involvedGroupIds.includes(g.id));
+      if (!areGroupsCompatibleWithTimeSlot(targetTimeSlot, involvedGroups)) return false;
+
       // Check for Forbidden slots
       if (!settings.allowManualOverrideOfForbidden) {
         const teacher = teachers.find(t => t.id === item.teacherId);
-        const involvedGroupIds = item.groupIds || (item.groupId ? [item.groupId] : []);
-        const involvedGroups = groups.filter(g => involvedGroupIds.includes(g.id));
 
         const teacherAvailability = teacher?.availabilityGrid?.[day]?.[timeSlotId];
         if (teacherAvailability === AvailabilityType.Forbidden) return false;
@@ -348,9 +359,9 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
       isOver: !!monitor.isOver(),
       canDrop: !!monitor.canDrop(),
     }),
-  }), [entries, day, timeSlotId, weekType, date, placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups]);
+  }), [entries, day, timeSlotId, weekType, date, placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups, timeSlots, timeSlotsShortened]);
 
-  let cellBgClass = 'bg-white';
+  let cellBgClass = getShiftCellClass(timeSlotShift);
   if (canDrop && isOver) cellBgClass = 'bg-green-200';
   else if (canDrop) cellBgClass = 'bg-green-50';
 

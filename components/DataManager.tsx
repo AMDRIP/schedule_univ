@@ -7,6 +7,7 @@ import { EditIcon, TrashIcon, PlusIcon, DocumentSearchIcon, CopyIcon, LinkIcon }
 import { calculateExperience } from '../utils/dateUtils';
 import { renderIcon } from './IconMap';
 import { COLOR_MAP } from '../constants';
+import { getGroupShiftLabel, getTimeSlotShiftLabel } from '../utils/shiftUtils';
 
 interface DataManagerProps {
   dataType: DataType;
@@ -26,6 +27,7 @@ const COLUMN_HEADERS: Record<string, string> = {
   studentCount: 'Студентов',
   groupIds: 'Группы в потоке',
   time: 'Время',
+  shift: 'Смена',
   date: 'Дата',
   isWorkDay: 'Рабочий день',
   course: 'Курс',
@@ -58,6 +60,10 @@ const COLUMN_HEADERS: Record<string, string> = {
   tagIds: 'Теги',
   color: 'Цвет',
   icon: 'Иконка',
+  classType: 'Тип занятия',
+  deliveryMode: 'Формат',
+  classroomTypeIds: 'Типы ауд.',
+  preferredTimeSlotIds: 'Предпочт. слоты',
 };
 
 
@@ -168,13 +174,16 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
         return ['id', 'name', 'description'];
     }
     if (dataType === 'groups') {
-        return ['id', 'number', 'course', 'specialtyId', 'formOfStudy', 'studentCount', 'pinnedClassroomId'];
+        return ['id', 'number', 'course', 'specialtyId', 'formOfStudy', 'shift', 'studentCount', 'pinnedClassroomId'];
+    }
+    if (dataType === 'timeSlots' || dataType === 'timeSlotsShortened') {
+        return ['id', 'time', 'shift'];
     }
     if (dataType === 'subgroups') {
         return ['id', 'name', 'parentGroupId', 'studentCount'];
     }
     if (dataType === 'electives') {
-        return ['id', 'name', 'subjectId', 'teacherId', 'groupId', 'hoursPerSemester'];
+        return ['id', 'name', 'subjectId', 'teacherId', 'groupId', 'classType', 'deliveryMode', 'hoursPerSemester', 'classroomTypeIds', 'requiredClassroomTagIds', 'pinnedClassroomId', 'preferredTimeSlotIds'];
     }
     if (dataType === 'classroomTags') {
         return ['id', 'color', 'icon', 'name'];
@@ -185,7 +194,9 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
             case 'departments': return ['id', 'name', 'facultyId', 'specialtyIds'];
             case 'streams': return ['id', 'name', 'groupIds'];
             case 'cabinets': return ['id', 'number', 'departmentId'];
-            case 'timeSlots': return ['id', 'time'];
+            case 'timeSlots':
+            case 'timeSlotsShortened':
+                return ['id', 'time', 'shift'];
             case 'productionCalendar': return ['id', 'date', 'name', 'type', 'isWorkDay'];
             case 'ugs': return ['id', 'code', 'name'];
             case 'specialties': return ['id', 'code', 'name', 'ugsId', 'oksoCode'];
@@ -272,13 +283,27 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
       // FIX: The type of `value` is a large union. We must check if it's an array before casting and passing it to renderTags.
       return renderTags(Array.isArray(value) ? value : undefined);
     }
-    if (column === 'requiredClassroomTagIds' && dataType === 'subjects') {
+    if (column === 'requiredClassroomTagIds' && (dataType === 'subjects' || dataType === 'electives')) {
       // FIX: The type of `value` is a large union. We must check if it's an array before casting and passing it to renderTags.
       return renderTags(Array.isArray(value) ? value : undefined);
     }
 
+    if (column === 'classroomTypeIds' && dataType === 'electives') {
+      if (!Array.isArray(value) || value.length === 0) return 'вЂ”';
+      return value.map(id => store.classroomTypes.find(ct => ct.id === id)?.name).filter(Boolean).join(', ');
+    }
+
+    if (column === 'preferredTimeSlotIds' && dataType === 'electives') {
+      if (!Array.isArray(value) || value.length === 0) return 'вЂ”';
+      return value.map(id => store.timeSlots.find(slot => slot.id === id)?.time).filter(Boolean).join(', ');
+    }
+
 
     switch (column) {
+      case 'shift':
+        if (dataType === 'groups') return getGroupShiftLabel(value as any);
+        if (dataType === 'timeSlots' || dataType === 'timeSlotsShortened') return getTimeSlotShiftLabel(value as any);
+        return String(value ?? '');
       case 'facultyId':
         return store.faculties.find(f => f.id === value)?.name || 'N/A';
       case 'deanId':

@@ -9,11 +9,12 @@ import {
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
-import { generateScheduleWithHeuristics, SchedulerResult } from '../services/heuristicScheduler';
+import { generateScheduleWithHeuristics, optimizeScheduleLocally, SchedulerResult } from '../services/heuristicScheduler';
 import { generateScheduleWithGemini } from '../services/geminiService';
 import { generateScheduleWithOpenRouter } from '../services/openRouterService';
 import { runIterativeScheduler } from '../services/iterativeScheduler';
 import { generateSessionSchedule } from '../services/sessionScheduler';
+import { areGroupsCompatibleWithTimeSlot, getGroupsShiftMismatchText, getTimeSlotShiftLabel } from '../utils/shiftUtils';
 
 // MOCK DATA (Initial State)
 const initialFaculties: Faculty[] = [{
@@ -44,7 +45,7 @@ const initialTeachers: Teacher[] = [
     { id: 't1', name: 'Иванов И.И.', departmentId: 'd1', academicDegree: AcademicDegree.Doctor, fieldOfScience: FieldOfScience.Engineering, academicTitle: AcademicTitle.Professor, hireDate: '2010-09-01', regalia: 'Заслуженный деятель науки РФ', color: 'blue' }, 
     { id: 't2', name: 'Петров П.П.', departmentId: 'd1', academicDegree: AcademicDegree.Candidate, fieldOfScience: FieldOfScience.PhysicalMathematical, academicTitle: AcademicTitle.Docent, hireDate: '2018-03-15', color: 'green' }
 ];
-const initialGroups: Group[] = [{ id: 'g1', number: 'ПИ-101', departmentId: 'd1', studentCount: 25, course: 1, specialtyId: 'spec1', formOfStudy: FormOfStudy.FullTime }];
+const initialGroups: Group[] = [{ id: 'g1', number: 'ПИ-101', departmentId: 'd1', studentCount: 25, course: 1, specialtyId: 'spec1', formOfStudy: FormOfStudy.FullTime, shift: 'first' }];
 const initialSubgroups: Subgroup[] = [];
 const initialElectives: Elective[] = [];
 const initialStreams: Stream[] = [];
@@ -76,12 +77,12 @@ const initialEducationalPlans: EducationalPlan[] = [
 ];
 const initialCabinets: Cabinet[] = [];
 const initialTimeSlots: TimeSlot[] = [
-    { id: 'ts1', time: '08:30-10:00' }, { id: 'ts2', time: '10:15-11:45' },
-    { id: 'ts3', time: '12:00-13:30' }, { id: 'ts4', time: '14:15-15:45' },
+    { id: 'ts1', time: '08:30-10:00', shift: 'first' }, { id: 'ts2', time: '10:15-11:45', shift: 'first' },
+    { id: 'ts3', time: '12:00-13:30', shift: 'second' }, { id: 'ts4', time: '14:15-15:45', shift: 'second' },
 ];
 const initialTimeSlotsShortened: TimeSlot[] = [
-    { id: 'tss1', time: '08:30-09:50' }, { id: 'tss2', time: '10:00-11:20' },
-    { id: 'tss3', time: '11:30-12:50' }, { id: 'tss4', time: '13:00-14:20' },
+    { id: 'tss1', time: '08:30-09:50', shift: 'first' }, { id: 'tss2', time: '10:00-11:20', shift: 'first' },
+    { id: 'tss3', time: '11:30-12:50', shift: 'second' }, { id: 'tss4', time: '13:00-14:20', shift: 'second' },
 ];
 const initialSchedule: ScheduleEntry[] = [];
 const initialTeacherSubjectLinks: TeacherSubjectLink[] = [
@@ -242,9 +243,14 @@ const generateUnscheduledEntries = (
                 uid: `unsched-elective-${elective.id}-${i}`,
                 subjectId: elective.subjectId,
                 groupId: elective.groupId,
-                classType: ClassType.Elective,
+                classType: elective.classType || ClassType.Elective,
                 teacherId: elective.teacherId,
                 studentCount: group.studentCount,
+                deliveryMode: elective.deliveryMode || DeliveryMode.Offline,
+                classroomTypeIds: elective.classroomTypeIds,
+                requiredClassroomTagIds: elective.requiredClassroomTagIds,
+                pinnedClassroomId: elective.pinnedClassroomId,
+                preferredTimeSlotIds: elective.preferredTimeSlotIds,
             });
         }
     });
@@ -292,6 +298,7 @@ interface StoreState {
   setUnscheduledTimeHorizon: (horizon: 'semester' | 'week' | 'twoWeeks') => void;
   setViewDate: (date: string) => void;
   runScheduler: (method: 'heuristic' | 'gemini' | 'openrouter', config?: HeuristicConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
+  runLocalOptimizer: (config: HeuristicConfig) => Promise<{ improved: number; considered: number; before: number; after: number }>;
   runSessionScheduler: (config: SessionSchedulerConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }>;
   clearSchedule: () => void;
   resetSchedule: () => void;
@@ -755,6 +762,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       alert('Этот тип аудитории используется. Сначала измените тип у всех аудиторий, использующих его.');
       return;
     }
+    if (dataType === 'classroomTypes' && (
+      fullState.subjects.some((subject: Subject) => Object.values(subject.classroomTypeRequirements || {}).some(typeIds => typeIds?.includes(id))) ||
+      fullState.electives.some((elective: Elective) => elective.classroomTypeIds?.includes(id))
+    )) {
+      alert('Этот тип аудитории используется в требованиях дисциплин или факультативов. Сначала уберите его из требований.');
+      return;
+    }
 
     const toDelete: { [K in DataType]?: Set<string> } = {};
     const getSet = (type: DataType) => {
@@ -842,11 +856,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setTeachers(prev => prev.map(t => classroomIds.has(t.pinnedClassroomId || '') ? { ...t, pinnedClassroomId: '' } : t));
     setGroups(prev => prev.map(g => classroomIds.has(g.pinnedClassroomId || '') ? { ...g, pinnedClassroomId: '' } : g));
     setSubjects(prev => prev.map(s => classroomIds.has(s.pinnedClassroomId || '') ? { ...s, pinnedClassroomId: '' } : s));
+    setElectives(prev => prev.map(e => classroomIds.has(e.pinnedClassroomId || '') ? { ...e, pinnedClassroomId: '' } : e));
 
     // Cleanup classroom tags
     if(classroomTagIds.size > 0) {
       setClassrooms(prev => prev.map(c => ({ ...c, tagIds: c.tagIds?.filter(tagId => !classroomTagIds.has(tagId)) })));
       setSubjects(prev => prev.map(s => ({ ...s, requiredClassroomTagIds: s.requiredClassroomTagIds?.filter(tagId => !classroomTagIds.has(tagId)) })));
+      setElectives(prev => prev.map(e => ({ ...e, requiredClassroomTagIds: e.requiredClassroomTagIds?.filter(tagId => !classroomTagIds.has(tagId)) })));
     }
   };
 
@@ -866,13 +882,27 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         return;
       }
 
-      const requiredClassroomTypes = subject.classroomTypeRequirements?.[item.classType];
+      const targetTimeSlot = [...timeSlots, ...timeSlotsShortened].find(slot => slot.id === timeSlotId);
+      const involvedGroups = groups.filter(group => (item.groupIds || (item.groupId ? [item.groupId] : [])).includes(group.id));
+      if (!areGroupsCompatibleWithTimeSlot(targetTimeSlot, involvedGroups)) {
+        const mismatch = getGroupsShiftMismatchText(targetTimeSlot, involvedGroups);
+        alert(`Нельзя разместить занятие: слот "${targetTimeSlot?.time || timeSlotId}" (${getTimeSlotShiftLabel(targetTimeSlot?.shift)}) не совпадает со сменой группы ${mismatch}.`);
+        return;
+      }
+
+      const requiredClassroomTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : subject.classroomTypeRequirements?.[item.classType];
       if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) {
           alert(`Для дисциплины "${subject.name}" (тип: ${item.classType}) не указаны подходящие типы аудиторий в справочнике.`);
           return;
       }
 
-      const suitableClassroom = classrooms.find(c => {
+      const classroomCandidates = [...classrooms].sort((a, b) => {
+        if (item.pinnedClassroomId && a.id === item.pinnedClassroomId) return -1;
+        if (item.pinnedClassroomId && b.id === item.pinnedClassroomId) return 1;
+        return a.capacity - b.capacity;
+      });
+
+      const suitableClassroom = classroomCandidates.find(c => {
         const targetWeekType = getWeekType(new Date(date + 'T00:00:00'), new Date(settings.semesterStart));
         const effectiveTargetWeekType = settings.useEvenOddWeekSeparation ? targetWeekType : 'every';
         
@@ -897,7 +927,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (c.capacity < item.studentCount) return false;
         
         // Check for required tags
-        const requiredTags = subject.requiredClassroomTagIds || [];
+        const requiredTags = item.requiredClassroomTagIds?.length ? item.requiredClassroomTagIds : subject.requiredClassroomTagIds || [];
         if (requiredTags.length > 0) {
             const classroomTags = c.tagIds || [];
             if (!requiredTags.every(tagId => classroomTags.includes(tagId))) {
@@ -926,7 +956,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           teacherId: item.teacherId,
           classroomId: suitableClassroom.id,
           classType: item.classType,
-          deliveryMode: DeliveryMode.Offline,
+          deliveryMode: item.deliveryMode || DeliveryMode.Offline,
           unscheduledUid: item.uid,
       };
       setSchedule(prev => [...prev, newEntry]);
@@ -941,6 +971,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (dayInfo && !dayInfo.isWorkDay) {
             throw new Error(`Нельзя разместить занятие на ${date}, так как это нерабочий день: "${dayInfo.name}".`);
         }
+    }
+
+    const targetTimeSlot = [...timeSlots, ...timeSlotsShortened].find(slot => slot.id === timeSlotId);
+    const targetGroup = groups.find(g => g.id === targetGroupId);
+    const targetGroups = targetGroup ? [targetGroup] : [];
+    if (!areGroupsCompatibleWithTimeSlot(targetTimeSlot, targetGroups)) {
+        const mismatch = getGroupsShiftMismatchText(targetTimeSlot, targetGroups);
+        throw new Error(`Нельзя разместить занятие: слот "${targetTimeSlot?.time || timeSlotId}" (${getTimeSlotShiftLabel(targetTimeSlot?.shift)}) не совпадает со сменой группы ${mismatch}.`);
     }
 
     if (!settings.allowManualOverrideOfForbidden) {
@@ -985,7 +1023,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         originalGroupId = item.groupId;
     }
     
-    const requiredClassroomTypes = subject.classroomTypeRequirements?.[item.classType];
+    const requiredClassroomTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : subject.classroomTypeRequirements?.[item.classType];
     if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) {
         throw new Error(`Для дисциплины "${subject.name}" (тип: ${item.classType}) не указаны подходящие типы аудиторий.`);
     }
@@ -1002,7 +1040,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (c.capacity < studentCount) continue;
         if (!requiredClassroomTypes.includes(c.typeId)) continue;
         
-        const requiredTags = subject.requiredClassroomTagIds || [];
+        const requiredTags = item.requiredClassroomTagIds?.length ? item.requiredClassroomTagIds : subject.requiredClassroomTagIds || [];
         if (requiredTags.length > 0) {
             const classroomTags = c.tagIds || [];
             if (!requiredTags.every(tagId => classroomTags.includes(tagId))) {
@@ -1010,7 +1048,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             }
         }
         
-        const capacityDiff = c.capacity - studentCount;
+        const capacityDiff = c.capacity - studentCount - (item.pinnedClassroomId === c.id ? 10000 : 0);
         if (capacityDiff < minCapacityDiff) {
             minCapacityDiff = capacityDiff;
             bestFit = c;
@@ -1024,7 +1062,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // 4. Create/Update Entry
     if ('uid' in item) { // UnscheduledEntry
         const newEntry: Omit<ScheduleEntry, 'id'> = {
-            day, timeSlotId, date, classroomId: bestFit.id, classType: item.classType, deliveryMode: DeliveryMode.Offline,
+            day, timeSlotId, date, classroomId: bestFit.id, classType: item.classType, deliveryMode: item.deliveryMode || DeliveryMode.Offline,
             subjectId: item.subjectId, teacherId: item.teacherId, unscheduledUid: item.uid, weekType: 'every',
             groupId: targetGroupId,
             groupIds: [targetGroupId],
@@ -1432,6 +1470,24 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     return { scheduled: 0, unscheduled: 0, failedEntries: [] };
   };
 
+  const runLocalOptimizer = async (config: HeuristicConfig): Promise<{ improved: number; considered: number; before: number; after: number }> => {
+    const generationData = {
+        teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings,
+        teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
+        subgroups, electives, schedule, classroomTags, faculties, departments
+    };
+
+    const result = await optimizeScheduleLocally(generationData, config);
+    setSchedule(result.schedule);
+    setLastSchedulingRunSummary(`Локальная оптимизация: проверено ${result.considered}, улучшено ${result.improved}, оценка ${Math.round(result.beforeScore.total)} → ${Math.round(result.afterScore.total)}.`);
+    return {
+        improved: result.improved,
+        considered: result.considered,
+        before: result.beforeScore.total,
+        after: result.afterScore.total,
+    };
+  };
+
   const runSessionScheduler = async (config: SessionSchedulerConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }> => {
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings,
@@ -1539,7 +1595,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     schedulingProgress, schedulingExplanations, lastSchedulingRunSummary, viewDate,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, placeItemInGrid, updateScheduleEntry, updateSettings, updateApiKey, updateOpenRouterApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
-    runScheduler, runSessionScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,
+    runScheduler, runLocalOptimizer, runSessionScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,
     startNewProject, handleOpen, openRecentProject, handleSave, handleSaveAs,
     getFullState, loadFullState, clearAllData, mergeFullState, setBuildingPlans, syncBuildingPlanRooms
   };
