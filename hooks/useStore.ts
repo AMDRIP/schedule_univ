@@ -683,7 +683,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const addItem = (dataType: DataType, item: Omit<DataItem, 'id'>) => {
     const setter = stateSetters[dataType];
-    const newItem = { ...item, id: `${dataType.slice(0, 3)}-${Date.now()}` } as DataItem;
+    const newItem = { ...item, id: `${dataType.slice(0, 3)}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` } as DataItem;
     setter(prev => [...prev, newItem]);
   };
   

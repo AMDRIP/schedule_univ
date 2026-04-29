@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
 import { Specialty, EducationalPlan, PlanEntry, Subject, AttestationType } from '../types';
-import { PlusIcon, EditIcon, TrashIcon, BookOpenIcon, DocumentSearchIcon } from './icons';
+import { PlusIcon, EditIcon, TrashIcon, BookOpenIcon, DocumentSearchIcon, CopyIcon } from './icons';
 
 // Modal for adding/editing a plan entry
 interface PlanEntryModalProps {
@@ -107,16 +107,28 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
 };
 
 
+type CopyDialogState = {
+    mode: 'entry' | 'plan';
+    entry?: PlanEntry;
+} | null;
+
 // Main Component
 const EducationalPlanManager: React.FC = () => {
     const { specialties, educationalPlans, subjects, updateItem, addItem } = useStore();
     const [selectedSpecialtyId, setSelectedSpecialtyId] = useState<string>(specialties[0]?.id || '');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [currentEntry, setCurrentEntry] = useState<PlanEntry | null>(null);
+    const [copyDialog, setCopyDialog] = useState<CopyDialogState>(null);
+    const [targetSpecialtyIds, setTargetSpecialtyIds] = useState<string[]>([]);
+    const [replaceTargetPlan, setReplaceTargetPlan] = useState(false);
 
     const activePlan = useMemo(() => {
         return educationalPlans.find(p => p.specialtyId === selectedSpecialtyId);
     }, [selectedSpecialtyId, educationalPlans]);
+
+    const availableCopyTargets = useMemo(() => {
+        return specialties.filter(s => s.id !== selectedSpecialtyId);
+    }, [specialties, selectedSpecialtyId]);
     
     const groupedEntries = useMemo(() => {
         if (!activePlan) return {};
@@ -127,6 +139,25 @@ const EducationalPlanManager: React.FC = () => {
     }, [activePlan]);
 
     const getSubjectName = (id: string) => subjects.find(s => s.id === id)?.name || 'N/A';
+    const getSpecialtyLabel = (specialty: Specialty) => `${specialty.code} ${specialty.name}`.trim();
+
+    const sortPlanEntries = (entries: PlanEntry[]) => [...entries].sort((a, b) => {
+        if (a.semester !== b.semester) return a.semester - b.semester;
+        return getSubjectName(a.subjectId).localeCompare(getSubjectName(b.subjectId), 'ru');
+    });
+
+    const mergePlanEntries = (currentEntries: PlanEntry[], copiedEntries: PlanEntry[]) => {
+        const next = [...currentEntries];
+        copiedEntries.forEach(entry => {
+            const existingIndex = next.findIndex(item => item.subjectId === entry.subjectId && item.semester === entry.semester);
+            if (existingIndex >= 0) {
+                next[existingIndex] = { ...entry };
+            } else {
+                next.push({ ...entry });
+            }
+        });
+        return sortPlanEntries(next);
+    };
 
     const handleAddEntry = () => {
         setCurrentEntry(null);
@@ -190,6 +221,70 @@ const EducationalPlanManager: React.FC = () => {
         setIsModalOpen(false);
     };
 
+    const openCopyDialog = (mode: 'entry' | 'plan', entry?: PlanEntry) => {
+        setCopyDialog({ mode, entry });
+        setTargetSpecialtyIds([]);
+        setReplaceTargetPlan(false);
+    };
+
+    const toggleTargetSpecialty = (specialtyId: string) => {
+        setTargetSpecialtyIds(prev =>
+            prev.includes(specialtyId)
+                ? prev.filter(id => id !== specialtyId)
+                : [...prev, specialtyId]
+        );
+    };
+
+    const handleSelectAllTargets = () => {
+        setTargetSpecialtyIds(availableCopyTargets.map(s => s.id));
+    };
+
+    const handleConfirmCopy = () => {
+        if (!copyDialog) return;
+
+        const entriesToCopy = copyDialog.mode === 'entry'
+            ? (copyDialog.entry ? [{ ...copyDialog.entry }] : [])
+            : (activePlan?.entries || []).map(entry => ({ ...entry }));
+
+        if (entriesToCopy.length === 0) {
+            alert('Нет дисциплин для копирования.');
+            return;
+        }
+
+        if (targetSpecialtyIds.length === 0) {
+            alert('Выберите хотя бы одну специальность-получатель.');
+            return;
+        }
+
+        let createdPlans = 0;
+        let updatedPlans = 0;
+
+        targetSpecialtyIds.forEach(targetSpecialtyId => {
+            const targetPlan = educationalPlans.find(plan => plan.specialtyId === targetSpecialtyId);
+            const copiedEntries = entriesToCopy.map(entry => ({ ...entry }));
+
+            if (targetPlan) {
+                const entries = copyDialog.mode === 'plan' && replaceTargetPlan
+                    ? sortPlanEntries(copiedEntries)
+                    : mergePlanEntries(targetPlan.entries, copiedEntries);
+                updateItem('educationalPlans', { ...targetPlan, entries });
+                updatedPlans += 1;
+            } else {
+                addItem('educationalPlans', {
+                    specialtyId: targetSpecialtyId,
+                    entries: sortPlanEntries(copiedEntries),
+                });
+                createdPlans += 1;
+            }
+        });
+
+        const copiedCount = entriesToCopy.length * targetSpecialtyIds.length;
+        alert(`Копирование завершено.\nДисциплин скопировано: ${copiedCount}\nСоздано планов: ${createdPlans}\nОбновлено планов: ${updatedPlans}`);
+        setCopyDialog(null);
+        setTargetSpecialtyIds([]);
+        setReplaceTargetPlan(false);
+    };
+
     return (
         <div className="bg-white p-6 rounded-lg shadow-lg">
             <div className="flex justify-between items-center mb-6">
@@ -201,6 +296,14 @@ const EducationalPlanManager: React.FC = () => {
                      <select value={selectedSpecialtyId} onChange={e => setSelectedSpecialtyId(e.target.value)} className="p-2 border rounded-md bg-white min-w-[300px] text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75">
                         {specialties.map(s => <option key={s.id} value={s.id}>{s.code} {s.name}</option>)}
                     </select>
+                    <button
+                        onClick={() => openCopyDialog('plan')}
+                        disabled={!activePlan || activePlan.entries.length === 0 || availableCopyTargets.length === 0}
+                        className="bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg flex items-center shrink-0 transition-transform transform hover:scale-105 active:scale-95"
+                    >
+                        <CopyIcon className="w-5 h-5 mr-2" />
+                        Копировать план
+                    </button>
                     <button onClick={handleAddEntry} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg flex items-center shrink-0 transition-transform transform hover:scale-105 active:scale-95">
                         <PlusIcon className="w-5 h-5 mr-2" />
                         Добавить дисциплину
@@ -251,6 +354,7 @@ const EducationalPlanManager: React.FC = () => {
                                             <td className="p-2 text-center border-t border-gray-200 text-gray-700">{entry.splitForSubgroups ? 'Да' : 'Нет'}</td>
                                             <td className="p-2 border-t border-gray-200 text-gray-700">
                                                 <button onClick={() => handleEditEntry(entry)} className="text-blue-600 hover:text-blue-800 mr-3 transition-transform transform hover:scale-110"><EditIcon/></button>
+                                                <button onClick={() => openCopyDialog('entry', entry)} className="text-indigo-600 hover:text-indigo-800 mr-3 transition-transform transform hover:scale-110" title="Копировать дисциплину в другие специальности"><CopyIcon/></button>
                                                 <button onClick={() => handleDeleteEntry(entry)} className="text-red-600 hover:text-red-800 transition-transform transform hover:scale-110"><TrashIcon/></button>
                                             </td>
                                          </tr>
@@ -280,6 +384,87 @@ const EducationalPlanManager: React.FC = () => {
                 )}
             </div>
              {isModalOpen && <PlanEntryModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveEntry} entry={currentEntry} />}
+             {copyDialog && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
+                    <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-2xl animation-fade-in-scale">
+                        <div className="flex items-start justify-between gap-4 mb-4">
+                            <div>
+                                <h2 className="text-xl font-bold text-gray-900">
+                                    {copyDialog.mode === 'entry' ? 'Копировать дисциплину' : 'Копировать учебный план'}
+                                </h2>
+                                <p className="text-sm text-gray-600 mt-1">
+                                    {copyDialog.mode === 'entry' && copyDialog.entry
+                                        ? `Будет скопирована дисциплина "${getSubjectName(copyDialog.entry.subjectId)}" за ${copyDialog.entry.semester} семестр.`
+                                        : `Будут скопированы все дисциплины текущего учебного плана: ${activePlan?.entries.length || 0}.`}
+                                </p>
+                            </div>
+                            <CopyIcon className="h-7 w-7 text-indigo-600 shrink-0" />
+                        </div>
+
+                        {availableCopyTargets.length > 0 ? (
+                            <>
+                                <div className="flex items-center justify-between mb-3">
+                                    <p className="text-sm font-medium text-gray-700">Специальности-получатели</p>
+                                    <button type="button" onClick={handleSelectAllTargets} className="text-sm text-indigo-700 hover:text-indigo-900 font-medium">
+                                        Выбрать все
+                                    </button>
+                                </div>
+                                <div className="max-h-72 overflow-y-auto border border-gray-200 rounded-md divide-y divide-gray-100">
+                                    {availableCopyTargets.map(specialty => (
+                                        <label key={specialty.id} className="flex items-start gap-3 p-3 hover:bg-indigo-50 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={targetSpecialtyIds.includes(specialty.id)}
+                                                onChange={() => toggleTargetSpecialty(specialty.id)}
+                                                className="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                            />
+                                            <span>
+                                                <span className="block text-sm font-semibold text-gray-900">{getSpecialtyLabel(specialty)}</span>
+                                                <span className="block text-xs text-gray-500">
+                                                    {educationalPlans.some(plan => plan.specialtyId === specialty.id) ? 'Есть учебный план: совпадающие дисциплины будут обновлены' : 'Учебного плана пока нет: он будет создан'}
+                                                </span>
+                                            </span>
+                                        </label>
+                                    ))}
+                                </div>
+
+                                {copyDialog.mode === 'plan' && (
+                                    <label className="mt-4 flex items-start gap-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+                                        <input
+                                            type="checkbox"
+                                            checked={replaceTargetPlan}
+                                            onChange={event => setReplaceTargetPlan(event.target.checked)}
+                                            className="mt-1 h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                        />
+                                        <span>
+                                            <span className="block text-sm font-semibold text-amber-900">Заменить существующие планы полностью</span>
+                                            <span className="block text-xs text-amber-800">Если не включать этот режим, приложение добавит недостающие дисциплины и обновит совпадения по дисциплине и семестру.</span>
+                                        </span>
+                                    </label>
+                                )}
+                            </>
+                        ) : (
+                            <div className="text-center py-10 border-2 border-dashed border-gray-200 rounded-lg text-gray-500">
+                                Нет других специальностей для копирования.
+                            </div>
+                        )}
+
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button type="button" onClick={() => setCopyDialog(null)} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">
+                                Отмена
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleConfirmCopy}
+                                disabled={targetSpecialtyIds.length === 0 || availableCopyTargets.length === 0}
+                                className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                            >
+                                Скопировать
+                            </button>
+                        </div>
+                    </div>
+                </div>
+             )}
         </div>
     );
 };
