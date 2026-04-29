@@ -134,7 +134,68 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
     }
   };
 
+  const normalizeQuickSubjectLinks = (links: any[] = []) => {
+    const normalized = new Map<string, Set<ClassType>>();
+    links.forEach(link => {
+      if (!link?.subjectId || !Array.isArray(link.classTypes)) return;
+      const classTypes = link.classTypes.filter(Boolean) as ClassType[];
+      if (classTypes.length === 0) return;
+      if (!normalized.has(link.subjectId)) {
+        normalized.set(link.subjectId, new Set<ClassType>());
+      }
+      classTypes.forEach(classType => normalized.get(link.subjectId)!.add(classType));
+    });
+    return Array.from(normalized.entries()).map(([subjectId, classTypes]) => ({
+      subjectId,
+      classTypes: Array.from(classTypes),
+    }));
+  };
+
+  const syncTeacherQuickSubjectLinks = (teacherId: string, links: any[] = []) => {
+    const desiredLinks = normalizeQuickSubjectLinks(links);
+    const desiredSubjectIds = new Set(desiredLinks.map(link => link.subjectId));
+    const existingLinks = store.teacherSubjectLinks.filter(link => link.teacherId === teacherId);
+
+    existingLinks.forEach(link => {
+      if (!desiredSubjectIds.has(link.subjectId)) {
+        deleteItem('teacherSubjectLinks', link.id);
+      }
+    });
+
+    desiredLinks.forEach(link => {
+      const matches = existingLinks.filter(existing => existing.subjectId === link.subjectId);
+      const primary = matches[0];
+      const duplicates = matches.slice(1);
+
+      if (primary) {
+        updateItem('teacherSubjectLinks', {
+          ...primary,
+          classTypes: link.classTypes,
+        });
+      } else {
+        addItem('teacherSubjectLinks', {
+          teacherId,
+          subjectId: link.subjectId,
+          classTypes: link.classTypes,
+        });
+      }
+
+      duplicates.forEach(duplicate => deleteItem('teacherSubjectLinks', duplicate.id));
+    });
+  };
+
   const handleSave = (item: Omit<DataItem, 'id'> | DataItem) => {
+    if (dataType === 'teachers') {
+      const { quickSubjectLinks = [], ...teacherPayload } = item as any;
+      const savedTeacher = 'id' in teacherPayload && teacherPayload.id
+        ? (updateItem(dataType, teacherPayload as DataItem), teacherPayload as Teacher)
+        : addItem(dataType, teacherPayload as Omit<DataItem, 'id'>) as Teacher;
+
+      syncTeacherQuickSubjectLinks(savedTeacher.id, quickSubjectLinks);
+      setIsModalOpen(false);
+      return;
+    }
+
     if ('id' in item && item.id) {
       updateItem(dataType, item as DataItem);
     } else {

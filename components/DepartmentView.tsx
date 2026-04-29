@@ -5,6 +5,7 @@ import { LocationMarkerIcon, PhoneIcon, MailIcon, VkIcon, TelegramIcon, UsersIco
 
 interface DepartmentViewProps {
   departmentId: string;
+  onNavigate?: (view: string, id: string) => void;
 }
 
 const Section: React.FC<{ title: string; children: React.ReactNode; className?: string }> = ({ title, children, className = '' }) => (
@@ -33,9 +34,21 @@ const ProgramCard: React.FC<{ specialty: Specialty }> = ({ specialty }) => {
     );
 };
 
-const TeacherCard: React.FC<{ teacher: Teacher; departmentName: string; }> = ({ teacher, departmentName }) => {
+const TeacherCard: React.FC<{ teacher: Teacher; departmentName: string; onOpen?: (teacherId: string) => void; }> = ({ teacher, departmentName, onOpen }) => {
+    const handleOpen = () => {
+        if (onOpen) {
+            onOpen(teacher.id);
+            return;
+        }
+        window.dispatchEvent(new CustomEvent('open-teacher-card', { detail: teacher.id }));
+    };
+
     return (
-        <div className="bg-white p-4 rounded-lg border border-gray-200 text-center hover:shadow-lg transition-shadow transform hover:-translate-y-1">
+        <button
+            type="button"
+            onClick={handleOpen}
+            className="w-full bg-white p-4 rounded-lg border border-gray-200 text-center hover:shadow-lg transition-all transform hover:-translate-y-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        >
             <img 
                 src={teacher.photoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(teacher.name)}&background=e0e7ff&color=4338ca&size=128`} 
                 alt={teacher.name}
@@ -44,12 +57,13 @@ const TeacherCard: React.FC<{ teacher: Teacher; departmentName: string; }> = ({ 
             <h3 className="font-bold text-gray-800">{teacher.name}</h3>
             <p className="text-sm text-gray-600">{teacher.academicTitle || ''}</p>
             <p className="text-xs text-gray-500 mt-1">{departmentName}</p>
-        </div>
+            <span className="mt-3 inline-block text-xs font-medium text-blue-600">Открыть карточку</span>
+        </button>
     );
 };
 
 
-const DepartmentView: React.FC<DepartmentViewProps> = ({ departmentId }) => {
+const DepartmentView: React.FC<DepartmentViewProps> = ({ departmentId, onNavigate }) => {
     const store = useStore();
 
     const department = useMemo(() => store.departments.find(d => d.id === departmentId), [departmentId, store.departments]);

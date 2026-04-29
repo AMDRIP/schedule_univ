@@ -71,7 +71,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     switch (type) {
       case 'faculties': return { name: '', deanId: '', address: '', phone: '', email: '', notes: '' };
       case 'departments': return { name: '', facultyId: faculties[0]?.id || '', specialtyIds: [], headTeacherId: '', address: '', phone: '', email: '', vkLink: '', telegramLink: '', notes: '' };
-      case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', fieldOfScience: '', academicTitle: '', photoUrl: '', hireDate: '', color: '' };
+      case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', fieldOfScience: '', academicTitle: '', photoUrl: '', hireDate: '', color: '', quickSubjectLinks: [] };
       case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, shift: 'both', availabilityGrid: {}, pinnedClassroomId: '' };
       case 'streams': return { name: '', groupIds: [] };
       case 'classrooms': return { number: '', capacity: 30, typeId: classroomTypes[0]?.id || '', availabilityGrid: {}, tagIds: [] };
@@ -100,12 +100,19 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
         }
     }
 
-    const initialData = item || getInitialFormData(dataType);
+    const initialData = item ? { ...(item as any) } : getInitialFormData(dataType);
     if (['teachers', 'groups', 'classrooms'].includes(dataType) && !(initialData as any).availabilityGrid) {
         (initialData as any).availabilityGrid = {};
     }
     if (dataType === 'groups' && !(initialData as any).shift) {
         (initialData as any).shift = 'both';
+    }
+    if (dataType === 'teachers') {
+        (initialData as any).quickSubjectLinks = item && (item as any).id
+            ? teacherSubjectLinks
+                .filter(link => link.teacherId === (item as any).id)
+                .map(link => ({ subjectId: link.subjectId, classTypes: [...link.classTypes] }))
+            : [];
     }
     if ((dataType === 'timeSlots' || dataType === 'timeSlotsShortened') && !(initialData as any).shift) {
         (initialData as any).shift = 'first';
@@ -217,6 +224,45 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     setFormData((prev: any) => ({
         ...prev,
         teacherAssignments: prev.teacherAssignments.filter((_: any, i: number) => i !== index),
+    }));
+  };
+
+  const addQuickSubjectLink = () => {
+    setFormData((prev: any) => ({
+      ...prev,
+      quickSubjectLinks: [
+        ...(prev.quickSubjectLinks || []),
+        { subjectId: subjects[0]?.id || '', classTypes: [ClassType.Lecture] },
+      ],
+    }));
+  };
+
+  const updateQuickSubjectLink = (index: number, patch: any) => {
+    setFormData((prev: any) => {
+      const links = [...(prev.quickSubjectLinks || [])];
+      links[index] = { ...links[index], ...patch };
+      return { ...prev, quickSubjectLinks: links };
+    });
+  };
+
+  const toggleQuickSubjectClassType = (index: number, classType: ClassType) => {
+    setFormData((prev: any) => {
+      const links = [...(prev.quickSubjectLinks || [])];
+      const currentTypes = links[index]?.classTypes || [];
+      links[index] = {
+        ...links[index],
+        classTypes: currentTypes.includes(classType)
+          ? currentTypes.filter((item: ClassType) => item !== classType)
+          : [...currentTypes, classType],
+      };
+      return { ...prev, quickSubjectLinks: links };
+    });
+  };
+
+  const removeQuickSubjectLink = (index: number) => {
+    setFormData((prev: any) => ({
+      ...prev,
+      quickSubjectLinks: (prev.quickSubjectLinks || []).filter((_: any, itemIndex: number) => itemIndex !== index),
     }));
   };
   
@@ -530,8 +576,8 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
   const modalTitle = `${item ? 'Редактировать' : 'Добавить'} ${TITLE_MAP[dataType]?.single || 'элемент'}`;
 
   const fields = Object.keys(getInitialFormData(dataType));
-  const hiddenLayoutFields = ['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes', 'description', 'specialtyIds', 'groupIds', 'classroomTypeRequirements', 'classroomTypeIds', 'preferredTimeSlotIds', 'requiredClassroomTagIds'];
-  const half = Math.ceil(fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'notes'].includes(f)).length / 2);
+  const hiddenLayoutFields = ['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'quickSubjectLinks', 'notes', 'description', 'specialtyIds', 'groupIds', 'classroomTypeRequirements', 'classroomTypeIds', 'preferredTimeSlotIds', 'requiredClassroomTagIds'];
+  const half = Math.ceil(fields.filter(f => !['id', 'availabilityGrid', 'entries', 'teacherAssignments', 'quickSubjectLinks', 'notes'].includes(f)).length / 2);
 
   const column1Fields = fields.filter(f => !hiddenLayoutFields.includes(f)).slice(0, half);
   const column2Fields = fields.filter(f => !hiddenLayoutFields.includes(f)).slice(half);
@@ -573,6 +619,70 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {dataType === 'teachers' && (
+            <div className="pt-4 border-t">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-3">
+                <div>
+                  <h3 className="text-lg font-medium text-gray-800">Быстрые привязки к предметам</h3>
+                  <p className="text-sm text-gray-500">Сразу закрепите преподавателя за дисциплинами и типами занятий.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={addQuickSubjectLink}
+                  disabled={subjects.length === 0}
+                  className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                >
+                  <PlusIcon className="w-4 h-4" />
+                  Добавить
+                </button>
+              </div>
+              {subjects.length === 0 ? (
+                <p className="text-sm text-gray-500 bg-gray-50 border border-gray-200 rounded-md p-3">Сначала добавьте дисциплины в справочнике предметов.</p>
+              ) : (
+                <div className="space-y-3">
+                  {(formData.quickSubjectLinks || []).map((link: any, index: number) => (
+                    <div key={index} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr),minmax(0,1.3fr),auto] gap-3 items-start">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Дисциплина</label>
+                          <select
+                            value={link.subjectId || ''}
+                            onChange={e => updateQuickSubjectLink(index, { subjectId: e.target.value })}
+                            className={defaultInputClass}
+                          >
+                            {subjects.map(subject => <option key={subject.id} value={subject.id}>{subject.name}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-600 mb-1">Типы занятий</label>
+                          <div className="flex flex-wrap gap-2">
+                            {[ClassType.Lecture, ClassType.Practical, ClassType.Lab, ClassType.Consultation, ClassType.PracticeConsultation, ClassType.PracticeDefense, ClassType.Test, ClassType.Exam].map(classType => (
+                              <label key={classType} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white border border-gray-200 text-xs text-gray-700 cursor-pointer hover:border-blue-300">
+                                <input
+                                  type="checkbox"
+                                  checked={(link.classTypes || []).includes(classType)}
+                                  onChange={() => toggleQuickSubjectClassType(index, classType)}
+                                  className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                />
+                                {classType}
+                              </label>
+                            ))}
+                          </div>
+                        </div>
+                        <button type="button" onClick={() => removeQuickSubjectLink(index)} className="p-2 text-red-500 hover:text-red-700 justify-self-end" title="Удалить привязку">
+                          <TrashIcon className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {(formData.quickSubjectLinks || []).length === 0 && (
+                    <p className="text-sm text-gray-500 bg-gray-50 border border-dashed border-gray-300 rounded-md p-3">Привязок пока нет. Нажмите «Добавить», чтобы закрепить предмет.</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

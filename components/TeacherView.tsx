@@ -1,7 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { Teacher, ClassType } from '../types';
-import { LocationMarkerIcon, PhoneIcon, MailIcon, AcademicCapIcon, CalendarIcon, ClockIcon } from './icons';
+import { LocationMarkerIcon, PhoneIcon, MailIcon, AcademicCapIcon, CalendarIcon, PlusIcon, TrashIcon } from './icons';
 import { calculateExperience } from '../utils/dateUtils';
 
 interface TeacherViewProps {
@@ -16,22 +16,33 @@ const Section: React.FC<{ title: string; children: React.ReactNode; className?: 
   </div>
 );
 
-const SubjectCard: React.FC<{ subjectId: string; classTypes: ClassType[] }> = ({ subjectId, classTypes }) => {
+const SubjectCard: React.FC<{ subjectId: string; classTypes: ClassType[]; onRemove?: () => void }> = ({ subjectId, classTypes, onRemove }) => {
     const { subjects } = useStore();
     const subject = subjects.find(s => s.id === subjectId);
     if (!subject) return null;
 
     return (
         <div className="bg-white p-4 rounded-lg border border-gray-200 hover:shadow-md transition-shadow">
-            <h3 className="font-semibold text-blue-900">{subject.name}</h3>
-            <p className="text-sm text-gray-600 mt-1">{classTypes.join(', ')}</p>
+            <div className="flex items-start justify-between gap-3">
+                <div>
+                    <h3 className="font-semibold text-blue-900">{subject.name}</h3>
+                    <p className="text-sm text-gray-600 mt-1">{classTypes.join(', ')}</p>
+                </div>
+                {onRemove && (
+                    <button type="button" onClick={onRemove} className="p-1 text-red-500 hover:text-red-700" title="Убрать привязку">
+                        <TrashIcon className="w-4 h-4" />
+                    </button>
+                )}
+            </div>
         </div>
     );
 };
 
 const TeacherView: React.FC<TeacherViewProps> = ({ teacherId, onNavigate }) => {
     const store = useStore();
-    const { teachers, departments, subjects, teacherSubjectLinks, schedule, settings } = store;
+    const { teachers, departments, subjects, teacherSubjectLinks, schedule, settings, addItem, updateItem, deleteItem } = store;
+    const [quickSubjectId, setQuickSubjectId] = useState('');
+    const [quickClassTypes, setQuickClassTypes] = useState<ClassType[]>([ClassType.Lecture]);
 
     const teacher = useMemo(() => teachers.find(t => t.id === teacherId), [teacherId, teachers]);
     const department = useMemo(() => teacher ? departments.find(d => d.id === teacher.departmentId) : null, [teacher, departments]);
@@ -73,7 +84,50 @@ const TeacherView: React.FC<TeacherViewProps> = ({ teacherId, onNavigate }) => {
             monthly: monthlyHours.toFixed(1)
         };
     }, [teacherId, schedule, settings.semesterStart, settings.semesterEnd]);
-    
+
+    const quickBindingClassTypes = [
+        ClassType.Lecture,
+        ClassType.Practical,
+        ClassType.Lab,
+        ClassType.Consultation,
+        ClassType.PracticeConsultation,
+        ClassType.PracticeDefense,
+        ClassType.Test,
+        ClassType.Exam,
+    ];
+
+    const toggleQuickClassType = (classType: ClassType) => {
+        setQuickClassTypes(prev => prev.includes(classType)
+            ? prev.filter(item => item !== classType)
+            : [...prev, classType]
+        );
+    };
+
+    const handleAddQuickBinding = () => {
+        const subjectId = quickSubjectId || subjects[0]?.id;
+        if (!subjectId || quickClassTypes.length === 0) return;
+
+        const existing = teacherSubjectLinks.find(link => link.teacherId === teacherId && link.subjectId === subjectId);
+        if (existing) {
+            updateItem('teacherSubjectLinks', {
+                ...existing,
+                classTypes: Array.from(new Set([...existing.classTypes, ...quickClassTypes])),
+            });
+        } else {
+            addItem('teacherSubjectLinks', {
+                teacherId,
+                subjectId,
+                classTypes: quickClassTypes,
+            });
+        }
+    };
+
+    const handleRemoveSubjectBinding = (subjectId: string) => {
+        teacherSubjectLinks
+            .filter(link => link.teacherId === teacherId && link.subjectId === subjectId)
+            .forEach(link => deleteItem('teacherSubjectLinks', link.id));
+    };
+
     if (!teacher) {
         return <div className="text-center text-red-500">Преподаватель не найден.</div>;
     }
@@ -153,8 +207,48 @@ const TeacherView: React.FC<TeacherViewProps> = ({ teacherId, onNavigate }) => {
             </div>
 
             <Section title="ПРЕПОДАВАЕМЫЕ ДИСЦИПЛИНЫ">
+                <div className="mb-6 rounded-lg border border-blue-100 bg-blue-50 p-4">
+                    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr),minmax(0,1.4fr),auto] gap-3 items-start">
+                        <div>
+                            <label className="block text-xs font-medium text-blue-900 mb-1">Дисциплина</label>
+                            <select
+                                value={quickSubjectId || subjects[0]?.id || ''}
+                                onChange={e => setQuickSubjectId(e.target.value)}
+                                className="w-full p-2 border border-blue-200 rounded bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                disabled={subjects.length === 0}
+                            >
+                                {subjects.map(subject => <option key={subject.id} value={subject.id}>{subject.name}</option>)}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-blue-900 mb-1">Типы занятий</label>
+                            <div className="flex flex-wrap gap-2">
+                                {quickBindingClassTypes.map(classType => (
+                                    <label key={classType} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-white border border-blue-100 text-xs text-gray-700 cursor-pointer hover:border-blue-300">
+                                        <input
+                                            type="checkbox"
+                                            checked={quickClassTypes.includes(classType)}
+                                            onChange={() => toggleQuickClassType(classType)}
+                                            className="h-3.5 w-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                                        />
+                                        {classType}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleAddQuickBinding}
+                            disabled={subjects.length === 0 || quickClassTypes.length === 0}
+                            className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed lg:mt-5"
+                        >
+                            <PlusIcon className="w-4 h-4" />
+                            Привязать
+                        </button>
+                    </div>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {subjectsTaught.map(s => <SubjectCard key={s.subjectId} subjectId={s.subjectId} classTypes={s.classTypes}/>)}
+                    {subjectsTaught.map(s => <SubjectCard key={s.subjectId} subjectId={s.subjectId} classTypes={s.classTypes} onRemove={() => handleRemoveSubjectBinding(s.subjectId)}/>)}
                     {subjectsTaught.length === 0 && <p className="text-gray-500">За преподавателем не закреплено ни одной дисциплины.</p>}
                 </div>
             </Section>

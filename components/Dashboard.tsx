@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Role } from '../types';
 import Sidebar from './Sidebar';
 import ScheduleView from './ScheduleView';
@@ -38,6 +38,18 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
     setViewEntityId(null);
   };
 
+  useEffect(() => {
+    const handleOpenTeacherCard = (event: Event) => {
+      const teacherId = (event as CustomEvent<string>).detail;
+      if (teacherId) {
+        handleNavigate('Просмотр преподавателя', teacherId);
+      }
+    };
+
+    window.addEventListener('open-teacher-card', handleOpenTeacherCard);
+    return () => window.removeEventListener('open-teacher-card', handleOpenTeacherCard);
+  }, []);
+
   const renderContent = () => {
     switch (activeView) {
       case 'Планы зданий':
@@ -59,7 +71,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
       case 'Кафедры':
         return <DataManager dataType="departments" title="Управление кафедрами" onNavigate={handleNavigate} />;
       case 'Просмотр кафедры':
-        return <DepartmentView departmentId={viewEntityId!} />;
+        return <DepartmentView departmentId={viewEntityId!} onNavigate={handleNavigate} />;
       case 'Преподаватели':
         return <DataManager dataType="teachers" title="Управление преподавателями" onNavigate={handleNavigate} />;
       case 'Просмотр преподавателя':
