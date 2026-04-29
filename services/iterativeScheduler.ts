@@ -20,6 +20,18 @@ export const runIterativeScheduler = async (
     config: HeuristicConfig,
     onProgress: (progress: { current: number, total: number }) => void
 ): Promise<SchedulerResult> => {
+    if (typeof window !== 'undefined' && window.electronAPI?.runParallelScheduler && config.iterations > 1) {
+        try {
+            onProgress({ current: 0, total: config.iterations });
+            const parallelResult = await window.electronAPI.runParallelScheduler(data, config);
+            if (parallelResult) {
+                onProgress({ current: config.iterations, total: config.iterations });
+                return parallelResult as SchedulerResult;
+            }
+        } catch (error) {
+            console.warn('Parallel scheduler failed, falling back to sequential mode:', error);
+        }
+    }
     
     let bestResult: SchedulerResult | null = null;
     let lowestScore = Infinity;

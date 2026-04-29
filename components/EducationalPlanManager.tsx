@@ -204,6 +204,11 @@ type CopyDialogState = {
     blockId?: string;
 } | null;
 
+type BlockDialogState = {
+    mode: 'add' | 'edit';
+    block?: PlanBlock;
+} | null;
+
 const EducationalPlanManager: React.FC = () => {
     const {
         specialties,
@@ -224,6 +229,11 @@ const EducationalPlanManager: React.FC = () => {
     const [replaceTargetPlan, setReplaceTargetPlan] = useState(false);
     const [selectedTemplateId, setSelectedTemplateId] = useState('');
     const [templateMethod, setTemplateMethod] = useState<'merge' | 'replace'>('merge');
+    const [blockDialog, setBlockDialog] = useState<BlockDialogState>(null);
+    const [blockDialogName, setBlockDialogName] = useState('');
+    const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+    const [templateDialogName, setTemplateDialogName] = useState('');
+    const [templateDialogDescription, setTemplateDialogDescription] = useState('');
 
     const activePlan = useMemo(() => {
         return educationalPlans.find(p => p.specialtyId === selectedSpecialtyId);
@@ -354,30 +364,41 @@ const EducationalPlanManager: React.FC = () => {
     };
 
     const handleAddBlock = () => {
-        const name = window.prompt('Название блока дисциплин', 'Профессиональный блок');
-        if (!name?.trim()) return;
-        if (!selectedSpecialtyId) return;
-        const color = BLOCK_COLORS[(activePlan?.blocks || []).length % BLOCK_COLORS.length];
-        const block: PlanBlock = { id: createLocalId('plan-block'), name: name.trim(), color };
-        if (activePlan) {
-            updatePlan({ ...activePlan, blocks: [...(activePlan.blocks || []), block] });
-        } else {
-            addItem('educationalPlans', {
-                specialtyId: selectedSpecialtyId,
-                blocks: [block],
-                entries: [],
-            });
-        }
+        setBlockDialog({ mode: 'add' });
+        setBlockDialogName('Профессиональный блок');
     };
 
     const handleEditBlock = (block: PlanBlock) => {
-        if (!activePlan) return;
-        const name = window.prompt('Название блока дисциплин', block.name);
-        if (!name?.trim()) return;
-        updatePlan({
-            ...activePlan,
-            blocks: activeBlocks.map(item => item.id === block.id ? { ...item, name: name.trim() } : item),
-        });
+        setBlockDialog({ mode: 'edit', block });
+        setBlockDialogName(block.name);
+    };
+
+    const handleConfirmBlockDialog = () => {
+        const name = blockDialogName.trim();
+        if (!blockDialog || !name) return;
+
+        if (blockDialog.mode === 'add') {
+            if (!selectedSpecialtyId) return;
+            const color = BLOCK_COLORS[(activePlan?.blocks || []).length % BLOCK_COLORS.length];
+            const block: PlanBlock = { id: createLocalId('plan-block'), name, color };
+            if (activePlan) {
+                updatePlan({ ...activePlan, blocks: [...(activePlan.blocks || []), block] });
+            } else {
+                addItem('educationalPlans', {
+                    specialtyId: selectedSpecialtyId,
+                    blocks: [block],
+                    entries: [],
+                });
+            }
+        } else if (activePlan && blockDialog.block) {
+            updatePlan({
+                ...activePlan,
+                blocks: activeBlocks.map(item => item.id === blockDialog.block!.id ? { ...item, name } : item),
+            });
+        }
+
+        setBlockDialog(null);
+        setBlockDialogName('');
     };
 
     const handleDeleteBlock = (block: PlanBlock) => {
@@ -477,18 +498,30 @@ const EducationalPlanManager: React.FC = () => {
             alert('В текущем плане нет дисциплин для шаблона.');
             return;
         }
-        const name = window.prompt('Название шаблона учебного плана', 'Шаблон учебного плана');
-        if (!name?.trim()) return;
-        const description = window.prompt('Описание шаблона', '') || '';
+        setTemplateDialogName('Шаблон учебного плана');
+        setTemplateDialogDescription('');
+        setTemplateDialogOpen(true);
+    };
+
+    const handleConfirmTemplateDialog = () => {
+        if (!activePlan || activePlan.entries.length === 0) {
+            setTemplateDialogOpen(false);
+            return;
+        }
+        const name = templateDialogName.trim();
+        if (!name) return;
         const template: Omit<EducationalPlanTemplate, 'id'> = {
-            name: name.trim(),
-            description: description.trim(),
+            name,
+            description: templateDialogDescription.trim(),
             blocks: activeBlocks.map(block => ({ ...block })),
             entries: activePlan.entries.map(entry => ({ ...entry })),
             createdAt: new Date().toISOString(),
         };
         const created = addItem('educationalPlanTemplates', template) as EducationalPlanTemplate;
         setSelectedTemplateId(created.id);
+        setTemplateDialogOpen(false);
+        setTemplateDialogName('');
+        setTemplateDialogDescription('');
         alert(`Шаблон "${created.name}" сохранён.`);
     };
 
@@ -709,6 +742,59 @@ const EducationalPlanManager: React.FC = () => {
             </div>
 
             {isModalOpen && <PlanEntryModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSave={handleSaveEntry} entry={currentEntry} blocks={activeBlocks} />}
+            {blockDialog && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
+                    <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-md animation-fade-in-scale">
+                        <h2 className="text-xl font-bold text-gray-900 mb-4">
+                            {blockDialog.mode === 'add' ? 'Новый блок дисциплин' : 'Переименовать блок'}
+                        </h2>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Название блока</label>
+                        <input
+                            value={blockDialogName}
+                            onChange={event => setBlockDialogName(event.target.value)}
+                            className="w-full p-2 border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-opacity-75"
+                            autoFocus
+                        />
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button type="button" onClick={() => setBlockDialog(null)} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">Отмена</button>
+                            <button type="button" onClick={handleConfirmBlockDialog} disabled={!blockDialogName.trim()} className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors">
+                                {blockDialog.mode === 'add' ? 'Добавить' : 'Сохранить'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {templateDialogOpen && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
+                    <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-lg animation-fade-in-scale">
+                        <h2 className="text-xl font-bold text-gray-900 mb-4">Сохранить шаблон учебного плана</h2>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Название шаблона</label>
+                                <input
+                                    value={templateDialogName}
+                                    onChange={event => setTemplateDialogName(event.target.value)}
+                                    className="w-full p-2 border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75"
+                                    autoFocus
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Описание</label>
+                                <textarea
+                                    value={templateDialogDescription}
+                                    onChange={event => setTemplateDialogDescription(event.target.value)}
+                                    className="w-full p-2 border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-opacity-75 min-h-24"
+                                    placeholder="Например: базовый план для ИТ-направлений"
+                                />
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-3 mt-6">
+                            <button type="button" onClick={() => setTemplateDialogOpen(false)} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors">Отмена</button>
+                            <button type="button" onClick={handleConfirmTemplateDialog} disabled={!templateDialogName.trim()} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors">Сохранить шаблон</button>
+                        </div>
+                    </div>
+                </div>
+            )}
             {copyDialog && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex justify-center items-center z-50 transition-opacity duration-300 ease-out">
                     <div className="bg-white p-6 rounded-lg shadow-xl w-full max-w-2xl animation-fade-in-scale">

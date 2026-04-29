@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const os = require('os');
+const { Worker } = require('worker_threads');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
 
@@ -118,6 +120,59 @@ app.whenReady().then(async () => {
     return { success: true };
   });
   ipcMain.handle('is-ai-forced', () => process.argv.some(arg => arg === '-ai' || arg === '--ai'));
+
+  ipcMain.handle('run-parallel-scheduler', async (event, data, config) => {
+    const iterations = Math.max(1, Number(config?.iterations || 1));
+    const cpuCount = Math.max(1, (os.cpus()?.length || 2) - 1);
+    const concurrency = Math.max(1, Math.min(iterations, cpuCount, 4));
+    const baseSeed = config?.seed ?? Date.now();
+    const workerPath = path.join(__dirname, 'dist', 'schedulerWorker.js');
+    const queue = Array.from({ length: iterations }, (_, index) => index + 1);
+    const results = [];
+
+    const runOne = (iteration) => new Promise((resolve, reject) => {
+      const workerConfig = {
+        ...config,
+        seed: `${baseSeed}-${iteration}`,
+        stochasticity: config?.stochasticity ?? 0.35,
+      };
+      const worker = new Worker(workerPath, {
+        workerData: { data, config: workerConfig },
+      });
+
+      worker.once('message', message => {
+        if (message?.ok) {
+          resolve(message.result);
+        } else {
+          reject(new Error(message?.error || 'Scheduler worker failed'));
+        }
+      });
+      worker.once('error', reject);
+      worker.once('exit', code => {
+        if (code !== 0) {
+          reject(new Error(`Scheduler worker exited with code ${code}`));
+        }
+      });
+    });
+
+    const workers = Array.from({ length: concurrency }, async () => {
+      while (queue.length > 0) {
+        const iteration = queue.shift();
+        if (!iteration) return;
+        const result = await runOne(iteration);
+        results.push(result);
+      }
+    });
+
+    await Promise.all(workers);
+    if (results.length === 0) return null;
+
+    return results.reduce((best, current) => {
+      const bestScore = best?.score?.total ?? Number.POSITIVE_INFINITY;
+      const currentScore = current?.score?.total ?? Number.POSITIVE_INFINITY;
+      return currentScore < bestScore ? current : best;
+    }, results[0]);
+  });
 
 
   // Window Title

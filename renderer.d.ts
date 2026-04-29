@@ -11,6 +11,7 @@ interface IElectronAPI {
   getOpenRouterApiKey: () => Promise<string | undefined>;
   setOpenRouterApiKey: (key: string) => Promise<{ success: boolean }>;
   isAiForced: () => Promise<boolean>;
+  runParallelScheduler?: (data: any, config: any) => Promise<any>;
   setWindowTitle: (title: string) => Promise<void>;
   openFile: () => Promise<{ filePath: string; data: string; stats?: { size: number; lastModified: string } } | null>;
   openRecentFile: (filePath: string) => Promise<{ filePath: string; data: string; stats?: { size: number; lastModified: string } } | null>;

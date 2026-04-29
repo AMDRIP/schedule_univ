@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * @returns {Promise<boolean>}
    */
   isAiForced: () => ipcRenderer.invoke('is-ai-forced'),
+  runParallelScheduler: (data, config) => ipcRenderer.invoke('run-parallel-scheduler', data, config),
 
   // --- File System and Window API ---
   setWindowTitle: (title) => ipcRenderer.invoke('set-window-title', title),

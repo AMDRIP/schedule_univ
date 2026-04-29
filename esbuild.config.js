@@ -7,11 +7,9 @@ const distDir = 'dist';
 
 async function build() {
     try {
-        // Clean dist directory before building
         if (fs.existsSync(distDir)) {
             fs.rmSync(distDir, { recursive: true, force: true });
         }
-        // Create dist directory
         fs.mkdirSync(distDir);
 
         await esbuild.build({
@@ -28,7 +26,22 @@ async function build() {
             external: ['bindings', 'fs', 'path', 'node-addon-api'],
             logLevel: 'info',
         });
-        console.log('✅ JavaScript build finished successfully.');
+
+        await esbuild.build({
+            entryPoints: ['services/schedulerWorkerHost.ts'],
+            bundle: true,
+            outfile: path.join(distDir, 'schedulerWorker.js'),
+            platform: 'node',
+            format: 'cjs',
+            sourcemap: false,
+            loader: {
+                '.ts': 'ts',
+            },
+            external: ['bindings', 'fs', 'path', 'node-addon-api'],
+            logLevel: 'info',
+        });
+
+        console.log('JavaScript build finished successfully.');
     } catch (e) {
         console.error('Build failed:', e);
         process.exit(1);

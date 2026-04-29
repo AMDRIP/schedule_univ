@@ -986,6 +986,10 @@ video {
   min-height: 0px;
 }
 
+.min-h-24 {
+  min-height: 6rem;
+}
+
 .min-h-\[560px\] {
   min-height: 560px;
 }
@@ -3346,6 +3350,11 @@ video {
 .focus\:ring-blue-500:focus {
   --tw-ring-opacity: 1;
   --tw-ring-color: rgb(59 130 246 / var(--tw-ring-opacity, 1));
+}
+
+.focus\:ring-emerald-500:focus {
+  --tw-ring-opacity: 1;
+  --tw-ring-color: rgb(16 185 129 / var(--tw-ring-opacity, 1));
 }
 
 .focus\:ring-indigo-500:focus {
