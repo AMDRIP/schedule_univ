@@ -398,6 +398,7 @@ export interface UnscheduledEntry {
   subgroupId?: string;
   classType: ClassType;
   teacherId: string;
+  teacherCandidates?: string[];
   streamId?: string;
   studentCount: number;
   deliveryMode?: DeliveryMode;

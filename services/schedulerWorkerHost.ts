@@ -5,14 +5,25 @@ import { calculateScheduleScore, generateScheduleWithHeuristics, SchedulerResult
 type WorkerPayload = {
     data: any;
     config: HeuristicConfig;
+    seeds?: Array<number | string>;
 };
 
 const run = async () => {
     const payload = workerData as WorkerPayload;
-    const result = await generateScheduleWithHeuristics(payload.data, payload.config);
-    const score = result.score ?? calculateScheduleScore(payload.data, result, payload.config);
-    const response: SchedulerResult = { ...result, score };
-    parentPort?.postMessage({ ok: true, result: response });
+    const seeds = payload.seeds?.length ? payload.seeds : [payload.config.seed ?? Date.now()];
+    let bestResult: SchedulerResult | null = null;
+
+    for (const seed of seeds) {
+        const config = { ...payload.config, seed };
+        const result = await generateScheduleWithHeuristics(payload.data, config);
+        const score = result.score ?? calculateScheduleScore(payload.data, result, config);
+        const response: SchedulerResult = { ...result, score };
+        if (!bestResult || response.score!.total < (bestResult.score?.total ?? Number.POSITIVE_INFINITY)) {
+            bestResult = response;
+        }
+    }
+
+    parentPort?.postMessage({ ok: true, result: bestResult });
 };
 
 run().catch(error => {

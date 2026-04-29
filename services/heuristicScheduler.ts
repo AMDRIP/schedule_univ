@@ -278,6 +278,19 @@ const getShiftCompatibleTimeSlots = (timeSlots: TimeSlot[], involvedGroups: Grou
 const getInvolvedGroups = (entry: UnscheduledEntry | ScheduleEntry, index: SchedulerIndex) =>
     getEntryGroupIds(entry).map(groupId => index.groupsById.get(groupId)).filter(Boolean) as Group[];
 
+const getTeacherCandidates = (
+    subjectId: string,
+    classType: ClassType,
+    index: SchedulerIndex,
+    preferredTeacherId?: string
+) => {
+    const candidates = [
+        ...(preferredTeacherId ? [preferredTeacherId] : []),
+        ...(index.teacherLinksBySubjectType.get(makeSubjectTypeKey(subjectId, classType)) || []).map(link => link.teacherId),
+    ];
+    return Array.from(new Set(candidates)).filter(teacherId => index.teachersById.has(teacherId));
+};
+
 const getSuitableClassrooms = (entry: UnscheduledEntry, subject: Subject, index: SchedulerIndex) => {
     const requiredClassroomTypes = entry.classroomTypeIds?.length ? entry.classroomTypeIds : subject.classroomTypeRequirements?.[entry.classType];
     if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) return null;
@@ -307,6 +320,90 @@ const getSuitableClassrooms = (entry: UnscheduledEntry, subject: Subject, index:
     return classrooms;
 };
 
+const estimateDomainSize = (
+    entry: UnscheduledEntry,
+    data: GenerationData,
+    index: SchedulerIndex,
+    workDays: Date[]
+) => {
+    const subject = index.subjectsById.get(entry.subjectId);
+    if (!subject) return 0;
+
+    const suitableClassroomCount = getSuitableClassrooms(entry, subject, index)?.length || 0;
+    if (suitableClassroomCount === 0) return 0;
+
+    const involvedGroups = getInvolvedGroups(entry, index);
+    if (involvedGroups.length !== getEntryGroupIds(entry).length) return 0;
+
+    const teacherCandidates = entry.teacherCandidates?.length ? entry.teacherCandidates : [entry.teacherId];
+    let domainSize = 0;
+
+    for (const date of workDays) {
+        const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+        const compatibleTimeSlots = getShiftCompatibleTimeSlots(
+            getActiveTimeSlotsForDate(data, date, index),
+            involvedGroups
+        );
+
+        for (const timeSlot of compatibleTimeSlots) {
+            const feasibleTeachers = teacherCandidates.filter(teacherId =>
+                index.teachersById.get(teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] !== AvailabilityType.Forbidden
+            ).length;
+            domainSize += feasibleTeachers * suitableClassroomCount;
+        }
+    }
+
+    return domainSize;
+};
+
+const selectTeacherForEntry = (
+    entry: UnscheduledEntry,
+    data: GenerationData,
+    index: SchedulerIndex,
+    workDays: Date[],
+    involvedGroups: Group[],
+    bookings: Map<string, Set<string>>
+) => {
+    const teacherCandidates = entry.teacherCandidates?.length ? entry.teacherCandidates : [entry.teacherId];
+    if (teacherCandidates.length === 1) return teacherCandidates[0];
+
+    let bestTeacherId = teacherCandidates[0];
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    for (const teacherId of teacherCandidates) {
+        const teacher = index.teachersById.get(teacherId);
+        if (!teacher) continue;
+
+        let feasibleSlots = 0;
+        let softPenalty = 0;
+        for (const date of workDays) {
+            const dateStr = toYYYYMMDD(date);
+            const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+            const compatibleTimeSlots = getShiftCompatibleTimeSlots(getActiveTimeSlotsForDate(data, date, index), involvedGroups);
+
+            for (const timeSlot of compatibleTimeSlots) {
+                const bookingKey = `${dateStr}-${timeSlot.id}`;
+                if (bookings.get(`teacher-${teacherId}`)?.has(bookingKey)) continue;
+
+                const availability = teacher.availabilityGrid?.[dayName]?.[timeSlot.id];
+                if (availability === AvailabilityType.Forbidden) continue;
+                if (availability === AvailabilityType.Undesirable) softPenalty += 3;
+                if (availability === AvailabilityType.Desirable) softPenalty -= 1;
+                feasibleSlots++;
+            }
+        }
+
+        const teacherLoad = bookings.get(`teacher-${teacherId}`)?.size || 0;
+        const score = -feasibleSlots * 10 + softPenalty + teacherLoad * 2;
+        if (score < bestScore) {
+            bestScore = score;
+            bestTeacherId = teacherId;
+        }
+    }
+
+    return bestTeacherId;
+};
+
 const chooseCandidate = <T>(candidates: T[], rng: () => number, stochasticity = 0): T => {
     if (candidates.length === 1 || stochasticity <= 0) return candidates[0];
     const spread = Math.max(1, Math.ceil(candidates.length * Math.min(1, stochasticity)));
@@ -329,8 +426,6 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
         const relevantEntries = plan.entries.filter(e => e.semester === currentSemester);
 
         relevantEntries.forEach(planEntry => {
-            let teacherId: string | undefined;
-
             // 1. Handle Lectures
             if (planEntry.lectureHours > 0 && !processedGroupLectures.has(`${planEntry.subjectId}-${group.id}`)) {
                 const numClasses = Math.ceil(planEntry.lectureHours / 2);
@@ -351,8 +446,8 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                     });
                 }
 
-                teacherId = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(planEntry.subjectId, ClassType.Lecture))?.[0]?.teacherId;
-                if (teacherId) {
+                const teacherCandidates = getTeacherCandidates(planEntry.subjectId, ClassType.Lecture, index);
+                if (teacherCandidates.length > 0) {
                     const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
                     const groupIds = lectureGroups.map(g => g.id);
 
@@ -361,7 +456,8 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                             uid: `unsched-${planEntry.subjectId}-${groupIds.join('_')}-${ClassType.Lecture}-${i}`,
                             subjectId: planEntry.subjectId,
                             classType: ClassType.Lecture,
-                            teacherId,
+                            teacherId: teacherCandidates[0],
+                            teacherCandidates,
                             studentCount,
                         };
                         if (lectureGroups.length > 1) {
@@ -394,25 +490,25 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                 if (planEntry.splitForSubgroups && groupSubgroups.length > 0) {
                     groupSubgroups.forEach(subgroup => {
                         const assignment = subgroup.teacherAssignments?.find(a => a.subjectId === planEntry.subjectId && a.classType === type);
-                        teacherId = assignment?.teacherId ?? index.teacherLinksBySubjectType.get(makeSubjectTypeKey(planEntry.subjectId, type))?.[0]?.teacherId;
-                        if (teacherId) {
+                        const teacherCandidates = getTeacherCandidates(planEntry.subjectId, type, index, assignment?.teacherId);
+                        if (teacherCandidates.length > 0) {
                             for (let i = 0; i < numClasses; i++) {
                                 entries.push({
                                     uid: `unsched-${planEntry.subjectId}-${subgroup.id}-${type}-${i}`,
                                     subjectId: planEntry.subjectId, groupId: group.id, subgroupId: subgroup.id,
-                                    classType: type, teacherId, studentCount: subgroup.studentCount,
+                                    classType: type, teacherId: teacherCandidates[0], teacherCandidates, studentCount: subgroup.studentCount,
                                 });
                             }
                         }
                     });
                 } else { // Whole group for practice/lab
-                    teacherId = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(planEntry.subjectId, type))?.[0]?.teacherId;
-                    if (teacherId) {
+                    const teacherCandidates = getTeacherCandidates(planEntry.subjectId, type, index);
+                    if (teacherCandidates.length > 0) {
                         for (let i = 0; i < numClasses; i++) {
                             entries.push({
                                 uid: `unsched-${planEntry.subjectId}-${group.id}-${type}-${i}`,
                                 subjectId: planEntry.subjectId, groupId: group.id,
-                                classType: type, teacherId, studentCount: group.studentCount,
+                                classType: type, teacherId: teacherCandidates[0], teacherCandidates, studentCount: group.studentCount,
                             });
                         }
                     }
@@ -433,6 +529,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                 groupId: elective.groupId,
                 classType: elective.classType || ClassType.Elective,
                 teacherId: elective.teacherId,
+                teacherCandidates: [elective.teacherId],
                 studentCount: group.studentCount,
                 deliveryMode: elective.deliveryMode || DeliveryMode.Offline,
                 classroomTypeIds: elective.classroomTypeIds,
@@ -518,7 +615,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             if (target.type === 'group') {
                 return entry.groupId === target.id || (entry.groupIds || []).includes(target.id);
             }
-            if (target.type === 'teacher') return entry.teacherId === target.id;
+            if (target.type === 'teacher') return entry.teacherId === target.id || !!entry.teacherCandidates?.includes(target.id);
             return true; // Classroom target is a preference, not a filter
         });
     }
@@ -552,7 +649,11 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     }
 
     const workDays = createWorkDays(data, config, index);
-    classPool.sort((a, b) => getConstraintScore(b, data, index, workDays) - getConstraintScore(a, data, index, workDays));
+    const domainSizes = new Map(classPool.map(entry => [entry.uid, estimateDomainSize(entry, data, index, workDays)]));
+    classPool.sort((a, b) =>
+        getConstraintScore(b, data, index, workDays, domainSizes.get(b.uid) ?? 0) -
+        getConstraintScore(a, data, index, workDays, domainSizes.get(a.uid) ?? 0)
+    );
 
     // --- 3. PLACEMENT LOOP ---
     for (const entryToPlace of classPool) {
@@ -581,6 +682,11 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             ));
             continue;
         }
+
+        const teacherCandidates = entryToPlace.teacherCandidates?.length ? entryToPlace.teacherCandidates : [entryToPlace.teacherId];
+        entryToPlace.teacherId = target?.type === 'teacher' && teacherCandidates.includes(target.id)
+            ? target.id
+            : selectTeacherForEntry(entryToPlace, data, index, workDays, involvedGroups, resourceBookings);
 
         const subject = index.subjectsById.get(entryToPlace.subjectId);
         if (!subject) {
@@ -736,7 +842,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
 
 
 // Determines scheduling priority. Higher score = scheduled earlier.
-const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData, index: SchedulerIndex, workDays: Date[]): number => {
+const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData, index: SchedulerIndex, workDays: Date[], domainSize = 0): number => {
     let score = 0;
     const group = index.groupsById.get(entry.groupId || entry.groupIds?.[0] || '');
     const subject = index.subjectsById.get(entry.subjectId);
@@ -748,7 +854,7 @@ const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData, index
     if (entry.subgroupId) score += 50;
     score += entry.studentCount * 2;
 
-    const teacherLinkCount = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(entry.subjectId, entry.classType))?.length || 0;
+    const teacherLinkCount = entry.teacherCandidates?.length || index.teacherLinksBySubjectType.get(makeSubjectTypeKey(entry.subjectId, entry.classType))?.length || 0;
     if (teacherLinkCount <= 1) score += 150;
     else score -= teacherLinkCount * 5;
 
@@ -775,6 +881,8 @@ const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData, index
 
     const applicableRuleCount = data.schedulingRules.filter(rule => rule.conditions.some(condition => doesConditionApply(condition, entry))).length;
     score += applicableRuleCount * 25;
+    if (domainSize === 0) score += 2_000;
+    else score += Math.max(0, 1_000 - Math.min(domainSize, 1_000));
 
     return score;
 };

@@ -127,17 +127,19 @@ app.whenReady().then(async () => {
     const concurrency = Math.max(1, Math.min(iterations, cpuCount, 4));
     const baseSeed = config?.seed ?? Date.now();
     const workerPath = path.join(__dirname, 'dist', 'schedulerWorker.js');
-    const queue = Array.from({ length: iterations }, (_, index) => index + 1);
+    const batches = Array.from({ length: concurrency }, () => []);
+    Array.from({ length: iterations }, (_, index) => index + 1).forEach((iteration, index) => {
+      batches[index % concurrency].push(`${baseSeed}-${iteration}`);
+    });
     const results = [];
 
-    const runOne = (iteration) => new Promise((resolve, reject) => {
+    const runBatch = (seeds) => new Promise((resolve, reject) => {
       const workerConfig = {
         ...config,
-        seed: `${baseSeed}-${iteration}`,
         stochasticity: config?.stochasticity ?? 0.35,
       };
       const worker = new Worker(workerPath, {
-        workerData: { data, config: workerConfig },
+        workerData: { data, config: workerConfig, seeds },
       });
 
       worker.once('message', message => {
@@ -155,13 +157,9 @@ app.whenReady().then(async () => {
       });
     });
 
-    const workers = Array.from({ length: concurrency }, async () => {
-      while (queue.length > 0) {
-        const iteration = queue.shift();
-        if (!iteration) return;
-        const result = await runOne(iteration);
-        results.push(result);
-      }
+    const workers = batches.filter(batch => batch.length > 0).map(async (batch) => {
+      const result = await runBatch(batch);
+      results.push(result);
     });
 
     await Promise.all(workers);
