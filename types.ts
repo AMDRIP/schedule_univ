@@ -210,6 +210,7 @@ export interface Specialty extends BaseItem {
 
 export interface PlanEntry {
   subjectId: string;
+  blockId?: string;
   semester: number;
   lectureHours: number;
   practiceHours: number;
@@ -218,9 +219,24 @@ export interface PlanEntry {
   splitForSubgroups?: boolean;
 }
 
+export interface PlanBlock extends BaseItem {
+  name: string;
+  color: string;
+  description?: string;
+}
+
 export interface EducationalPlan extends BaseItem {
   specialtyId: string;
+  blocks?: PlanBlock[];
   entries: PlanEntry[];
+}
+
+export interface EducationalPlanTemplate extends BaseItem {
+  name: string;
+  description?: string;
+  blocks: PlanBlock[];
+  entries: PlanEntry[];
+  createdAt: string;
 }
 
 
@@ -486,5 +502,5 @@ export interface BuildingPlan extends BaseItem {
   updatedAt: string;
 }
 
-export type DataItem = Faculty | Department | Teacher | Group | Stream | Classroom | Subject | Cabinet | TimeSlot | TeacherSubjectLink | SchedulingRule | ProductionCalendarEvent | UGS | Specialty | EducationalPlan | ScheduleTemplate | ClassroomType | Subgroup | Elective | ClassroomTag | BuildingPlan;
-export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'streams' | 'classrooms' | 'subjects' | 'cabinets' | 'timeSlots' | 'teacherSubjectLinks' | 'schedulingRules' | 'productionCalendar' | 'ugs' | 'specialties' | 'educationalPlans' | 'scheduleTemplates' | 'classroomTypes' | 'subgroups' | 'electives' | 'timeSlotsShortened' | 'classroomTags' | 'buildingPlans';
+export type DataItem = Faculty | Department | Teacher | Group | Stream | Classroom | Subject | Cabinet | TimeSlot | TeacherSubjectLink | SchedulingRule | ProductionCalendarEvent | UGS | Specialty | EducationalPlan | EducationalPlanTemplate | ScheduleTemplate | ClassroomType | Subgroup | Elective | ClassroomTag | BuildingPlan;
+export type DataType = 'faculties' | 'departments' | 'teachers' | 'groups' | 'streams' | 'classrooms' | 'subjects' | 'cabinets' | 'timeSlots' | 'teacherSubjectLinks' | 'schedulingRules' | 'productionCalendar' | 'ugs' | 'specialties' | 'educationalPlans' | 'educationalPlanTemplates' | 'scheduleTemplates' | 'classroomTypes' | 'subgroups' | 'electives' | 'timeSlotsShortened' | 'classroomTags' | 'buildingPlans';
