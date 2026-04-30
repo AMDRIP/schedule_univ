@@ -356,54 +356,6 @@ const estimateDomainSize = (
     return domainSize;
 };
 
-const selectTeacherForEntry = (
-    entry: UnscheduledEntry,
-    data: GenerationData,
-    index: SchedulerIndex,
-    workDays: Date[],
-    involvedGroups: Group[],
-    bookings: Map<string, Set<string>>
-) => {
-    const teacherCandidates = entry.teacherCandidates?.length ? entry.teacherCandidates : [entry.teacherId];
-    if (teacherCandidates.length === 1) return teacherCandidates[0];
-
-    let bestTeacherId = teacherCandidates[0];
-    let bestScore = Number.POSITIVE_INFINITY;
-
-    for (const teacherId of teacherCandidates) {
-        const teacher = index.teachersById.get(teacherId);
-        if (!teacher) continue;
-
-        let feasibleSlots = 0;
-        let softPenalty = 0;
-        for (const date of workDays) {
-            const dateStr = toYYYYMMDD(date);
-            const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
-            const compatibleTimeSlots = getShiftCompatibleTimeSlots(getActiveTimeSlotsForDate(data, date, index), involvedGroups);
-
-            for (const timeSlot of compatibleTimeSlots) {
-                const bookingKey = `${dateStr}-${timeSlot.id}`;
-                if (bookings.get(`teacher-${teacherId}`)?.has(bookingKey)) continue;
-
-                const availability = teacher.availabilityGrid?.[dayName]?.[timeSlot.id];
-                if (availability === AvailabilityType.Forbidden) continue;
-                if (availability === AvailabilityType.Undesirable) softPenalty += 3;
-                if (availability === AvailabilityType.Desirable) softPenalty -= 1;
-                feasibleSlots++;
-            }
-        }
-
-        const teacherLoad = bookings.get(`teacher-${teacherId}`)?.size || 0;
-        const score = -feasibleSlots * 10 + softPenalty + teacherLoad * 2;
-        if (score < bestScore) {
-            bestScore = score;
-            bestTeacherId = teacherId;
-        }
-    }
-
-    return bestTeacherId;
-};
-
 const chooseCandidate = <T>(candidates: T[], rng: () => number, stochasticity = 0): T => {
     if (candidates.length === 1 || stochasticity <= 0) return candidates[0];
     const spread = Math.max(1, Math.ceil(candidates.length * Math.min(1, stochasticity)));
@@ -618,6 +570,13 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             if (target.type === 'teacher') return entry.teacherId === target.id || !!entry.teacherCandidates?.includes(target.id);
             return true; // Classroom target is a preference, not a filter
         });
+        if (target.type === 'teacher') {
+            classPool = classPool.map(entry => ({
+                ...entry,
+                teacherId: target.id,
+                teacherCandidates: [target.id],
+            }));
+        }
     }
 
     if (distributeEvenly) {
@@ -657,7 +616,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
 
     // --- 3. PLACEMENT LOOP ---
     for (const entryToPlace of classPool) {
-        let bestSlots: { date: Date, timeSlotId: string, classroom: Classroom, cost: number }[] = [];
+        let bestSlots: { date: Date, timeSlotId: string, classroom: Classroom, teacherId: string, cost: number }[] = [];
         const TOP_N_CANDIDATES = 5;
 
         const involvedGroupIds = getEntryGroupIds(entryToPlace);
@@ -682,11 +641,6 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             ));
             continue;
         }
-
-        const teacherCandidates = entryToPlace.teacherCandidates?.length ? entryToPlace.teacherCandidates : [entryToPlace.teacherId];
-        entryToPlace.teacherId = target?.type === 'teacher' && teacherCandidates.includes(target.id)
-            ? target.id
-            : selectTeacherForEntry(entryToPlace, data, index, workDays, involvedGroups, resourceBookings);
 
         const subject = index.subjectsById.get(entryToPlace.subjectId);
         if (!subject) {
@@ -730,6 +684,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
 
         const stats = createEmptyRejectionStats();
         const conflicts: string[] = [];
+        const teacherCandidates = entryToPlace.teacherCandidates?.length ? entryToPlace.teacherCandidates : [entryToPlace.teacherId];
 
         for (const date of workDays) {
             const dateStr = toYYYYMMDD(date);
@@ -746,44 +701,48 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                 const bookingKey = `${dateStr}-${timeSlot.id}`;
                 stats.checkedSlots++;
 
-                // Hard constraints (pre-classroom)
-                if (resourceBookings.get(`teacher-${entryToPlace.teacherId}`)?.has(bookingKey)) {
-                    stats.teacher++;
-                    conflicts.push(`Преподаватель занят: ${dateStr}, ${timeSlot.time}.`);
-                    continue;
-                }
                 if (involvedGroups.some(g => resourceBookings.get(`group-${g.id}`)?.has(bookingKey))) {
                     stats.group++;
                     conflicts.push(`Группа или поток уже заняты: ${dateStr}, ${timeSlot.time}.`);
                     continue;
                 }
-                if (index.teachersById.get(entryToPlace.teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden) {
-                    stats.teacher++;
-                    conflicts.push(`У преподавателя запрещен слот: ${dayName}, ${timeSlot.time}.`);
-                    continue;
-                }
 
-                for (const classroom of suitableClassrooms) {
-                    stats.checkedClassrooms++;
-                    if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) {
-                        stats.classroom++;
-                        conflicts.push(`Аудитория ${classroom.number} занята: ${dateStr}, ${timeSlot.time}.`);
+                for (const teacherId of teacherCandidates) {
+                    if (resourceBookings.get(`teacher-${teacherId}`)?.has(bookingKey)) {
+                        stats.teacher++;
+                        conflicts.push(`Преподаватель занят: ${dateStr}, ${timeSlot.time}.`);
+                        continue;
+                    }
+                    if (index.teachersById.get(teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden) {
+                        stats.teacher++;
+                        conflicts.push(`У преподавателя запрещен слот: ${dayName}, ${timeSlot.time}.`);
                         continue;
                     }
 
-                    const cost = calculateSlotCost(entryToPlace, date, timeSlot.id, classroom, involvedGroups, resourceBookings, schedulingData, softPenaltyMultiplier, newSchedule, config, activeTimeSlots, index);
-                    if (cost === Infinity) {
-                        stats.rules++;
-                        conflicts.push(`Строгое пользовательское правило запрещает ${dayName}, ${timeSlot.time}.`);
-                        continue;
-                    }
+                    const candidateEntry = { ...entryToPlace, teacherId };
 
-                    if (bestSlots.length < TOP_N_CANDIDATES) {
-                        bestSlots.push({ date, timeSlotId: timeSlot.id, classroom, cost });
-                        bestSlots.sort((a, b) => a.cost - b.cost);
-                    } else if (cost < bestSlots[TOP_N_CANDIDATES - 1].cost) {
-                        bestSlots[TOP_N_CANDIDATES - 1] = { date, timeSlotId: timeSlot.id, classroom, cost };
-                        bestSlots.sort((a, b) => a.cost - b.cost);
+                    for (const classroom of suitableClassrooms) {
+                        stats.checkedClassrooms++;
+                        if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) {
+                            stats.classroom++;
+                            conflicts.push(`Аудитория ${classroom.number} занята: ${dateStr}, ${timeSlot.time}.`);
+                            continue;
+                        }
+
+                        const cost = calculateSlotCost(candidateEntry, date, timeSlot.id, classroom, involvedGroups, resourceBookings, schedulingData, softPenaltyMultiplier, newSchedule, config, activeTimeSlots, index);
+                        if (cost === Infinity) {
+                            stats.rules++;
+                            conflicts.push(`Строгое пользовательское правило запрещает ${dayName}, ${timeSlot.time}.`);
+                            continue;
+                        }
+
+                        if (bestSlots.length < TOP_N_CANDIDATES) {
+                            bestSlots.push({ date, timeSlotId: timeSlot.id, classroom, teacherId, cost });
+                            bestSlots.sort((a, b) => a.cost - b.cost);
+                        } else if (cost < bestSlots[TOP_N_CANDIDATES - 1].cost) {
+                            bestSlots[TOP_N_CANDIDATES - 1] = { date, timeSlotId: timeSlot.id, classroom, teacherId, cost };
+                            bestSlots.sort((a, b) => a.cost - b.cost);
+                        }
                     }
                 }
             }
@@ -805,7 +764,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                 subgroupId: entryToPlace.subgroupId,
                 streamId: entryToPlace.streamId,
                 subjectId: entryToPlace.subjectId,
-                teacherId: entryToPlace.teacherId,
+                teacherId: chosenSlot.teacherId,
                 classType: entryToPlace.classType,
                 deliveryMode: entryToPlace.deliveryMode || DeliveryMode.Offline,
                 unscheduledUid: entryToPlace.uid,
@@ -813,7 +772,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             };
             newSchedule.push(newEntry);
 
-            addBooking(resourceBookings, `teacher-${entryToPlace.teacherId}`, bookingKey);
+            addBooking(resourceBookings, `teacher-${chosenSlot.teacherId}`, bookingKey);
             addBooking(resourceBookings, `classroom-${chosenSlot.classroom.id}`, bookingKey);
             involvedGroups.forEach(g => addBooking(resourceBookings, `group-${g.id}`, bookingKey));
 
