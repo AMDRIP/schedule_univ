@@ -149,6 +149,13 @@ const createEmptyRejectionStats = (): RejectionStats => ({
     checkedClassrooms: 0,
 });
 
+const SCHEDULER_YIELD_INTERVAL = 20;
+const MAX_PRIMARY_CLASSROOM_CANDIDATES = 24;
+const MAX_PRIMARY_WORK_DAYS = 10;
+const GOOD_ENOUGH_SLOT_COST = 0;
+
+const yieldToEventLoop = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+
 const explainEntry = (
     entry: UnscheduledEntry,
     stats: RejectionStats,
@@ -318,6 +325,67 @@ const getSuitableClassrooms = (entry: UnscheduledEntry, subject: Subject, index:
 
     index.suitableClassroomCache.set(cacheKey, classrooms);
     return classrooms;
+};
+
+const getPrimaryClassroomCandidates = (
+    entry: UnscheduledEntry,
+    subject: Subject,
+    suitableClassrooms: Classroom[],
+    involvedGroups: Group[],
+    teacherCandidates: string[],
+    data: GenerationData,
+    config: HeuristicConfig,
+    index: SchedulerIndex
+) => {
+    if (suitableClassrooms.length <= MAX_PRIMARY_CLASSROOM_CANDIDATES) return suitableClassrooms;
+
+    const suitableById = new Map(suitableClassrooms.map(classroom => [classroom.id, classroom]));
+    const priorityIds = new Set<string>();
+    const addPriorityId = (id?: string) => {
+        if (id && suitableById.has(id)) priorityIds.add(id);
+    };
+
+    addPriorityId(entry.pinnedClassroomId);
+    addPriorityId(subject.pinnedClassroomId);
+    if (config.target?.type === 'classroom') addPriorityId(config.target.id);
+    involvedGroups.forEach(group => addPriorityId(group.pinnedClassroomId));
+    teacherCandidates.forEach(teacherId => addPriorityId(index.teachersById.get(teacherId)?.pinnedClassroomId));
+
+    data.schedulingRules.forEach(rule => {
+        rule.conditions.forEach(condition => {
+            if (condition.entityType === 'classroom') {
+                condition.entityIds.forEach(addPriorityId);
+            }
+        });
+    });
+
+    const prioritized = Array.from(priorityIds)
+        .map(id => suitableById.get(id))
+        .filter(Boolean) as Classroom[];
+    const remainingLimit = Math.max(0, MAX_PRIMARY_CLASSROOM_CANDIDATES - prioritized.length);
+    const remaining = suitableClassrooms
+        .filter(classroom => !priorityIds.has(classroom.id))
+        .slice(0, remainingLimit);
+
+    return [...prioritized, ...remaining];
+};
+
+const getPrimaryWorkDaysForEntry = (
+    entry: UnscheduledEntry,
+    workDays: Date[],
+    distributeEvenly: boolean
+) => {
+    if (workDays.length <= MAX_PRIMARY_WORK_DAYS) return workDays;
+    if (distributeEvenly && entry.targetWeek) {
+        return [...workDays]
+            .sort((a, b) => {
+                const distanceA = Math.abs(getWeekNumber(a) - entry.targetWeek!);
+                const distanceB = Math.abs(getWeekNumber(b) - entry.targetWeek!);
+                return distanceA - distanceB || a.getTime() - b.getTime();
+            })
+            .slice(0, MAX_PRIMARY_WORK_DAYS);
+    }
+    return workDays.slice(0, MAX_PRIMARY_WORK_DAYS);
 };
 
 const estimateDomainSize = (
@@ -615,6 +683,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     );
 
     // --- 3. PLACEMENT LOOP ---
+    let processedEntries = 0;
     for (const entryToPlace of classPool) {
         let bestSlots: { date: Date, timeSlotId: string, classroom: Classroom, teacherId: string, cost: number }[] = [];
         const TOP_N_CANDIDATES = 5;
@@ -685,67 +754,89 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         const stats = createEmptyRejectionStats();
         const conflicts: string[] = [];
         const teacherCandidates = entryToPlace.teacherCandidates?.length ? entryToPlace.teacherCandidates : [entryToPlace.teacherId];
+        const primaryClassrooms = getPrimaryClassroomCandidates(entryToPlace, subject, suitableClassrooms, involvedGroups, teacherCandidates, data, config, index);
+        const primaryWorkDays = getPrimaryWorkDaysForEntry(entryToPlace, workDays, distributeEvenly);
 
-        for (const date of workDays) {
-            const dateStr = toYYYYMMDD(date);
-            const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+        const scanClassrooms = async (classroomsToScan: Classroom[], daysToScan: Date[]) => {
+            for (let dateIndex = 0; dateIndex < daysToScan.length; dateIndex++) {
+                if (dateIndex > 0 && dateIndex % SCHEDULER_YIELD_INTERVAL === 0) await yieldToEventLoop();
 
-            const activeTimeSlots = getActiveTimeSlotsForDate(data, date, index);
-            const compatibleTimeSlots = getShiftCompatibleTimeSlots(activeTimeSlots, involvedGroups);
-            if (compatibleTimeSlots.length === 0 && activeTimeSlots.length > 0) {
-                stats.group += activeTimeSlots.length;
-                conflicts.push(`Для групп ${involvedGroups.map(group => group.number).join(', ')} нет слотов подходящей смены на ${dateStr}.`);
-            }
+                const date = daysToScan[dateIndex];
+                const dateStr = toYYYYMMDD(date);
+                const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
 
-            for (const timeSlot of compatibleTimeSlots) {
-                const bookingKey = `${dateStr}-${timeSlot.id}`;
-                stats.checkedSlots++;
-
-                if (involvedGroups.some(g => resourceBookings.get(`group-${g.id}`)?.has(bookingKey))) {
-                    stats.group++;
-                    conflicts.push(`Группа или поток уже заняты: ${dateStr}, ${timeSlot.time}.`);
-                    continue;
+                const activeTimeSlots = getActiveTimeSlotsForDate(data, date, index);
+                const compatibleTimeSlots = getShiftCompatibleTimeSlots(activeTimeSlots, involvedGroups);
+                if (compatibleTimeSlots.length === 0 && activeTimeSlots.length > 0) {
+                    stats.group += activeTimeSlots.length;
+                    conflicts.push(`Для групп ${involvedGroups.map(group => group.number).join(', ')} нет слотов подходящей смены на ${dateStr}.`);
                 }
 
-                for (const teacherId of teacherCandidates) {
-                    if (resourceBookings.get(`teacher-${teacherId}`)?.has(bookingKey)) {
-                        stats.teacher++;
-                        conflicts.push(`Преподаватель занят: ${dateStr}, ${timeSlot.time}.`);
-                        continue;
-                    }
-                    if (index.teachersById.get(teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden) {
-                        stats.teacher++;
-                        conflicts.push(`У преподавателя запрещен слот: ${dayName}, ${timeSlot.time}.`);
+                for (const timeSlot of compatibleTimeSlots) {
+                    const bookingKey = `${dateStr}-${timeSlot.id}`;
+                    stats.checkedSlots++;
+
+                    if (involvedGroups.some(g => resourceBookings.get(`group-${g.id}`)?.has(bookingKey))) {
+                        stats.group++;
+                        conflicts.push(`Группа или поток уже заняты: ${dateStr}, ${timeSlot.time}.`);
                         continue;
                     }
 
-                    const candidateEntry = { ...entryToPlace, teacherId };
-
-                    for (const classroom of suitableClassrooms) {
-                        stats.checkedClassrooms++;
-                        if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) {
-                            stats.classroom++;
-                            conflicts.push(`Аудитория ${classroom.number} занята: ${dateStr}, ${timeSlot.time}.`);
+                    for (const teacherId of teacherCandidates) {
+                        if (resourceBookings.get(`teacher-${teacherId}`)?.has(bookingKey)) {
+                            stats.teacher++;
+                            conflicts.push(`Преподаватель занят: ${dateStr}, ${timeSlot.time}.`);
+                            continue;
+                        }
+                        if (index.teachersById.get(teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden) {
+                            stats.teacher++;
+                            conflicts.push(`У преподавателя запрещен слот: ${dayName}, ${timeSlot.time}.`);
                             continue;
                         }
 
-                        const cost = calculateSlotCost(candidateEntry, date, timeSlot.id, classroom, involvedGroups, resourceBookings, schedulingData, softPenaltyMultiplier, newSchedule, config, activeTimeSlots, index);
-                        if (cost === Infinity) {
-                            stats.rules++;
-                            conflicts.push(`Строгое пользовательское правило запрещает ${dayName}, ${timeSlot.time}.`);
-                            continue;
-                        }
+                        const candidateEntry = { ...entryToPlace, teacherId };
 
-                        if (bestSlots.length < TOP_N_CANDIDATES) {
-                            bestSlots.push({ date, timeSlotId: timeSlot.id, classroom, teacherId, cost });
-                            bestSlots.sort((a, b) => a.cost - b.cost);
-                        } else if (cost < bestSlots[TOP_N_CANDIDATES - 1].cost) {
-                            bestSlots[TOP_N_CANDIDATES - 1] = { date, timeSlotId: timeSlot.id, classroom, teacherId, cost };
-                            bestSlots.sort((a, b) => a.cost - b.cost);
+                        for (const classroom of classroomsToScan) {
+                            stats.checkedClassrooms++;
+                            if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) {
+                                stats.classroom++;
+                                conflicts.push(`Аудитория ${classroom.number} занята: ${dateStr}, ${timeSlot.time}.`);
+                                continue;
+                            }
+
+                            const cost = calculateSlotCost(candidateEntry, date, timeSlot.id, classroom, involvedGroups, resourceBookings, schedulingData, softPenaltyMultiplier, newSchedule, config, activeTimeSlots, index);
+                            if (cost === Infinity) {
+                                stats.rules++;
+                                conflicts.push(`Строгое пользовательское правило запрещает ${dayName}, ${timeSlot.time}.`);
+                                continue;
+                            }
+
+                            if (bestSlots.length < TOP_N_CANDIDATES) {
+                                bestSlots.push({ date, timeSlotId: timeSlot.id, classroom, teacherId, cost });
+                                bestSlots.sort((a, b) => a.cost - b.cost);
+                            } else if (cost < bestSlots[TOP_N_CANDIDATES - 1].cost) {
+                                bestSlots[TOP_N_CANDIDATES - 1] = { date, timeSlotId: timeSlot.id, classroom, teacherId, cost };
+                                bestSlots.sort((a, b) => a.cost - b.cost);
+                            }
+
+                            if (bestSlots.length >= TOP_N_CANDIDATES && bestSlots[TOP_N_CANDIDATES - 1].cost <= GOOD_ENOUGH_SLOT_COST) {
+                                return;
+                            }
                         }
                     }
                 }
             }
+        };
+
+        await scanClassrooms(primaryClassrooms, primaryWorkDays);
+        if (bestSlots.length === 0 && primaryClassrooms.length < suitableClassrooms.length) {
+            await scanClassrooms(suitableClassrooms, primaryWorkDays);
+        }
+        if (bestSlots.length === 0 && primaryWorkDays.length < workDays.length) {
+            await scanClassrooms(primaryClassrooms, workDays);
+        }
+        if (bestSlots.length === 0 && primaryWorkDays.length < workDays.length && primaryClassrooms.length < suitableClassrooms.length) {
+            await scanClassrooms(suitableClassrooms, workDays);
         }
 
         if (bestSlots.length > 0) {
@@ -784,6 +875,9 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                 stats.teacher >= stats.classroom && stats.teacher >= stats.group ? 'Преподаватель' : stats.classroom >= stats.group ? 'Аудитории' : 'Группы/поток'
             ));
         }
+
+        processedEntries++;
+        if (processedEntries % SCHEDULER_YIELD_INTERVAL === 0) await yieldToEventLoop();
     }
 
     // --- 4. REFINEMENT PHASE ---
@@ -1480,8 +1574,14 @@ async function refineSchedule(
     let refinedSchedule = [...initialSchedule];
     const resourceBookings = new Map(Array.from(initialBookings.entries()).map(([key, value]) => [key, new Set(value)]));
 
-    const REFINEMENT_PASSES = Math.max(3, Math.min(10, config.iterations || 3));
-    const REFINEMENT_CANDIDATE_PERCENTAGE = config.target ? 0.35 : 0.65;
+    const isLargeSchedule = initialSchedule.length > 1_000;
+    const REFINEMENT_PASSES = isLargeSchedule
+        ? 1
+        : Math.max(2, Math.min(5, config.iterations || 2));
+    const REFINEMENT_CANDIDATE_PERCENTAGE = isLargeSchedule
+        ? 0.15
+        : config.target ? 0.35 : 0.5;
+    const MAX_REFINEMENT_CANDIDATES = isLargeSchedule ? 180 : 700;
 
     const workDays: Date[] = [];
     let currentDateIterator = new Date(config.timeFrame.start + 'T00:00:00');
@@ -1529,11 +1629,18 @@ async function refineSchedule(
         }
 
         entriesWithCosts.sort((a, b) => b.cost - a.cost);
-        const candidatesToRefine = entriesWithCosts.slice(0, Math.ceil(entriesWithCosts.length * REFINEMENT_CANDIDATE_PERCENTAGE));
+        const candidatesToRefine = entriesWithCosts.slice(
+            0,
+            Math.min(Math.ceil(entriesWithCosts.length * REFINEMENT_CANDIDATE_PERCENTAGE), MAX_REFINEMENT_CANDIDATES)
+        );
 
         let improvementsThisPass = 0;
 
+        let refinedCandidateIndex = 0;
         for (const { entry: entryToMove, cost: currentCost } of candidatesToRefine) {
+            refinedCandidateIndex++;
+            if (refinedCandidateIndex % SCHEDULER_YIELD_INTERVAL === 0) await yieldToEventLoop();
+
             const currentEntryInSchedule = refinedSchedule.find(e => e.id === entryToMove.id);
             if (!currentEntryInSchedule) continue;
 
@@ -1553,26 +1660,44 @@ async function refineSchedule(
             const subject = index.subjectsById.get(unscheduledVersion.subjectId);
             if (!subject) continue;
             const suitableClassrooms = getSuitableClassrooms(unscheduledVersion, subject, index) || [];
+            const primaryClassrooms = getPrimaryClassroomCandidates(unscheduledVersion, subject, suitableClassrooms, involvedGroups, [unscheduledVersion.teacherId], data, config, index);
+            const primaryWorkDays = getPrimaryWorkDaysForEntry(unscheduledVersion, workDays, config.distributeEvenly);
 
-            for (const date of workDays) {
-                const activeTimeSlots = getActiveTimeSlotsForDate(data, date, index);
-                const compatibleTimeSlots = getShiftCompatibleTimeSlots(activeTimeSlots, involvedGroups);
+            const scanAlternativeClassrooms = async (classroomsToScan: Classroom[], daysToScan: Date[]) => {
+                for (let dateIndex = 0; dateIndex < daysToScan.length; dateIndex++) {
+                    if (dateIndex > 0 && dateIndex % SCHEDULER_YIELD_INTERVAL === 0) await yieldToEventLoop();
 
-                for (const timeSlot of compatibleTimeSlots) {
-                    const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
-                    if (resourceBookings.get(`teacher-${unscheduledVersion.teacherId}`)?.has(bookingKey)) continue;
-                    if (involvedGroups.some(g => resourceBookings.get(`group-${g.id}`)?.has(bookingKey))) continue;
+                    const date = daysToScan[dateIndex];
+                    const activeTimeSlots = getActiveTimeSlotsForDate(data, date, index);
+                    const compatibleTimeSlots = getShiftCompatibleTimeSlots(activeTimeSlots, involvedGroups);
 
-                    for (const classroom of suitableClassrooms) {
-                        if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
+                    for (const timeSlot of compatibleTimeSlots) {
+                        const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
+                        if (resourceBookings.get(`teacher-${unscheduledVersion.teacherId}`)?.has(bookingKey)) continue;
+                        if (involvedGroups.some(g => resourceBookings.get(`group-${g.id}`)?.has(bookingKey))) continue;
 
-                        const cost = calculateSlotCost(unscheduledVersion, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, config.strictness / 4.0, refinedSchedule.filter(e => e.id !== entryToMove.id), config, activeTimeSlots, index);
+                        for (const classroom of classroomsToScan) {
+                            if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
 
-                        if (cost < (bestAlternativeSlot?.cost ?? Infinity)) {
-                            bestAlternativeSlot = { date, timeSlotId: timeSlot.id, classroom, cost };
+                            const cost = calculateSlotCost(unscheduledVersion, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, config.strictness / 4.0, refinedSchedule.filter(e => e.id !== entryToMove.id), config, activeTimeSlots, index);
+
+                            if (cost < (bestAlternativeSlot?.cost ?? Infinity)) {
+                                bestAlternativeSlot = { date, timeSlotId: timeSlot.id, classroom, cost };
+                            }
                         }
                     }
                 }
+            };
+
+            await scanAlternativeClassrooms(primaryClassrooms, primaryWorkDays);
+            if (!bestAlternativeSlot && primaryClassrooms.length < suitableClassrooms.length) {
+                await scanAlternativeClassrooms(suitableClassrooms, primaryWorkDays);
+            }
+            if (!bestAlternativeSlot && primaryWorkDays.length < workDays.length) {
+                await scanAlternativeClassrooms(primaryClassrooms, workDays);
+            }
+            if (!bestAlternativeSlot && primaryWorkDays.length < workDays.length && primaryClassrooms.length < suitableClassrooms.length) {
+                await scanAlternativeClassrooms(suitableClassrooms, workDays);
             }
 
             if (bestAlternativeSlot && bestAlternativeSlot.cost < currentCost) {
