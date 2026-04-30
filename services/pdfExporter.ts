@@ -7,6 +7,7 @@ import { useStore } from '../hooks/useStore';
 import { calculateExperience } from '../utils/dateUtils';
 
 const FONT_NAME = 'DejaVuSans';
+const FONT_STYLES = ['normal', 'bold', 'italic', 'bolditalic'] as const;
 
 interface ScheduleExportData {
     schedule: ScheduleEntry[];
@@ -25,10 +26,20 @@ interface ScheduleExportData {
 function initializeDoc(): jsPDF {
     const doc = new jsPDF();
     doc.addFileToVFS(`${FONT_NAME}.ttf`, dejavu_sans_base64);
-    doc.addFont(`${FONT_NAME}.ttf`, FONT_NAME, 'normal');
-    doc.setFont(FONT_NAME);
+    FONT_STYLES.forEach(style => {
+        doc.addFont(`${FONT_NAME}.ttf`, FONT_NAME, style);
+    });
+    doc.setFont(FONT_NAME, 'normal');
     return doc;
 }
+
+const asPdfText = (value: unknown) => {
+    if (value === null || typeof value === 'undefined') return '';
+    if (Array.isArray(value)) return value.map(asPdfText).join(', ');
+    return String(value);
+};
+
+const normalizeTable = (rows: unknown[][]) => rows.map(row => row.map(asPdfText));
 
 export const exportScheduleAsPdf = async (data: ScheduleExportData, settings: SchedulingSettings) => {
     const { schedule, title, subtitle, weekDays, timeSlots, timeSlotsShortened, groups, teachers, subjects, classrooms, productionCalendar } = data;
@@ -39,7 +50,7 @@ export const exportScheduleAsPdf = async (data: ScheduleExportData, settings: Sc
     doc.setFontSize(10);
     doc.text(subtitle, 14, 22);
 
-    const head = [['Время', ...weekDays.map(d => `${DAYS_OF_WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1]}, ${d.getDate()}`)]];
+    const head = normalizeTable([['Время', ...weekDays.map(d => `${DAYS_OF_WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1]}, ${d.getDate()}`)]]);
 
     const allTimeSlots = [...timeSlots, ...timeSlotsShortened];
     const displayTimeSlots: TimeSlot[] = Array.from(new Map(allTimeSlots.map(item => [item.time, item])).values())
@@ -88,12 +99,13 @@ export const exportScheduleAsPdf = async (data: ScheduleExportData, settings: Sc
     });
 
     autoTable(doc, {
-        head: head,
-        body: body,
+        head,
+        body: normalizeTable(body),
         startY: 30,
         theme: 'grid',
         styles: {
             font: FONT_NAME,
+            fontStyle: 'normal',
             fontSize: 8,
             cellPadding: 2,
             valign: 'middle',
@@ -103,11 +115,12 @@ export const exportScheduleAsPdf = async (data: ScheduleExportData, settings: Sc
         headStyles: {
             fillColor: [22, 160, 133],
             textColor: 255,
+            font: FONT_NAME,
             fontStyle: 'bold',
             halign: 'center'
         },
         columnStyles: {
-            0: { cellWidth: 20, fontStyle: 'bold' } // Time column
+            0: { cellWidth: 20, font: FONT_NAME, fontStyle: 'bold' } // Time column
         },
         didParseCell: (data) => {
             if (data.section === 'body' && data.column.index > 0) {

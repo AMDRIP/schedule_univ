@@ -4,7 +4,7 @@ const KNOWN_COLLECTIONS = new Set([
   'faculties', 'departments', 'teachers', 'groups', 'streams', 'classrooms', 'subjects',
   'timeSlots', 'timeSlotsShortened', 'teacherSubjectLinks', 'schedulingRules',
   'productionCalendar', 'ugs', 'specialties', 'educationalPlans', 'scheduleTemplates',
-  'classroomTypes', 'subgroups', 'electives', 'classroomTags',
+  'classroomTypes', 'subgroups', 'electives', 'classroomTags', 'bellScheduleProfiles',
 ]);
 
 const parseMaybeJson = (value: unknown) => {

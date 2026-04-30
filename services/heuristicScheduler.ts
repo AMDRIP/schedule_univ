@@ -1,5 +1,5 @@
 import {
-    ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType,
+    ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, BellScheduleProfile,
     SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS,
     Specialty, EducationalPlan, UnscheduledEntry, AvailabilityType, WeekType, DeliveryMode, ClassroomType, Subgroup, Elective, HeuristicConfig,
     RuleSeverity, RuleAction, RuleCondition, ProductionCalendarEventType, SchedulingExplanation, SchedulingBottleneck
@@ -16,6 +16,7 @@ interface GenerationData {
     streams: Stream[];
     timeSlots: TimeSlot[];
     timeSlotsShortened: TimeSlot[];
+    bellScheduleProfiles?: BellScheduleProfile[];
     settings: SchedulingSettings;
     teacherSubjectLinks: TeacherSubjectLink[];
     schedulingRules: SchedulingRule[];
@@ -274,6 +275,15 @@ const createWorkDays = (data: GenerationData, config: HeuristicConfig, index: Sc
 
 const getActiveTimeSlotsForDate = (data: GenerationData, date: Date | string, index: SchedulerIndex) => {
     const dateStr = typeof date === 'string' ? date : toYYYYMMDD(date);
+    const actualDate = typeof date === 'string' ? new Date(date + 'T00:00:00') : date;
+    const weekday = actualDate.getDay() === 0 ? 6 : actualDate.getDay() - 1;
+    const customProfile = (data.bellScheduleProfiles || []).find(profile => {
+        if (!profile.isActive) return false;
+        if (profile.appliesToDates?.includes(dateStr)) return true;
+        if (profile.appliesToWeekdays?.includes(weekday)) return true;
+        return false;
+    });
+    if (customProfile?.slots?.length) return customProfile.slots;
     const dayInfo = index.productionByDate.get(dateStr);
     const isPreHoliday = data.settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
     return isPreHoliday ? data.timeSlotsShortened : data.timeSlots;

@@ -16,8 +16,10 @@ import FacultyView from './FacultyView';
 import TeacherView from './TeacherView';
 import UniversityWideSchedule from './UniversityWideSchedule';
 import TeacherGroupLessons from './TeacherGroupLessons';
-import BuildingPlanEditor from './BuildingPlanEditor';
 import AcademicProgramsManager from './AcademicProgramsManager';
+import CohortManager from './CohortManager';
+import RoomResourcesManager from './RoomResourcesManager';
+import BellScheduleManager from './BellScheduleManager';
 
 
 interface DashboardProps {
@@ -54,7 +56,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
   const renderContent = () => {
     switch (activeView) {
       case 'Планы зданий':
-        return <BuildingPlanEditor />;
+      case 'Аудиторный фонд':
+        return <RoomResourcesManager />;
       case 'Просмотр расписания':
         return <ScheduleView currentRole={currentRole} viewDate={viewDate} setViewDate={setViewDate} />;
       case 'Сводное расписание':
@@ -77,28 +80,24 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
         return <DataManager dataType="teachers" title="Управление преподавателями" onNavigate={handleNavigate} />;
       case 'Просмотр преподавателя':
         return <TeacherView teacherId={viewEntityId!} onNavigate={handleNavigate} />;
+      case 'Контингент':
       case 'Группы':
-        return <DataManager dataType="groups" title="Управление группами" />;
       case 'Подгруппы':
-        return <DataManager dataType="subgroups" title="Управление подгруппами" />;
       case 'Потоки':
-        return <DataManager dataType="streams" title="Управление потоками" />;
+        return <CohortManager />;
       case 'Аудитории':
-        return <DataManager dataType="classrooms" title="Управление аудиториями" />;
       case 'Типы аудиторий':
-        return <DataManager dataType="classroomTypes" title="Управление типами аудиторий" />;
       case 'Теги аудиторий':
-        return <DataManager dataType="classroomTags" title="Управление тегами аудиторий" />;
+      case 'Кабинеты':
+        return <RoomResourcesManager />;
       case 'Расписание звонков':
-        return <DataManager dataType="timeSlots" title="Управление расписанием звонков" />;
       case 'Расписание сокр. звонков':
-        return <DataManager dataType="timeSlotsShortened" title="Управление расписанием сокращенных звонков" />;
+      case 'Сетки звонков':
+        return <BellScheduleManager />;
       case 'Дисциплины':
         return <DataManager dataType="subjects" title="Управление дисциплинами" />;
       case 'Факультативы':
         return <DataManager dataType="electives" title="Управление факультативами" />;
-      case 'Кабинеты':
-        return <DataManager dataType="cabinets" title="Управление кабинетами" />;
       case 'УГСН':
       case 'Специальности':
       case 'УГСН и специальности':

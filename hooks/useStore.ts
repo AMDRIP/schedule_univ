@@ -5,7 +5,7 @@ import {
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
     EducationalPlan, EducationalPlanTemplate, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective,
     AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag, HeuristicConfig, SessionSchedulerConfig, SchedulingExplanation,
-    BuildingPlan
+    BuildingPlan, BellScheduleProfile
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
@@ -84,6 +84,7 @@ const initialTimeSlotsShortened: TimeSlot[] = [
     { id: 'tss1', time: '08:30-09:50', shift: 'first' }, { id: 'tss2', time: '10:00-11:20', shift: 'first' },
     { id: 'tss3', time: '11:30-12:50', shift: 'second' }, { id: 'tss4', time: '13:00-14:20', shift: 'second' },
 ];
+const initialBellScheduleProfiles: BellScheduleProfile[] = [];
 const initialSchedule: ScheduleEntry[] = [];
 const initialTeacherSubjectLinks: TeacherSubjectLink[] = [
     { id: 'l1', teacherId: 't1', subjectId: 'sub1', classTypes: [ClassType.Lecture, ClassType.Practical] },
@@ -263,7 +264,7 @@ const generateUnscheduledEntries = (
 interface StoreState {
   faculties: Faculty[]; departments: Department[]; teachers: Teacher[]; groups: Group[];
   streams: Stream[]; classrooms: Classroom[]; subjects: Subject[]; cabinets: Cabinet[];
-  timeSlots: TimeSlot[]; timeSlotsShortened: TimeSlot[]; schedule: ScheduleEntry[]; unscheduledEntries: UnscheduledEntry[];
+  timeSlots: TimeSlot[]; timeSlotsShortened: TimeSlot[]; bellScheduleProfiles: BellScheduleProfile[]; schedule: ScheduleEntry[]; unscheduledEntries: UnscheduledEntry[];
   teacherSubjectLinks: TeacherSubjectLink[]; schedulingRules: SchedulingRule[]; 
   productionCalendar: ProductionCalendarEvent[]; settings: SchedulingSettings;
   ugs: UGS[]; specialties: Specialty[]; educationalPlans: EducationalPlan[]; educationalPlanTemplates: EducationalPlanTemplate[];
@@ -366,6 +367,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [cabinets, setCabinets] = useState(initialCabinets);
   const [timeSlots, setTimeSlots] = useState(initialTimeSlots);
   const [timeSlotsShortened, setTimeSlotsShortened] = useState(initialTimeSlotsShortened);
+  const [bellScheduleProfiles, setBellScheduleProfiles] = useState(initialBellScheduleProfiles);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>(initialSchedule);
   const [unscheduledEntries, setUnscheduledEntries] = useState<UnscheduledEntry[]>([]);
   const [ugs, setUgs] = useState(initialUGS);
@@ -525,7 +527,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, []);
   
   const getFullState = () => ({
-    faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
+    faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, bellScheduleProfiles, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, educationalPlanTemplates, scheduleTemplates,
     classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, buildingPlans, currentFilePath, lastAutosave,
     schedulingExplanations, lastSchedulingRunSummary
@@ -547,6 +549,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setCabinets(data.cabinets || []);
     setTimeSlots(data.timeSlots || []);
     setTimeSlotsShortened(data.timeSlotsShortened || []);
+    setBellScheduleProfiles(data.bellScheduleProfiles || []);
     setSchedule(data.schedule || []);
     setTeacherSubjectLinks(data.teacherSubjectLinks || []);
     setSchedulingRules(data.schedulingRules || []);
@@ -594,6 +597,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     merge(setCabinets, data.cabinets);
     merge(setTimeSlots, data.timeSlots);
     merge(setTimeSlotsShortened, data.timeSlotsShortened);
+    merge(setBellScheduleProfiles, data.bellScheduleProfiles);
     merge(setSchedule, data.schedule);
     merge(setTeacherSubjectLinks, data.teacherSubjectLinks);
     merge(setSchedulingRules, data.schedulingRules);
@@ -679,7 +683,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const stateSetters: Record<DataType, React.Dispatch<React.SetStateAction<any[]>>> = {
     faculties: setFaculties, departments: setDepartments, teachers: setTeachers, groups: setGroups,
     streams: setStreams, classrooms: setClassrooms, subjects: setSubjects, cabinets: setCabinets,
-    timeSlots: setTimeSlots, timeSlotsShortened: setTimeSlotsShortened, teacherSubjectLinks: setTeacherSubjectLinks, schedulingRules: setSchedulingRules,
+    timeSlots: setTimeSlots, timeSlotsShortened: setTimeSlotsShortened, bellScheduleProfiles: setBellScheduleProfiles, teacherSubjectLinks: setTeacherSubjectLinks, schedulingRules: setSchedulingRules,
     productionCalendar: setProductionCalendar, ugs: setUgs, specialties: setSpecialties, 
     educationalPlans: setEducationalPlans, educationalPlanTemplates: setEducationalPlanTemplates, scheduleTemplates: setScheduleTemplates, classroomTypes: setClassroomTypes,
     classroomTags: setClassroomTags, subgroups: setSubgroups, electives: setElectives, buildingPlans: setBuildingPlans,
@@ -1317,7 +1321,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   const clearAllData = () => {
     setFaculties([]); setDepartments([]); setTeachers([]); setGroups([]); setStreams([]);
-    setClassrooms([]); setSubjects([]); setCabinets([]); setTimeSlots([]); setTimeSlotsShortened([]); setSchedule([]);
+    setClassrooms([]); setSubjects([]); setCabinets([]); setTimeSlots([]); setTimeSlotsShortened([]); setBellScheduleProfiles([]); setSchedule([]);
     setUgs([]); setSpecialties([]); setEducationalPlans([]); setTeacherSubjectLinks([]);
     setSchedulingRules([]); setProductionCalendar([]); setSettings(getInitialEmptySettings());
     setEducationalPlanTemplates([]); setScheduleTemplates([]); setClassroomTypes([]); setClassroomTags([]); setSubgroups([]); setElectives([]);
@@ -1359,7 +1363,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const runScheduler = async (method: 'heuristic' | 'gemini' | 'openrouter', config?: HeuristicConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }> => {
     setSchedulingProgress(null);
     const generationData = {
-        teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
+        teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
         subgroups, electives, schedule, classroomTags, faculties, departments
     };
@@ -1477,7 +1481,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const runLocalOptimizer = async (config: HeuristicConfig): Promise<{ improved: number; considered: number; before: number; after: number }> => {
     const generationData = {
-        teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings,
+        teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
         subgroups, electives, schedule, classroomTags, faculties, departments
     };
@@ -1495,7 +1499,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const runSessionScheduler = async (config: SessionSchedulerConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }> => {
     const generationData = {
-        teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings,
+        teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
         subgroups, schedule
     };
@@ -1600,7 +1604,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
 
   const value: StoreState = {
-    faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, schedule, unscheduledEntries,
+    faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, bellScheduleProfiles, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, educationalPlanTemplates, scheduleTemplates,
     classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, buildingPlans, currentFilePath, lastAutosave, apiKey, openRouterApiKey, unscheduledTimeHorizon,
     schedulingProgress, schedulingExplanations, lastSchedulingRunSummary, viewDate,

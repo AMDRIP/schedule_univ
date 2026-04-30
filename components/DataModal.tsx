@@ -72,21 +72,21 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'faculties': return { name: '', deanId: '', address: '', phone: '', email: '', notes: '' };
       case 'departments': return { name: '', facultyId: faculties[0]?.id || '', specialtyIds: [], headTeacherId: '', address: '', phone: '', email: '', vkLink: '', telegramLink: '', notes: '' };
       case 'teachers': return { name: '', departmentId: departments[0]?.id || '', availabilityGrid: {}, pinnedClassroomId: '', regalia: '', academicDegree: '', fieldOfScience: '', academicTitle: '', photoUrl: '', hireDate: '', color: '', quickSubjectLinks: [] };
-      case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, shift: 'both', availabilityGrid: {}, pinnedClassroomId: '' };
-      case 'streams': return { name: '', groupIds: [] };
-      case 'classrooms': return { number: '', capacity: 30, typeId: classroomTypes[0]?.id || '', availabilityGrid: {}, tagIds: [] };
+      case 'groups': return { number: '', departmentId: departments[0]?.id || '', studentCount: 25, course: 1, specialtyId: specialties[0]?.id || '', formOfStudy: FormOfStudy.FullTime, shift: 'both', availabilityGrid: {}, pinnedClassroomId: '', curatorTeacherId: '', admissionYear: new Date().getFullYear(), notes: '' };
+      case 'streams': return { name: '', groupIds: [], subgroupIds: [], type: 'lecture', subjectId: '', teacherId: '', classroomTypeId: '', maxStudentCount: 0, semester: 1, notes: '' };
+      case 'classrooms': return { number: '', capacity: 30, examCapacity: 15, typeId: classroomTypes[0]?.id || '', availabilityGrid: {}, tagIds: [], area: 0, departmentId: '', status: 'available', allowedClassTypes: [], prioritySubjectIds: [], notes: '' };
       case 'subjects': return { name: '', pinnedClassroomId: '', classroomTypeRequirements: {}, requiredClassroomTagIds: [], color: '' };
-      case 'cabinets': return { number: '', departmentId: departments[0]?.id || '' };
+      case 'cabinets': return { number: '', departmentId: departments[0]?.id || '', capacity: 1, category: 'administrative', responsibleTeacherId: '', tagIds: [], status: 'available', notes: '' };
       case 'timeSlots': return { time: '00:00-00:00', shift: 'first' };
       case 'timeSlotsShortened': return { time: '00:00-00:00', shift: 'first' };
       case 'productionCalendar': return { date: '', name: '', isWorkDay: false, type: ProductionCalendarEventType.Holiday };
       case 'ugs': return { code: '', name: '' };
       case 'specialties': return { code: '', name: '', ugsId: ugs[0]?.id || '', oksoCode: '' };
       case 'scheduleTemplates': return { name: '', description: '', entries: [] };
-      case 'classroomTypes': return { name: '' };
-      case 'subgroups': return { name: '', parentGroupId: groups[0]?.id || '', studentCount: 12, teacherAssignments: [] };
+      case 'classroomTypes': return { name: '', category: 'educational', allowedClassTypes: [], requiredTagIds: [], color: 'blue', priority: 50, description: '' };
+      case 'subgroups': return { name: '', parentGroupId: groups[0]?.id || '', studentCount: 12, type: 'general', subjectIds: [], notes: '', teacherAssignments: [] };
       case 'electives': return { name: '', subjectId: subjects[0]?.id || '', teacherId: teachers[0]?.id || '', groupId: groups[0]?.id || '', hoursPerSemester: 32, classType: ClassType.Elective, deliveryMode: DeliveryMode.Offline, pinnedClassroomId: '', classroomTypeIds: [], requiredClassroomTagIds: [], preferredTimeSlotIds: [] };
-      case 'classroomTags': return { name: '', icon: 'BookmarkIcon', color: 'gray' };
+      case 'classroomTags': return { name: '', icon: 'BookmarkIcon', color: 'gray', category: 'equipment', requiredLevel: 'preferred', description: '' };
       case 'buildingPlans': return { name: '', address: '', floors: [], updatedAt: new Date().toISOString() };
       default: return {};
     }
@@ -195,7 +195,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
     }
 
 
-    const numericFields = ['capacity', 'studentCount', 'course', 'hoursPerSemester'];
+    const numericFields = ['capacity', 'studentCount', 'course', 'hoursPerSemester', 'admissionYear', 'maxStudentCount', 'semester', 'examCapacity', 'area', 'priority'];
     setFormData((prev: any) => ({ 
       ...prev, 
       [name]: numericFields.includes(name) ? Number(value) : value 

@@ -3,7 +3,7 @@
 import React from 'react';
 import { Role } from '../types';
 import { useStore } from '../hooks/useStore';
-import { CalendarIcon, UsersIcon, AcademicCapIcon, CollectionIcon, HomeIcon, SparklesIcon, KeyIcon, BuildingOfficeIcon, BookmarkIcon, UserGroupIcon, ClockIcon, CogIcon, LinkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, LibraryIcon, DocumentSearchIcon, DocumentTextIcon } from './icons';
+import { CalendarIcon, UsersIcon, AcademicCapIcon, CollectionIcon, HomeIcon, SparklesIcon, BookmarkIcon, UserGroupIcon, ClockIcon, CogIcon, LinkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, LibraryIcon, DocumentSearchIcon, DocumentTextIcon } from './icons';
 
 interface SidebarProps {
   currentRole: Role;
@@ -45,7 +45,6 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
         },
         { name: 'Планы занятий', icon: <DocumentTextIcon /> },
         { type: 'divider' },
-        { name: 'Планы зданий', icon: <BuildingOfficeIcon /> },
         { name: 'Учебные планы', icon: <BookOpenIcon /> },
         { name: 'Дисциплины', icon: <CollectionIcon /> },
         { name: 'Факультативы', icon: <SparklesIcon /> },
@@ -56,15 +55,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
         { name: 'УГСН и специальности', icon: <IdentificationIcon /> },
         { type: 'divider' },
         { name: 'Преподаватели', icon: <UsersIcon /> },
-        { name: 'Группы', icon: <AcademicCapIcon /> },
-        { name: 'Подгруппы', icon: <UserGroupIcon /> },
-        { name: 'Потоки', icon: <UserGroupIcon /> },
-        { name: 'Аудитории', icon: <HomeIcon /> },
-        { name: 'Типы аудиторий', icon: <HomeIcon /> },
-        { name: 'Теги аудиторий', icon: <BookmarkIcon /> },
-        { name: 'Кабинеты', icon: <KeyIcon /> },
-        { name: 'Расписание звонков', icon: <ClockIcon /> },
-        { name: 'Расписание сокр. звонков', icon: <ClockIcon /> },
+        { name: 'Контингент', icon: <AcademicCapIcon /> },
+        { name: 'Аудиторный фонд', icon: <HomeIcon /> },
+        { name: 'Сетки звонков', icon: <ClockIcon /> },
         { type: 'divider' },
         { name: 'Привязки преподавателей', icon: <LinkIcon /> },
         { name: 'Правила расписания', icon: <ShieldCheckIcon /> },

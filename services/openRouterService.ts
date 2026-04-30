@@ -1,6 +1,6 @@
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
-    SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS, Specialty, EducationalPlan, DeliveryMode, ClassroomType,
+    SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS, Specialty, EducationalPlan, DeliveryMode, ClassroomType, BellScheduleProfile,
     Subgroup, Elective, RuleSeverity, RuleAction, AvailabilityType, ClassroomTag, Department, Faculty
 } from '../types';
 import { SCHEDULING_STANDARDS_PROMPT } from './schedulingStandards';
@@ -13,6 +13,7 @@ interface GenerationData {
   streams: Stream[];
   timeSlots: TimeSlot[];
   timeSlotsShortened: TimeSlot[];
+  bellScheduleProfiles?: BellScheduleProfile[];
   settings: SchedulingSettings;
   teacherSubjectLinks: TeacherSubjectLink[];
   schedulingRules: SchedulingRule[];
@@ -49,7 +50,7 @@ const getOpenRouterApiKey = async (): Promise<string | null> => {
 
 export const generateScheduleWithOpenRouter = async (data: GenerationData, modelName: string): Promise<ScheduleEntry[]> => {
   const { 
-    teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, settings, 
+    teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
     teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
     subgroups, electives, classroomTags, departments, faculties
   } = data;
@@ -71,6 +72,7 @@ export const generateScheduleWithOpenRouter = async (data: GenerationData, model
     - "Окна" (свободные пары между занятиями) для студентов и преподавателей ${settings.allowWindows ? 'РАЗРЕШЕНЫ' : 'ЗАПРЕЩЕНЫ. Старайся ставить пары подряд.'}.
     - УЧЕТ ПРОИЗВОДСТВЕННОГО КАЛЕНДАРЯ: ${settings.respectProductionCalendar ? 'ВКЛЮЧЕН. Ты ОБЯЗАН не ставить занятия в дни, где isWorkDay: false.' : 'ВЫКЛЮЧЕН. Ты можешь игнорировать нерабочие дни.'}
     - СОКРАЩЕННЫЕ ДНИ: ${settings.useShortenedPreHolidaySchedule ? 'ВКЛЮЧЕНО. В дни с типом "Предпраздничный день" используй \`timeSlotsShortened\`. В остальные рабочие дни - \`timeSlots\`.' : 'ВЫКЛЮЧЕНО. Всегда используй \`timeSlots\`.'}
+    - ОСОБЫЕ СЕТКИ ЗВОНКОВ: если \`bellScheduleProfiles\` содержит активный профиль с датой или днём недели, используй его слоты вместо обычной/сокращённой сетки.
     - Производственный календарь: ${JSON.stringify(productionCalendar)}
 
     ${standardsPrompt}
@@ -118,6 +120,7 @@ export const generateScheduleWithOpenRouter = async (data: GenerationData, model
     - Правила расписания: ${JSON.stringify(schedulingRules)}
     - Расписание звонков (обычное): ${JSON.stringify(timeSlots)}
     - Расписание звонков (сокращенное): ${JSON.stringify(timeSlotsShortened)}
+    - Особые сетки звонков: ${JSON.stringify(bellScheduleProfiles || [])}
 
     ТВОЯ ЗАДАЧА:
     Создай полный JSON-массив объектов 'ScheduleEntry' для всех занятий на один семестр. Каждое занятие из учебного плана должно быть представлено в расписании нужное количество раз (hours/2).
