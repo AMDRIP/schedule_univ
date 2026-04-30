@@ -27,7 +27,7 @@ interface TeacherBindingDraft {
 interface PlanEntryModalProps {
     isOpen: boolean;
     onClose: () => void;
-    onSave: (entry: PlanEntry, newSubjectName?: string, binding?: TeacherBindingDraft) => void;
+    onSave: (entry: PlanEntry, newSubjectName?: string, bindings?: TeacherBindingDraft[]) => void;
     entry: PlanEntry | null;
     blocks: PlanBlock[];
 }
@@ -37,8 +37,7 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
     const [subjectSelection, setSubjectSelection] = useState<'existing' | 'new'>('existing');
     const [newSubjectName, setNewSubjectName] = useState('');
     const [bindTeacher, setBindTeacher] = useState(false);
-    const [teacherId, setTeacherId] = useState('');
-    const [bindingClassTypes, setBindingClassTypes] = useState<ClassType[]>([ClassType.Lecture]);
+    const [teacherBindings, setTeacherBindings] = useState<TeacherBindingDraft[]>([]);
     const firstInputRef = useRef<HTMLInputElement>(null);
     const [formData, setFormData] = useState<Omit<PlanEntry, 'subjectId'> & { subjectId?: string }>({
         subjectId: subjects[0]?.id || '',
@@ -59,10 +58,15 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
         if (entry) {
             setFormData({ ...entry, blockId: entry.blockId || '' });
             setSubjectSelection('existing');
-            const existingLink = teacherSubjectLinks.find(link => link.subjectId === entry.subjectId);
-            setBindTeacher(!!existingLink);
-            setTeacherId(existingLink?.teacherId || teachers[0]?.id || '');
-            setBindingClassTypes(existingLink?.classTypes?.length ? existingLink.classTypes : [ClassType.Lecture]);
+            const existingLinks = teacherSubjectLinks.filter(link => link.subjectId === entry.subjectId);
+            setBindTeacher(existingLinks.length > 0);
+            setTeacherBindings(existingLinks.length > 0
+                ? existingLinks.map(link => ({
+                    teacherId: link.teacherId,
+                    classTypes: link.classTypes?.length ? link.classTypes : [ClassType.Lecture],
+                }))
+                : [{ teacherId: teachers[0]?.id || '', classTypes: [ClassType.Lecture] }]
+            );
         } else {
             setFormData({
                 subjectId: subjects[0]?.id || '',
@@ -77,8 +81,7 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
             setSubjectSelection('existing');
             setNewSubjectName('');
             setBindTeacher(false);
-            setTeacherId(teachers[0]?.id || '');
-            setBindingClassTypes([ClassType.Lecture]);
+            setTeacherBindings([{ teacherId: teachers[0]?.id || '', classTypes: [ClassType.Lecture] }]);
         }
     }, [entry, subjects, teachers, teacherSubjectLinks, blocks, isOpen]);
 
@@ -93,12 +96,26 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
         setFormData(prev => ({ ...prev, [name]: numericFields.includes(name) ? Number(value) : value }));
     };
 
-    const toggleBindingClassType = (classType: ClassType) => {
-        setBindingClassTypes(prev =>
-            prev.includes(classType)
-                ? prev.filter(item => item !== classType)
-                : [...prev, classType]
-        );
+    const updateTeacherBinding = (index: number, patch: Partial<TeacherBindingDraft>) => {
+        setTeacherBindings(prev => prev.map((binding, itemIndex) => itemIndex === index ? { ...binding, ...patch } : binding));
+    };
+
+    const addTeacherBinding = () => {
+        setTeacherBindings(prev => [...prev, { teacherId: teachers[0]?.id || '', classTypes: [ClassType.Lecture] }]);
+    };
+
+    const removeTeacherBinding = (index: number) => {
+        setTeacherBindings(prev => prev.filter((_, itemIndex) => itemIndex !== index));
+    };
+
+    const toggleBindingClassType = (index: number, classType: ClassType) => {
+        setTeacherBindings(prev => prev.map((binding, itemIndex) => {
+            if (itemIndex !== index) return binding;
+            const classTypes = binding.classTypes.includes(classType)
+                ? binding.classTypes.filter(item => item !== classType)
+                : [...binding.classTypes, classType];
+            return { ...binding, classTypes };
+        }));
     };
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -113,10 +130,10 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
             attestation: formData.attestation,
             splitForSubgroups: formData.splitForSubgroups,
         };
-        const binding = bindTeacher && teacherId && bindingClassTypes.length > 0
-            ? { teacherId, classTypes: bindingClassTypes }
+        const bindings = bindTeacher
+            ? teacherBindings.filter(binding => binding.teacherId && binding.classTypes.length > 0)
             : undefined;
-        onSave(finalEntry, subjectSelection === 'new' ? newSubjectName.trim() : undefined, binding);
+        onSave(finalEntry, subjectSelection === 'new' ? newSubjectName.trim() : undefined, bindings);
     };
 
     if (!isOpen) return null;
@@ -173,17 +190,28 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
                         </label>
                         {bindTeacher && (
                             <div className="mt-3 space-y-3">
-                                <select value={teacherId} onChange={event => setTeacherId(event.target.value)} className={defaultInputClass}>
-                                    {teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
-                                </select>
-                                <div className="grid grid-cols-2 gap-2">
-                                    {BINDING_CLASS_TYPES.map(classType => (
-                                        <label key={classType} className="flex items-center text-sm text-blue-900">
-                                            <input type="checkbox" checked={bindingClassTypes.includes(classType)} onChange={() => toggleBindingClassType(classType)} className="mr-2 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                                            {classType}
-                                        </label>
-                                    ))}
-                                </div>
+                                {teacherBindings.map((binding, index) => (
+                                    <div key={index} className="rounded-md border border-blue-100 bg-white p-3">
+                                        <div className="grid grid-cols-[1fr_auto] gap-2">
+                                            <select value={binding.teacherId} onChange={event => updateTeacherBinding(index, { teacherId: event.target.value })} className={defaultInputClass}>
+                                                {teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}
+                                            </select>
+                                            <button type="button" onClick={() => removeTeacherBinding(index)} className="px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md" title="Удалить привязку">Удалить</button>
+                                        </div>
+                                        <div className="mt-3 grid grid-cols-2 gap-2">
+                                            {BINDING_CLASS_TYPES.map(classType => (
+                                                <label key={classType} className="flex items-center text-sm text-blue-900">
+                                                    <input type="checkbox" checked={binding.classTypes.includes(classType)} onChange={() => toggleBindingClassType(index, classType)} className="mr-2 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                                                    {classType}
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                                <button type="button" onClick={addTeacherBinding} className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-blue-700 bg-white border border-blue-200 rounded-md hover:bg-blue-50">
+                                    <PlusIcon className="w-4 h-4" />
+                                    Добавить ещё преподавателя
+                                </button>
                             </div>
                         )}
                     </div>
@@ -317,22 +345,24 @@ const EducationalPlanManager: React.FC = () => {
         updatePlan({ ...activePlan, entries: updatedEntries });
     };
 
-    const applyTeacherBinding = (subjectId: string, binding?: TeacherBindingDraft) => {
-        if (!binding || !binding.teacherId || binding.classTypes.length === 0) return;
-        const existingLink = teacherSubjectLinks.find(link => link.teacherId === binding.teacherId && link.subjectId === subjectId);
-        if (existingLink) {
-            const classTypes = Array.from(new Set([...existingLink.classTypes, ...binding.classTypes]));
-            updateItem('teacherSubjectLinks', { ...existingLink, classTypes });
-        } else {
-            addItem('teacherSubjectLinks', {
-                teacherId: binding.teacherId,
-                subjectId,
-                classTypes: binding.classTypes,
-            } as Omit<TeacherSubjectLink, 'id'>);
-        }
+    const applyTeacherBindings = (subjectId: string, bindings: TeacherBindingDraft[] = []) => {
+        bindings.forEach(binding => {
+            if (!binding.teacherId || binding.classTypes.length === 0) return;
+            const existingLink = teacherSubjectLinks.find(link => link.teacherId === binding.teacherId && link.subjectId === subjectId);
+            if (existingLink) {
+                const classTypes = Array.from(new Set([...existingLink.classTypes, ...binding.classTypes]));
+                updateItem('teacherSubjectLinks', { ...existingLink, classTypes });
+            } else {
+                addItem('teacherSubjectLinks', {
+                    teacherId: binding.teacherId,
+                    subjectId,
+                    classTypes: binding.classTypes,
+                } as Omit<TeacherSubjectLink, 'id'>);
+            }
+        });
     };
 
-    const handleSaveEntry = (entry: PlanEntry, newSubjectName?: string, binding?: TeacherBindingDraft) => {
+    const handleSaveEntry = (entry: PlanEntry, newSubjectName?: string, bindings?: TeacherBindingDraft[]) => {
         let subjectId = entry.subjectId;
         if (newSubjectName) {
             const createdSubject = addItem('subjects', { name: newSubjectName } as Omit<Subject, 'id'>) as Subject;
@@ -359,7 +389,7 @@ const EducationalPlanManager: React.FC = () => {
             updatePlan({ ...activePlan, entries: sortPlanEntries(updatedEntries), blocks: activePlan.blocks || [] });
         }
 
-        applyTeacherBinding(subjectId, binding);
+        applyTeacherBindings(subjectId, bindings);
         setIsModalOpen(false);
     };
 

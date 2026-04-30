@@ -17,6 +17,7 @@ import TeacherView from './TeacherView';
 import UniversityWideSchedule from './UniversityWideSchedule';
 import TeacherGroupLessons from './TeacherGroupLessons';
 import BuildingPlanEditor from './BuildingPlanEditor';
+import AcademicProgramsManager from './AcademicProgramsManager';
 
 
 interface DashboardProps {
@@ -99,9 +100,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
       case 'Кабинеты':
         return <DataManager dataType="cabinets" title="Управление кабинетами" />;
       case 'УГСН':
-        return <DataManager dataType="ugs" title="Управление УГСН" />;
       case 'Специальности':
-        return <DataManager dataType="specialties" title="Управление специальностями" />;
+      case 'УГСН и специальности':
+        return <AcademicProgramsManager />;
       case 'Учебные планы':
         return <EducationalPlanManager />;
       case 'Шаблоны расписания':

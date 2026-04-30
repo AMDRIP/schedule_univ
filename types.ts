@@ -199,6 +199,9 @@ export interface Subject extends BaseItem {
 export interface UGS extends BaseItem {
   code: string;
   name: string;
+  oksoPrefix?: string;
+  professionCodes?: string[];
+  description?: string;
 }
 
 export interface Specialty extends BaseItem {
@@ -206,6 +209,13 @@ export interface Specialty extends BaseItem {
   name: string;
   ugsId: string;
   oksoCode?: string;
+  professionCodes?: string[];
+  profiles?: string[];
+  competencies?: string[];
+  qualification?: string;
+  educationLevel?: 'bachelor' | 'specialist' | 'master' | 'postgraduate' | 'secondary' | 'additional';
+  standardCode?: string;
+  description?: string;
 }
 
 export interface PlanEntry {
@@ -358,6 +368,17 @@ export interface LessonPlan {
   topic: string;
   content: string;
   homework: string;
+  status?: 'draft' | 'ready' | 'approved';
+  goal?: string;
+  learningOutcomes?: string;
+  stages?: { title: string; minutes?: number; activity: string }[];
+  controlQuestions?: string[];
+  materials?: string[];
+  literature?: string[];
+  equipment?: string[];
+  assessment?: string;
+  teacherNotes?: string;
+  updatedAt?: string;
 }
 
 export interface ScheduleEntry extends BaseItem {
