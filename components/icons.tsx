@@ -324,3 +324,73 @@ export const XMarkIcon: React.FC<IconProps> = (props) => (
   </svg>
 );
 XMarkIcon.displayName = 'XMarkIcon';
+
+export const BellIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0a3 3 0 01-6 0m6 0H9" />
+  </svg>
+);
+BellIcon.displayName = 'BellIcon';
+
+export const BriefcaseIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M10 6h4a2 2 0 012 2v1h3a2 2 0 012 2v7a2 2 0 01-2 2H5a2 2 0 01-2-2v-7a2 2 0 012-2h3V8a2 2 0 012-2zm0 3h4V8h-4v1zm-7 5h18m-9-1v2" />
+  </svg>
+);
+BriefcaseIcon.displayName = 'BriefcaseIcon';
+
+export const ClipboardListIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5h6m-7 4h8M8 13h5m-5 4h8M9 3h6a2 2 0 012 2v1h1a2 2 0 012 2v11a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h1V5a2 2 0 012-2z" />
+  </svg>
+);
+ClipboardListIcon.displayName = 'ClipboardListIcon';
+
+export const FlaskIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M10 3h4m-3 0v5.5L5.75 18A2 2 0 007.5 21h9a2 2 0 001.75-3L13 8.5V3m-5.5 14h9M9 13h6" />
+  </svg>
+);
+FlaskIcon.displayName = 'FlaskIcon';
+
+export const GridIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4h7v7H4V4zm9 0h7v7h-7V4zM4 13h7v7H4v-7zm9 0h7v7h-7v-7z" />
+  </svg>
+);
+GridIcon.displayName = 'GridIcon';
+
+export const MapIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M9 18l-6 3V6l6-3 6 3 6-3v15l-6 3-6-3zM9 3v15m6-12v15" />
+  </svg>
+);
+MapIcon.displayName = 'MapIcon';
+
+export const NetworkIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6a3 3 0 100-6 3 3 0 000 6zm0 18a3 3 0 100-6 3 3 0 000 6zM4 15a3 3 0 100-6 3 3 0 000 6zm16 0a3 3 0 100-6 3 3 0 000 6zM6.6 10.5l2.8-2.2m5.2 0l2.8 2.2m-10.8 3l2.8 2.2m5.2 0l2.8-2.2" />
+  </svg>
+);
+NetworkIcon.displayName = 'NetworkIcon';
+
+export const SlidersIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h4m4 0h8M4 17h8m4 0h4M10 5v4m4 6v4" />
+  </svg>
+);
+SlidersIcon.displayName = 'SlidersIcon';
+
+export const TableCellsIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4 5a2 2 0 012-2h12a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm0 5h16M4 15h16M9 3v18m6-18v18" />
+  </svg>
+);
+TableCellsIcon.displayName = 'TableCellsIcon';
+
+export const UserTieIcon: React.FC<IconProps> = (props) => (
+  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} {...props}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 12a4 4 0 100-8 4 4 0 000 8zm-7 9a7 7 0 0114 0M10 14l2 2 2-2m-2 2v5" />
+  </svg>
+);
+UserTieIcon.displayName = 'UserTieIcon';

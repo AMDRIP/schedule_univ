@@ -3,7 +3,7 @@
 import React from 'react';
 import { Role } from '../types';
 import { useStore } from '../hooks/useStore';
-import { CalendarIcon, UsersIcon, AcademicCapIcon, CollectionIcon, HomeIcon, SparklesIcon, BookmarkIcon, UserGroupIcon, ClockIcon, CogIcon, LinkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, LibraryIcon, DocumentSearchIcon, DocumentTextIcon, BuildingOfficeIcon } from './icons';
+import { CalendarIcon, AcademicCapIcon, CollectionIcon, SparklesIcon, BookmarkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, DocumentTextIcon, BuildingOfficeIcon, BellIcon, BriefcaseIcon, ClipboardListIcon, FlaskIcon, GridIcon, NetworkIcon, SlidersIcon, TableCellsIcon, UserTieIcon } from './icons';
 
 interface SidebarProps {
   currentRole: Role;
@@ -31,7 +31,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
     const baseItems: NavItem[] = [
       { name: 'Просмотр расписания', icon: <CalendarIcon /> },
       { name: 'Академический календарь', icon: <CalendarIcon /> },
-      { name: 'Сводное расписание', icon: <DocumentSearchIcon /> },
+      { name: 'Сводное расписание', icon: <TableCellsIcon /> },
     ];
 
     if (currentRole === Role.Admin) {
@@ -47,22 +47,22 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
         { type: 'divider' },
         { name: 'Учебные планы', icon: <BookOpenIcon /> },
         { name: 'Дисциплины', icon: <CollectionIcon /> },
-        { name: 'Факультативы', icon: <SparklesIcon /> },
+        { name: 'Факультативы', icon: <FlaskIcon /> },
         { name: 'Шаблоны расписания', icon: <BookmarkIcon /> },
         { type: 'divider' },
         { name: 'Факультеты', icon: <BuildingOfficeIcon /> },
-        { name: 'Кафедры', icon: <BookmarkIcon /> },
+        { name: 'Кафедры', icon: <BriefcaseIcon /> },
         { name: 'УГСН и специальности', icon: <IdentificationIcon /> },
         { type: 'divider' },
-        { name: 'Преподаватели', icon: <UsersIcon /> },
+        { name: 'Преподаватели', icon: <UserTieIcon /> },
         { name: 'Контингент', icon: <AcademicCapIcon /> },
-        { name: 'Аудиторный фонд', icon: <HomeIcon /> },
-        { name: 'Сетки звонков', icon: <ClockIcon /> },
+        { name: 'Аудиторный фонд', icon: <GridIcon /> },
+        { name: 'Сетки звонков', icon: <BellIcon /> },
         { type: 'divider' },
-        { name: 'Привязки преподавателей', icon: <LinkIcon /> },
+        { name: 'Привязки преподавателей', icon: <NetworkIcon /> },
         { name: 'Правила расписания', icon: <ShieldCheckIcon /> },
-        { name: 'Производственный календарь', icon: <CalendarIcon /> },
-        { name: 'Настройки', icon: <CogIcon /> },
+        { name: 'Производственный календарь', icon: <ClipboardListIcon /> },
+        { name: 'Настройки', icon: <SlidersIcon /> },
       ];
     }
 

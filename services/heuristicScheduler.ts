@@ -63,7 +63,7 @@ interface SchedulerIndex {
     subgroupsById: Map<string, Subgroup>;
     subgroupsByParent: Map<string, Subgroup[]>;
     plansBySpecialty: Map<string, EducationalPlan>;
-    groupToStreamId: Map<string, string>;
+    groupToStreamIds: Map<string, string[]>;
     teacherLinksBySubjectType: Map<string, TeacherSubjectLink[]>;
     classroomsByType: Map<string, Classroom[]>;
     suitableClassroomCache: Map<string, Classroom[]>;
@@ -86,8 +86,12 @@ const createSchedulerIndex = (data: GenerationData): SchedulerIndex => {
         subgroupsByParent.set(subgroup.parentGroupId, current);
     });
 
-    const groupToStreamId = new Map<string, string>();
-    data.streams.forEach(stream => stream.groupIds.forEach(groupId => groupToStreamId.set(groupId, stream.id)));
+    const groupToStreamIds = new Map<string, string[]>();
+    data.streams.forEach(stream => stream.groupIds.forEach(groupId => {
+        const current = groupToStreamIds.get(groupId) || [];
+        current.push(stream.id);
+        groupToStreamIds.set(groupId, current);
+    }));
 
     const teacherLinksBySubjectType = new Map<string, TeacherSubjectLink[]>();
     data.teacherSubjectLinks.forEach(link => {
@@ -116,7 +120,7 @@ const createSchedulerIndex = (data: GenerationData): SchedulerIndex => {
         subgroupsById: mapById(data.subgroups),
         subgroupsByParent,
         plansBySpecialty: new Map(data.educationalPlans.map(plan => [plan.specialtyId, plan])),
-        groupToStreamId,
+        groupToStreamIds,
         teacherLinksBySubjectType,
         classroomsByType,
         suitableClassroomCache: new Map(),
@@ -308,6 +312,36 @@ const getTeacherCandidates = (
     return Array.from(new Set(candidates)).filter(teacherId => index.teachersById.has(teacherId));
 };
 
+const streamCanScheduleLecture = (stream: Stream, subjectId: string, semester: number) => {
+    const isLectureStream = !stream.type || stream.type === 'lecture';
+    const matchesSubject = !stream.subjectId || stream.subjectId === subjectId;
+    const matchesSemester = !stream.semester || stream.semester === semester;
+    return isLectureStream && matchesSubject && matchesSemester;
+};
+
+const groupHasLecture = (group: Group, subjectId: string, semester: number, index: SchedulerIndex) => {
+    const plan = index.plansBySpecialty.get(group.specialtyId);
+    return !!plan?.entries.some(entry =>
+        entry.semester === semester &&
+        entry.subjectId === subjectId &&
+        entry.lectureHours > 0
+    );
+};
+
+const selectLectureStream = (groupId: string, subjectId: string, semester: number, index: SchedulerIndex) => {
+    const streamIds = index.groupToStreamIds.get(groupId) || [];
+    return streamIds
+        .map(streamId => index.streamsById.get(streamId))
+        .filter((stream): stream is Stream => !!stream && streamCanScheduleLecture(stream, subjectId, semester))
+        .sort((a, b) => {
+            const subjectPriority = Number(!!b.subjectId) - Number(!!a.subjectId);
+            if (subjectPriority !== 0) return subjectPriority;
+            const semesterPriority = Number(!!b.semester) - Number(!!a.semester);
+            if (semesterPriority !== 0) return semesterPriority;
+            return b.groupIds.length - a.groupIds.length;
+        })[0];
+};
+
 const getSuitableClassrooms = (entry: UnscheduledEntry, subject: Subject, index: SchedulerIndex) => {
     const requiredClassroomTypes = entry.classroomTypeIds?.length ? entry.classroomTypeIds : subject.classroomTypeRequirements?.[entry.classType];
     if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) return null;
@@ -459,24 +493,20 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
             // 1. Handle Lectures
             if (planEntry.lectureHours > 0 && !processedGroupLectures.has(`${planEntry.subjectId}-${group.id}`)) {
                 const numClasses = Math.ceil(planEntry.lectureHours / 2);
-                const streamId = index.groupToStreamId.get(group.id);
+                const lectureStream = selectLectureStream(group.id, planEntry.subjectId, currentSemester, index);
 
                 let lectureGroups: Group[] = [group];
 
-                // If in a stream, find all other groups in that stream with the same lecture
-                if (streamId) {
-                    const stream = index.streamsById.get(streamId)!;
-                    const otherStreamGroups = groups.filter(g => stream.groupIds.includes(g.id) && g.id !== group.id);
-
-                    otherStreamGroups.forEach(otherGroup => {
-                        const otherPlan = index.plansBySpecialty.get(otherGroup.specialtyId);
-                        if (otherPlan && otherPlan.entries.some(e => e.semester === currentSemester && e.subjectId === planEntry.subjectId && e.lectureHours > 0)) {
-                            lectureGroups.push(otherGroup);
-                        }
-                    });
+                // Lecture streams are optional filters: empty subject means any shared lecture,
+                // filled subject means only that discipline.
+                if (lectureStream) {
+                    lectureGroups = groups.filter(candidate =>
+                        lectureStream.groupIds.includes(candidate.id) &&
+                        groupHasLecture(candidate, planEntry.subjectId, currentSemester, index)
+                    );
                 }
 
-                const teacherCandidates = getTeacherCandidates(planEntry.subjectId, ClassType.Lecture, index);
+                const teacherCandidates = getTeacherCandidates(planEntry.subjectId, ClassType.Lecture, index, lectureStream?.teacherId);
                 if (teacherCandidates.length > 0) {
                     const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
                     const groupIds = lectureGroups.map(g => g.id);
@@ -489,14 +519,11 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                             teacherId: teacherCandidates[0],
                             teacherCandidates,
                             studentCount,
+                            classroomTypeIds: lectureStream?.classroomTypeId ? [lectureStream.classroomTypeId] : undefined,
                         };
                         if (lectureGroups.length > 1) {
                             entry.groupIds = groupIds;
-                            // Check if this is a full stream lecture
-                            const stream = streamId ? index.streamsById.get(streamId) : undefined;
-                            if (stream && stream.groupIds.length === groupIds.length) {
-                                entry.streamId = streamId;
-                            }
+                            if (lectureStream) entry.streamId = lectureStream.id;
                         } else {
                             entry.groupId = group.id;
                         }
