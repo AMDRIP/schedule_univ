@@ -4,9 +4,10 @@ import { DataItem, DataType, ClassroomType, Group, ProductionCalendarEventType, 
 import AvailabilityGridEditor from './AvailabilityGridEditor';
 import { PlusIcon, TrashIcon } from './icons';
 import { OKSO_CODES, UGSN_FROM_OKSO } from '../data/codes';
-import { iconNames, renderIcon } from './IconMap';
-import { COLOR_PALETTE, COLOR_MAP } from '../constants';
+import { renderIcon } from './IconMap';
+import { COLOR_MAP } from '../constants';
 import { SHIFT_LABELS, TIME_SLOT_SHIFT_LABELS } from '../utils/shiftUtils';
+import { ColorPalettePicker, IconSelect } from './VisualPickers';
 
 
 const TITLE_MAP: Record<DataType, { single: string }> = {
@@ -356,20 +357,14 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       );
     }
     
-    if (key === 'color' && (dataType === 'teachers' || dataType === 'subjects' || dataType === 'classroomTags')) {
+    if (key === 'color' && (dataType === 'teachers' || dataType === 'subjects' || dataType === 'classroomTags' || dataType === 'classroomTypes')) {
       return (
-          <div>
-              <label className="block text-sm font-medium text-gray-700">Цветовая метка</label>
-              <div className="flex items-center gap-2">
-                  <select name="color" value={formData[key] || ''} onChange={handleChange} className={defaultInputClass}>
-                      <option value="">-- Нет --</option>
-                      {COLOR_PALETTE.map(c => <option key={c.value} value={c.value}>{c.name}</option>)}
-                  </select>
-                  {formData[key] && (
-                      <div className={`w-6 h-6 rounded ${COLOR_MAP[formData[key]]?.bg} ${COLOR_MAP[formData[key]]?.border} flex-shrink-0`}></div>
-                  )}
-              </div>
-          </div>
+        <ColorPalettePicker
+          label="Цветовая метка"
+          value={formData[key] || ''}
+          onChange={value => setFormData((prev: any) => ({ ...prev, [key]: value }))}
+          allowEmpty={dataType !== 'classroomTypes'}
+        />
       );
     }
 
@@ -414,17 +409,14 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
         return <div><label className="block text-sm font-medium text-gray-700">{labelMap[key] || key}</label><textarea name={key} value={formData[key] || ''} onChange={handleChange} className={`${defaultInputClass} h-24`}/></div>
     }
 
-    if (dataType === 'classroomTags') {
-        if (key === 'icon') {
-            return (
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">{labelMap[key] || key}</label>
-                    <select name="icon" value={formData.icon || ''} onChange={handleChange} className={defaultInputClass}>
-                        {iconNames.map(iconName => <option key={iconName} value={iconName}>{iconName}</option>)}
-                    </select>
-                </div>
-            );
-        }
+    if (dataType === 'classroomTags' && key === 'icon') {
+        return (
+            <IconSelect
+              label={labelMap[key] || key}
+              value={formData.icon || 'BookmarkIcon'}
+              onChange={value => setFormData((prev: any) => ({ ...prev, icon: value }))}
+            />
+        );
     }
 
     switch(key) {

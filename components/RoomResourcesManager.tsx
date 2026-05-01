@@ -18,6 +18,7 @@ import {
   TrashIcon,
 } from './icons';
 import BuildingPlanEditor from './BuildingPlanEditor';
+import { ColorPalettePicker, IconSelect } from './VisualPickers';
 
 type TabId = 'overview' | 'classrooms' | 'cabinets' | 'types' | 'tags' | 'plans' | 'quality';
 type RoomStatus = NonNullable<Classroom['status']>;
@@ -60,8 +61,6 @@ const REQUIRED_LEVEL_LABELS: Record<RequiredLevel, string> = {
   preferred: 'Желательно',
   required: 'Обязательно',
 };
-
-const COLOR_OPTIONS = ['blue', 'green', 'indigo', 'purple', 'red', 'amber', 'gray'];
 
 const emptyClassroomDraft = (typeId = ''): Omit<Classroom, 'id'> => ({
   number: '',
@@ -574,7 +573,7 @@ const RoomResourcesManager: React.FC = () => {
                 <Select label="Категория" value={typeDraft.category || 'educational'} onChange={value => setTypeDraft(prev => ({ ...prev, category: value as RoomAssignmentCategory }))} options={Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label }))} />
                 <Input label="Приоритет" type="number" value={typeDraft.priority || 0} onChange={value => setTypeDraft(prev => ({ ...prev, priority: Number(value) || 0 }))} />
               </div>
-              <Select label="Цвет" value={typeDraft.color || 'blue'} onChange={value => setTypeDraft(prev => ({ ...prev, color: value }))} options={COLOR_OPTIONS.map(value => ({ value, label: value }))} />
+              <ColorPalettePicker label="Цвет" value={typeDraft.color || 'blue'} onChange={value => setTypeDraft(prev => ({ ...prev, color: value || 'blue' }))} allowEmpty={false} />
               <CheckboxGroup
                 label="Подходит для типов занятий"
                 options={Object.values(ClassType).map(value => ({ value, label: value }))}
@@ -624,9 +623,9 @@ const RoomResourcesManager: React.FC = () => {
             <h2 className="text-lg font-semibold text-gray-950">{editingTagId ? 'Редактировать тег' : 'Новое оснащение'}</h2>
             <div className="mt-4 space-y-3">
               <Input label="Название" value={tagDraft.name} onChange={value => setTagDraft(prev => ({ ...prev, name: value }))} />
-              <div className="grid grid-cols-2 gap-3">
-                <Input label="Иконка" value={tagDraft.icon} onChange={value => setTagDraft(prev => ({ ...prev, icon: value }))} />
-                <Select label="Цвет" value={tagDraft.color} onChange={value => setTagDraft(prev => ({ ...prev, color: value }))} options={COLOR_OPTIONS.map(value => ({ value, label: value }))} />
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                <IconSelect label="Иконка" value={tagDraft.icon} onChange={value => setTagDraft(prev => ({ ...prev, icon: value }))} />
+                <ColorPalettePicker label="Цвет" value={tagDraft.color} onChange={value => setTagDraft(prev => ({ ...prev, color: value || 'gray' }))} allowEmpty={false} />
               </div>
               <Select label="Категория" value={tagDraft.category || 'equipment'} onChange={value => setTagDraft(prev => ({ ...prev, category: value as TagCategory }))} options={Object.entries(TAG_CATEGORY_LABELS).map(([value, label]) => ({ value, label }))} />
               <Select label="Уровень" value={tagDraft.requiredLevel || 'preferred'} onChange={value => setTagDraft(prev => ({ ...prev, requiredLevel: value as RequiredLevel }))} options={Object.entries(REQUIRED_LEVEL_LABELS).map(([value, label]) => ({ value, label }))} />
