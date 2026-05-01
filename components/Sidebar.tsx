@@ -3,7 +3,7 @@
 import React from 'react';
 import { Role } from '../types';
 import { useStore } from '../hooks/useStore';
-import { CalendarIcon, UsersIcon, AcademicCapIcon, CollectionIcon, HomeIcon, SparklesIcon, BookmarkIcon, UserGroupIcon, ClockIcon, CogIcon, LinkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, LibraryIcon, DocumentSearchIcon, DocumentTextIcon } from './icons';
+import { CalendarIcon, UsersIcon, AcademicCapIcon, CollectionIcon, HomeIcon, SparklesIcon, BookmarkIcon, UserGroupIcon, ClockIcon, CogIcon, LinkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, LibraryIcon, DocumentSearchIcon, DocumentTextIcon, BuildingOfficeIcon } from './icons';
 
 interface SidebarProps {
   currentRole: Role;
