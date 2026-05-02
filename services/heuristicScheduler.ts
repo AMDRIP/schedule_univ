@@ -312,11 +312,10 @@ const getTeacherCandidates = (
     return Array.from(new Set(candidates)).filter(teacherId => index.teachersById.has(teacherId));
 };
 
-const streamCanScheduleLecture = (stream: Stream, subjectId: string, semester: number) => {
+const streamCanScheduleLecture = (stream: Stream, subjectId: string) => {
     const isLectureStream = !stream.type || stream.type === 'lecture';
     const matchesSubject = !stream.subjectId || stream.subjectId === subjectId;
-    const matchesSemester = !stream.semester || stream.semester === semester;
-    return isLectureStream && matchesSubject && matchesSemester;
+    return isLectureStream && matchesSubject;
 };
 
 const groupHasLecture = (group: Group, subjectId: string, semester: number, index: SchedulerIndex) => {
@@ -330,13 +329,19 @@ const groupHasLecture = (group: Group, subjectId: string, semester: number, inde
 
 const selectLectureStream = (groupId: string, subjectId: string, semester: number, index: SchedulerIndex) => {
     const streamIds = index.groupToStreamIds.get(groupId) || [];
-    return streamIds
+    const matchingStreams = streamIds
         .map(streamId => index.streamsById.get(streamId))
-        .filter((stream): stream is Stream => !!stream && streamCanScheduleLecture(stream, subjectId, semester))
+        .filter((stream): stream is Stream => !!stream && streamCanScheduleLecture(stream, subjectId));
+    const semesterMatchedStreams = matchingStreams.filter(stream => !stream.semester || stream.semester === semester);
+    const candidateStreams = semesterMatchedStreams.length > 0 ? semesterMatchedStreams : matchingStreams;
+
+    return candidateStreams
         .sort((a, b) => {
             const subjectPriority = Number(!!b.subjectId) - Number(!!a.subjectId);
             if (subjectPriority !== 0) return subjectPriority;
-            const semesterPriority = Number(!!b.semester) - Number(!!a.semester);
+            const aSemesterExact = a.semester === semester;
+            const bSemesterExact = b.semester === semester;
+            const semesterPriority = Number(bSemesterExact) - Number(aSemesterExact);
             if (semesterPriority !== 0) return semesterPriority;
             return b.groupIds.length - a.groupIds.length;
         })[0];
@@ -476,24 +481,26 @@ const chooseCandidate = <T>(candidates: T[], rng: () => number, stochasticity = 
 
 // Generates the initial pool of classes to be scheduled from educational plans
 const generateClassPool = (data: GenerationData, index = createSchedulerIndex(data)): UnscheduledEntry[] => {
-    const { groups, streams, electives } = data;
+    const { groups, electives } = data;
     const entries: UnscheduledEntry[] = [];
-    const currentSemester = 1;
 
-    const processedGroupLectures = new Set<string>(); // key: `${subjectId}-${groupId}` to track handled groups
+    const processedGroupLectures = new Set<string>();
 
     groups.forEach(group => {
         const plan = index.plansBySpecialty.get(group.specialtyId);
         if (!plan) return;
 
         const groupSubgroups = index.subgroupsByParent.get(group.id) || [];
-        const relevantEntries = plan.entries.filter(e => e.semester === currentSemester);
+        const relevantEntries = plan.entries.filter(e => e.lectureHours > 0 || e.practiceHours > 0 || e.labHours > 0);
 
         relevantEntries.forEach(planEntry => {
+            const planEntrySemester = planEntry.semester || 1;
+            const lectureKey = `${planEntry.subjectId}-${planEntrySemester}-${group.id}`;
+
             // 1. Handle Lectures
-            if (planEntry.lectureHours > 0 && !processedGroupLectures.has(`${planEntry.subjectId}-${group.id}`)) {
+            if (planEntry.lectureHours > 0 && !processedGroupLectures.has(lectureKey)) {
                 const numClasses = Math.ceil(planEntry.lectureHours / 2);
-                const lectureStream = selectLectureStream(group.id, planEntry.subjectId, currentSemester, index);
+                const lectureStream = selectLectureStream(group.id, planEntry.subjectId, planEntrySemester, index);
 
                 let lectureGroups: Group[] = [group];
 
@@ -502,7 +509,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                 if (lectureStream) {
                     lectureGroups = groups.filter(candidate =>
                         lectureStream.groupIds.includes(candidate.id) &&
-                        groupHasLecture(candidate, planEntry.subjectId, currentSemester, index)
+                        groupHasLecture(candidate, planEntry.subjectId, planEntrySemester, index)
                     );
                 }
 
@@ -510,16 +517,21 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                 if (teacherCandidates.length > 0) {
                     const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
                     const groupIds = lectureGroups.map(g => g.id);
+                    const subjectClassroomTypes = index.subjectsById.get(planEntry.subjectId)?.classroomTypeRequirements?.[ClassType.Lecture] || [];
+                    const classroomTypeIds = Array.from(new Set([
+                        ...(lectureStream?.classroomTypeId ? [lectureStream.classroomTypeId] : []),
+                        ...subjectClassroomTypes,
+                    ]));
 
                     for (let i = 0; i < numClasses; i++) {
                         const entry: UnscheduledEntry = {
-                            uid: `unsched-${planEntry.subjectId}-${groupIds.join('_')}-${ClassType.Lecture}-${i}`,
+                            uid: `unsched-${planEntry.subjectId}-sem${planEntrySemester}-${groupIds.join('_')}-${ClassType.Lecture}-${i}`,
                             subjectId: planEntry.subjectId,
                             classType: ClassType.Lecture,
                             teacherId: teacherCandidates[0],
                             teacherCandidates,
                             studentCount,
-                            classroomTypeIds: lectureStream?.classroomTypeId ? [lectureStream.classroomTypeId] : undefined,
+                            classroomTypeIds: classroomTypeIds.length > 0 ? classroomTypeIds : undefined,
                         };
                         if (lectureGroups.length > 1) {
                             entry.groupIds = groupIds;
@@ -532,7 +544,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                 }
 
                 // Mark all participating groups as processed for this subject's lecture
-                lectureGroups.forEach(g => processedGroupLectures.add(`${planEntry.subjectId}-${g.id}`));
+                lectureGroups.forEach(g => processedGroupLectures.add(`${planEntry.subjectId}-${planEntrySemester}-${g.id}`));
             }
 
             // 2. Handle Practices and Labs
@@ -551,7 +563,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                         if (teacherCandidates.length > 0) {
                             for (let i = 0; i < numClasses; i++) {
                                 entries.push({
-                                    uid: `unsched-${planEntry.subjectId}-${subgroup.id}-${type}-${i}`,
+                                    uid: `unsched-${planEntry.subjectId}-sem${planEntrySemester}-${subgroup.id}-${type}-${i}`,
                                     subjectId: planEntry.subjectId, groupId: group.id, subgroupId: subgroup.id,
                                     classType: type, teacherId: teacherCandidates[0], teacherCandidates, studentCount: subgroup.studentCount,
                                 });
@@ -563,7 +575,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                     if (teacherCandidates.length > 0) {
                         for (let i = 0; i < numClasses; i++) {
                             entries.push({
-                                uid: `unsched-${planEntry.subjectId}-${group.id}-${type}-${i}`,
+                                uid: `unsched-${planEntry.subjectId}-sem${planEntrySemester}-${group.id}-${type}-${i}`,
                                 subjectId: planEntry.subjectId, groupId: group.id,
                                 classType: type, teacherId: teacherCandidates[0], teacherCandidates, studentCount: group.studentCount,
                             });

@@ -72,7 +72,7 @@ const emptyStreamDraft = (): Omit<Stream, 'id'> => ({
   teacherId: '',
   classroomTypeId: '',
   maxStudentCount: 0,
-  semester: 1,
+  semester: undefined,
   notes: '',
 });
 

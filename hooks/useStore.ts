@@ -118,6 +118,43 @@ const initialScheduleTemplates: ScheduleTemplate[] = [];
 const initialEducationalPlanTemplates: EducationalPlanTemplate[] = [];
 const initialBuildingPlans: BuildingPlan[] = [];
 
+const streamCanScheduleLecture = (stream: Stream, subjectId: string) => {
+    const isLectureStream = !stream.type || stream.type === 'lecture';
+    const matchesSubject = !stream.subjectId || stream.subjectId === subjectId;
+    return isLectureStream && matchesSubject;
+};
+
+const selectLectureStreamForGroup = (groupId: string, subjectId: string, semester: number, streams: Stream[]) => {
+    const matchingStreams = streams.filter(stream =>
+        stream.groupIds.includes(groupId) &&
+        streamCanScheduleLecture(stream, subjectId)
+    );
+    const semesterMatchedStreams = matchingStreams.filter(stream => !stream.semester || stream.semester === semester);
+    const candidateStreams = semesterMatchedStreams.length > 0 ? semesterMatchedStreams : matchingStreams;
+
+    return candidateStreams.sort((a, b) => {
+        const subjectPriority = Number(!!b.subjectId) - Number(!!a.subjectId);
+        if (subjectPriority !== 0) return subjectPriority;
+        const semesterPriority = Number(b.semester === semester) - Number(a.semester === semester);
+        if (semesterPriority !== 0) return semesterPriority;
+        return b.groupIds.length - a.groupIds.length;
+    })[0];
+};
+
+const groupHasLectureInSemester = (
+    group: Group,
+    subjectId: string,
+    semester: number,
+    educationalPlans: EducationalPlan[]
+) => {
+    const plan = educationalPlans.find(p => p.specialtyId === group.specialtyId);
+    return !!plan?.entries.some(entry =>
+        entry.semester === semester &&
+        entry.subjectId === subjectId &&
+        entry.lectureHours > 0
+    );
+};
+
 
 const generateUnscheduledEntries = (
     groups: Group[],
@@ -128,63 +165,53 @@ const generateUnscheduledEntries = (
     electives: Elective[]
 ): UnscheduledEntry[] => {
     const entries: UnscheduledEntry[] = [];
-    const currentSemester = 1;
 
-    const groupToStreamMap = new Map<string, string>();
-    streams.forEach(stream => stream.groupIds.forEach(groupId => groupToStreamMap.set(groupId, stream.id)));
-
-    const processedGroupLectures = new Set<string>(); // key: `${subjectId}-${groupId}` to track handled groups
+    const processedGroupLectures = new Set<string>();
 
     groups.forEach(group => {
         const plan = educationalPlans.find(p => p.specialtyId === group.specialtyId);
         if (!plan) return;
 
         const groupSubgroups = subgroups.filter(sg => sg.parentGroupId === group.id);
-        const relevantEntries = plan.entries.filter(e => e.semester === currentSemester);
+        const relevantEntries = plan.entries.filter(e => e.lectureHours > 0 || e.practiceHours > 0 || e.labHours > 0);
 
         relevantEntries.forEach(planEntry => {
+            const planEntrySemester = planEntry.semester || 1;
+            const lectureKey = `${planEntry.subjectId}-${planEntrySemester}-${group.id}`;
             let teacherId: string | undefined;
 
             // 1. Handle Lectures
-            if (planEntry.lectureHours > 0 && !processedGroupLectures.has(`${planEntry.subjectId}-${group.id}`)) {
+            if (planEntry.lectureHours > 0 && !processedGroupLectures.has(lectureKey)) {
                 const numClasses = Math.ceil(planEntry.lectureHours / 2);
-                const streamId = groupToStreamMap.get(group.id);
+                const stream = selectLectureStreamForGroup(group.id, planEntry.subjectId, planEntrySemester, streams);
 
                 let lectureGroups: Group[] = [group];
                 
                 // If in a stream, find all other groups in that stream with the same lecture
-                if (streamId) {
-                    const stream = streams.find(s => s.id === streamId)!;
-                    const otherStreamGroups = groups.filter(g => stream.groupIds.includes(g.id) && g.id !== group.id);
-
-                    otherStreamGroups.forEach(otherGroup => {
-                        const otherPlan = educationalPlans.find(p => p.specialtyId === otherGroup.specialtyId);
-                        if (otherPlan && otherPlan.entries.some(e => e.semester === currentSemester && e.subjectId === planEntry.subjectId && e.lectureHours > 0)) {
-                            lectureGroups.push(otherGroup);
-                        }
-                    });
+                if (stream) {
+                    lectureGroups = groups.filter(candidate =>
+                        stream.groupIds.includes(candidate.id) &&
+                        groupHasLectureInSemester(candidate, planEntry.subjectId, planEntrySemester, educationalPlans)
+                    );
                 }
                 
-                teacherId = links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
+                teacherId = stream?.teacherId || links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
                 if (teacherId) {
                     const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
                     const groupIds = lectureGroups.map(g => g.id);
                     
                     for (let i = 0; i < numClasses; i++) {
                         const entry: UnscheduledEntry = {
-                            uid: `unsched-${planEntry.subjectId}-${groupIds.join('_')}-${ClassType.Lecture}-${i}`,
+                            uid: `unsched-${planEntry.subjectId}-sem${planEntrySemester}-${groupIds.join('_')}-${ClassType.Lecture}-${i}`,
                             subjectId: planEntry.subjectId,
                             classType: ClassType.Lecture,
                             teacherId,
                             studentCount,
+                            classroomTypeIds: stream?.classroomTypeId ? [stream.classroomTypeId] : undefined,
                         };
                         if (lectureGroups.length > 1) {
                             entry.groupIds = groupIds;
-                            // Check if this is a full stream lecture
-                            const stream = streams.find(s => s.id === streamId);
-                            if(stream && stream.groupIds.length === groupIds.length){
-                                entry.streamId = streamId;
-                            }
+                            if (stream) entry.streamId = stream.id;
                         } else {
                             entry.groupId = group.id;
                         }
@@ -193,7 +220,7 @@ const generateUnscheduledEntries = (
                 }
                 
                 // Mark all participating groups as processed for this subject's lecture
-                lectureGroups.forEach(g => processedGroupLectures.add(`${planEntry.subjectId}-${g.id}`));
+                lectureGroups.forEach(g => processedGroupLectures.add(`${planEntry.subjectId}-${planEntrySemester}-${g.id}`));
             }
             
             // 2. Handle Practices and Labs
@@ -212,7 +239,7 @@ const generateUnscheduledEntries = (
                         if (teacherId) {
                             for (let i = 0; i < numClasses; i++) {
                                 entries.push({
-                                    uid: `unsched-${planEntry.subjectId}-${subgroup.id}-${type}-${i}`,
+                                    uid: `unsched-${planEntry.subjectId}-sem${planEntrySemester}-${subgroup.id}-${type}-${i}`,
                                     subjectId: planEntry.subjectId, groupId: group.id, subgroupId: subgroup.id,
                                     classType: type, teacherId, studentCount: subgroup.studentCount,
                                 });
@@ -224,7 +251,7 @@ const generateUnscheduledEntries = (
                     if (teacherId) {
                         for (let i = 0; i < numClasses; i++) {
                             entries.push({
-                                uid: `unsched-${planEntry.subjectId}-${group.id}-${type}-${i}`,
+                                uid: `unsched-${planEntry.subjectId}-sem${planEntrySemester}-${group.id}-${type}-${i}`,
                                 subjectId: planEntry.subjectId, groupId: group.id,
                                 classType: type, teacherId, studentCount: group.studentCount,
                             });
