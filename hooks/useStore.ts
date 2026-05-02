@@ -155,6 +155,29 @@ const groupHasLectureInSemester = (
     );
 };
 
+const normalizeLoadedScheduleDates = (schedule: ScheduleEntry[] = []) =>
+    schedule.map(entry => {
+        if (!entry.date || !entry.day) return entry;
+
+        const expectedDayIndex = DAYS_OF_WEEK.indexOf(entry.day);
+        if (expectedDayIndex < 0) return entry;
+
+        const currentDate = new Date(`${entry.date}T00:00:00`);
+        if (Number.isNaN(currentDate.getTime())) return entry;
+
+        const currentDayIndex = currentDate.getDay() === 0 ? 6 : currentDate.getDay() - 1;
+        if (currentDayIndex === expectedDayIndex) return entry;
+
+        const correctedDate = new Date(currentDate);
+        const offset = (expectedDayIndex - currentDayIndex + 7) % 7;
+        correctedDate.setDate(currentDate.getDate() + offset);
+
+        return {
+            ...entry,
+            date: toYYYYMMDD(correctedDate),
+        };
+    });
+
 
 const generateUnscheduledEntries = (
     groups: Group[],
@@ -577,7 +600,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setTimeSlots(data.timeSlots || []);
     setTimeSlotsShortened(data.timeSlotsShortened || []);
     setBellScheduleProfiles(data.bellScheduleProfiles || []);
-    setSchedule(data.schedule || []);
+    setSchedule(normalizeLoadedScheduleDates(data.schedule || []));
     setTeacherSubjectLinks(data.teacherSubjectLinks || []);
     setSchedulingRules(data.schedulingRules || []);
     setProductionCalendar(data.productionCalendar || []);
