@@ -1012,10 +1012,31 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
 
       const targetTimeSlot = [...timeSlots, ...timeSlotsShortened].find(slot => slot.id === timeSlotId);
-      const involvedGroups = groups.filter(group => (item.groupIds || (item.groupId ? [item.groupId] : [])).includes(group.id));
+      const streamGroupIds = item.streamId ? streams.find(stream => stream.id === item.streamId)?.groupIds || [] : [];
+      const itemGroupIds = streamGroupIds.length > 0 ? streamGroupIds : (item.groupIds || (item.groupId ? [item.groupId] : []));
+      const involvedGroups = groups.filter(group => itemGroupIds.includes(group.id));
+      const placementStudentCount = involvedGroups.length > 1
+        ? involvedGroups.reduce((sum, group) => sum + group.studentCount, 0)
+        : item.studentCount;
       if (!areGroupsCompatibleWithTimeSlot(targetTimeSlot, involvedGroups)) {
         const mismatch = getGroupsShiftMismatchText(targetTimeSlot, involvedGroups);
         alert(`Нельзя разместить занятие: слот "${targetTimeSlot?.time || timeSlotId}" (${getTimeSlotShiftLabel(targetTimeSlot?.shift)}) не совпадает со сменой группы ${mismatch}.`);
+        return;
+      }
+
+      if (schedule.some(e => e.teacherId === item.teacherId && e.date === date && e.timeSlotId === timeSlotId)) {
+        const teacher = teachers.find(t => t.id === item.teacherId);
+        alert(`Преподаватель ${teacher?.name || ''} уже занят в это время.`);
+        return;
+      }
+
+      const busyGroup = involvedGroups.find(group => schedule.some(e =>
+        e.date === date &&
+        e.timeSlotId === timeSlotId &&
+        (e.groupId === group.id || (e.groupIds || []).includes(group.id))
+      ));
+      if (busyGroup) {
+        alert(`Группа ${busyGroup.number} уже занята в это время. Потоковую лекцию можно поставить только в слот, свободный для всех групп потока.`);
         return;
       }
 
@@ -1053,7 +1074,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (occupants.length >= (settings.allowOverbooking ? 2 : 1)) {
             return false;
         }
-        if (c.capacity < item.studentCount) return false;
+        if (c.capacity < placementStudentCount) return false;
         
         // Check for required tags
         const requiredTags = item.requiredClassroomTagIds?.length ? item.requiredClassroomTagIds : subject.requiredClassroomTagIds || [];
@@ -1071,14 +1092,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           alert(`Нет подходящей свободной аудитории для занятия "${subject.name}" с вместимостью ${item.studentCount}. Проверьте требования к типу и тегам аудитории.`);
           return;
       }
+      const isStreamPlacement = itemGroupIds.length > 1 || !!item.streamId;
       const newEntry: ScheduleEntry = {
           id: `sched-${Date.now()}-${Math.random()}`,
           day, 
           timeSlotId, 
           weekType: 'every', // A dated entry is absolute
           date: date, // Set the specific date for the entry
-          groupId: item.groupId,
-          groupIds: item.groupIds,
+          groupId: isStreamPlacement ? undefined : item.groupId,
+          groupIds: isStreamPlacement ? itemGroupIds : item.groupIds,
           subgroupId: item.subgroupId,
           streamId: item.streamId,
           subjectId: item.subjectId,
@@ -1089,6 +1111,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           unscheduledUid: item.uid,
       };
       setSchedule(prev => [...prev, newEntry]);
+  };
+
+  const getPlacementGroupIds = (item: UnscheduledEntry | ScheduleEntry, targetGroupId: string) => {
+    const explicitGroupIds = item.groupIds?.length ? item.groupIds : (item.groupId ? [item.groupId] : []);
+    if (item.streamId) {
+      const streamGroupIds = streams.find(stream => stream.id === item.streamId)?.groupIds || [];
+      return streamGroupIds.length > 0 ? streamGroupIds : (explicitGroupIds.length > 0 ? explicitGroupIds : [targetGroupId]);
+    }
+    if (explicitGroupIds.length > 1) return explicitGroupIds;
+    return [targetGroupId];
   };
 
   const placeItemInGrid = (item: UnscheduledEntry | ScheduleEntry, targetGroupId: string, date: string, timeSlotId: string) => {
@@ -1103,8 +1135,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
 
     const targetTimeSlot = [...timeSlots, ...timeSlotsShortened].find(slot => slot.id === timeSlotId);
-    const targetGroup = groups.find(g => g.id === targetGroupId);
-    const targetGroups = targetGroup ? [targetGroup] : [];
+    const placementGroupIds = getPlacementGroupIds(item, targetGroupId);
+    const targetGroups = groups.filter(g => placementGroupIds.includes(g.id));
     if (!areGroupsCompatibleWithTimeSlot(targetTimeSlot, targetGroups)) {
         const mismatch = getGroupsShiftMismatchText(targetTimeSlot, targetGroups);
         throw new Error(`Нельзя разместить занятие: слот "${targetTimeSlot?.time || timeSlotId}" (${getTimeSlotShiftLabel(targetTimeSlot?.shift)}) не совпадает со сменой группы ${mismatch}.`);
@@ -1115,9 +1147,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         if (teacher?.availabilityGrid?.[day]?.[timeSlotId] === AvailabilityType.Forbidden) {
             throw new Error(`Это время запрещено для преподавателя ${teacher.name}.`);
         }
-        const group = groups.find(g => g.id === targetGroupId);
-        if (group?.availabilityGrid?.[day]?.[timeSlotId] === AvailabilityType.Forbidden) {
-            throw new Error(`Это время запрещено для группы ${group.number}.`);
+        const forbiddenGroup = targetGroups.find(g => g.availabilityGrid?.[day]?.[timeSlotId] === AvailabilityType.Forbidden);
+        if (forbiddenGroup) {
+            throw new Error(`Это время запрещено для группы ${forbiddenGroup.number}.`);
         }
     }
 
@@ -1129,9 +1161,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         throw new Error(`Преподаватель ${teacher?.name} уже занят в это время.`);
     }
 
-    if (scheduleForConflictCheck.some(e => (e.groupId === targetGroupId || (e.groupIds || []).includes(targetGroupId)) && e.date === date && e.timeSlotId === timeSlotId)) {
-        const group = groups.find(g => g.id === targetGroupId);
-        throw new Error(`Группа ${group?.number} уже занята в это время.`);
+    const busyGroup = targetGroups.find(group => scheduleForConflictCheck.some(e =>
+        (e.groupId === group.id || (e.groupIds || []).includes(group.id)) &&
+        e.date === date &&
+        e.timeSlotId === timeSlotId
+    ));
+    if (busyGroup) {
+        throw new Error(`Группа ${busyGroup.number} уже занята в это время. Потоковую лекцию можно поставить только в слот, свободный для всех групп потока.`);
     }
 
     // 3. Determine Student Count & Find Classroom
@@ -1143,12 +1179,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     let originalGroupId: string | undefined = undefined;
 
     if ('uid' in item) { // UnscheduledEntry
-        studentCount = item.studentCount;
+        studentCount = targetGroups.length > 1
+            ? targetGroups.reduce((sum, group) => sum + group.studentCount, 0)
+            : item.studentCount;
     } else { // ScheduleEntry
         isStreamOrMultiGroup = !!(item.streamId || (item.groupIds && item.groupIds.length > 1));
-        const targetGroup = groups.find(g => g.id === targetGroupId);
-        if (!targetGroup) throw new Error('Целевая группа не найдена.');
-        studentCount = targetGroup.studentCount;
+        if (targetGroups.length === 0) throw new Error('Целевая группа не найдена.');
+        studentCount = targetGroups.reduce((sum, group) => sum + group.studentCount, 0);
         originalGroupId = item.groupId;
     }
     
@@ -1190,27 +1227,23 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     // 4. Create/Update Entry
     if ('uid' in item) { // UnscheduledEntry
+        const isStreamPlacement = placementGroupIds.length > 1 || !!item.streamId;
         const newEntry: Omit<ScheduleEntry, 'id'> = {
             day, timeSlotId, date, classroomId: bestFit.id, classType: item.classType, deliveryMode: item.deliveryMode || DeliveryMode.Offline,
             subjectId: item.subjectId, teacherId: item.teacherId, unscheduledUid: item.uid, weekType: 'every',
-            groupId: targetGroupId,
-            groupIds: [targetGroupId],
-            streamId: undefined,
+            groupId: isStreamPlacement ? undefined : targetGroupId,
+            groupIds: isStreamPlacement ? placementGroupIds : undefined,
+            streamId: isStreamPlacement ? item.streamId : undefined,
             subgroupId: item.groupId === targetGroupId ? item.subgroupId : undefined,
         };
         addScheduleEntry(newEntry);
     } else { // ScheduleEntry
-        if (isStreamOrMultiGroup) {
-            if (!window.confirm("Это занятие для потока/нескольких групп. Перемещение преобразует его в занятие для одной группы. Продолжить?")) {
-                return; // Abort silently
-            }
-        }
         const updatedEntry: ScheduleEntry = {
             ...item,
             day, timeSlotId, date, classroomId: bestFit.id,
-            groupId: targetGroupId,
-            groupIds: [targetGroupId],
-            streamId: undefined,
+            groupId: isStreamOrMultiGroup ? undefined : targetGroupId,
+            groupIds: isStreamOrMultiGroup ? placementGroupIds : undefined,
+            streamId: isStreamOrMultiGroup ? item.streamId : undefined,
             subgroupId: originalGroupId === targetGroupId ? item.subgroupId : undefined,
         };
         updateScheduleEntry(updatedEntry);

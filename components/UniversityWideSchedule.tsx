@@ -54,6 +54,16 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
   const weekType = useMemo(() => getWeekType(new Date(currentDate), new Date(settings.semesterStart)), [currentDate, settings.semesterStart]);
   const effectiveWeekType = settings.useEvenOddWeekSeparation ? weekType : 'every';
 
+  const getPlacementGroupIds = (item: UnscheduledEntry | ScheduleEntry, targetGroupId: string) => {
+    const explicitGroupIds = item.groupIds?.length ? item.groupIds : (item.groupId ? [item.groupId] : []);
+    if (item.streamId) {
+      const streamGroupIds = streams.find(stream => stream.id === item.streamId)?.groupIds || [];
+      return streamGroupIds.length > 0 ? streamGroupIds : (explicitGroupIds.length > 0 ? explicitGroupIds : [targetGroupId]);
+    }
+    if (explicitGroupIds.length > 1) return explicitGroupIds;
+    return [targetGroupId];
+  };
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (datePickerRef.current && !datePickerRef.current.contains(event.target as Node)) {
@@ -103,39 +113,6 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
     });
     return map;
   }, [schedule, weekStart, weekEnd, effectiveWeekType, weekDays]);
-
-    // Compute set of busy teachers for the current view to perform conflict checking
-    const busyTeachers = useMemo(() => {
-        const busy = new Set<string>();
-        // We check the entire schedule because a teacher might be busy on this day
-        // even if the entry itself is not "in view" (e.g., different group or different week type that overlaps).
-        schedule.forEach(entry => {
-            // Determine effective date(s) for this entry
-            let datesToCheck: string[] = [];
-            if (entry.date) {
-                datesToCheck.push(entry.date);
-            } else {
-                // For template entries, we check if they apply to any date in the current week view
-                // to provide instant feedback for the currently visible days.
-                const dayIndex = DAYS_OF_WEEK.indexOf(entry.day);
-                if (dayIndex !== -1) {
-                    const dateInCurrentWeek = weekDays[dayIndex];
-                    const dateStr = toYYYYMMDD(dateInCurrentWeek);
-                    
-                    // Check if the template applies to this week type
-                    const entryApplies = entry.weekType === 'every' || entry.weekType === effectiveWeekType;
-                    if (entryApplies) {
-                        datesToCheck.push(dateStr);
-                    }
-                }
-            }
-
-            datesToCheck.forEach(d => {
-                busy.add(`${entry.teacherId}-${d}-${entry.timeSlotId}`);
-            });
-        });
-        return busy;
-    }, [schedule, weekDays, effectiveWeekType]);
 
 
   const handleDateSelect = (date: Date) => {
@@ -225,9 +202,6 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
                                 canDrop: (item: any, monitor) => {
                                     // --- STRICT VALIDATION LOGIC ---
 
-                                    // 1. Check if cell is already occupied
-                                    if (scheduleMap.has(key)) return false;
-
                                     // Allow dropping on same date/time/group (no-op move), but restrict others.
                                     if (monitor.getItemType() === ItemTypes.SCHEDULE_ENTRY) {
                                         const originalEntry = item as ScheduleEntry;
@@ -235,6 +209,16 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
                                             return false; // No need to drop on self
                                         }
                                     }
+
+                                    const placementGroupIds = getPlacementGroupIds(item, group.id);
+                                    const movingEntryId = monitor.getItemType() === ItemTypes.SCHEDULE_ENTRY ? (item as ScheduleEntry).id : null;
+
+                                    // 1. Check if any group of this stream/multi-group item is already occupied
+                                    const occupiedGroupId = placementGroupIds.find(groupId => {
+                                        const occupyingEntry = scheduleMap.get(`${groupId}-${dateStr}-${slot.id}`);
+                                        return occupyingEntry && occupyingEntry.id !== movingEntryId;
+                                    });
+                                    if (occupiedGroupId) return false;
 
                                     // 2. Check Production Calendar
                                     if (settings.respectProductionCalendar) {
@@ -247,26 +231,24 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
                                     if (!settings.allowManualOverrideOfForbidden) {
                                         const teacher = teachers.find(t => t.id === item.teacherId);
                                         if (teacher?.availabilityGrid?.[dayName]?.[slot.id] === AvailabilityType.Forbidden) return false;
-                                        if (group.availabilityGrid?.[dayName]?.[slot.id] === AvailabilityType.Forbidden) return false;
+                                        const forbiddenGroup = groups.find(candidate =>
+                                            placementGroupIds.includes(candidate.id) &&
+                                            candidate.availabilityGrid?.[dayName]?.[slot.id] === AvailabilityType.Forbidden
+                                        );
+                                        if (forbiddenGroup) return false;
                                     }
                                     
                                     // 4. Check Teacher Conflict
-                                    // Check if teacher is busy in ANY other group at this time.
-                                    // If the 'item' is an existing entry being moved, 'busyTeachers' will contain its current position.
-                                    // We must ensure we don't block the move because of the entry's *current* position, 
-                                    // but we DO block if the teacher is busy in *another* group/slot at the target time.
-                                    
-                                    const teacherTargetKey = `${item.teacherId}-${dateStr}-${slot.id}`;
-                                    
-                                    // Special case for moving an existing entry:
-                                    // The busy set includes where the teacher IS currently. 
-                                    // If we move Entry A from (T1, Slot 1) to (T1, Slot 2).
-                                    // busyTeachers has { (T1, Slot 1) }.
-                                    // We check if busyTeachers has (T1, Slot 2).
-                                    // If it does, it means there is ANOTHER entry B at Slot 2. Conflict!
-                                    // If it doesn't, Slot 2 is free for T1.
-                                    
-                                    if (busyTeachers.has(teacherTargetKey)) {
+                                    const teacherBusy = schedule.some(entry => {
+                                        if (entry.id === movingEntryId || entry.teacherId !== item.teacherId || entry.timeSlotId !== slot.id) {
+                                            return false;
+                                        }
+                                        if (entry.date) {
+                                            return entry.date === dateStr;
+                                        }
+                                        return entry.day === dayName && (entry.weekType === 'every' || entry.weekType === effectiveWeekType);
+                                    });
+                                    if (teacherBusy) {
                                         return false;
                                     }
 
@@ -283,7 +265,7 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
                                     isOver: !!monitor.isOver(),
                                     canDrop: !!monitor.canDrop(),
                                 }),
-                            }), [group, day, slot, scheduleMap, busyTeachers, teachers, settings, productionCalendar]);
+                            }), [group, day, slot, scheduleMap, schedule, teachers, groups, streams, settings, productionCalendar, effectiveWeekType, placeItemInGrid]);
 
                             let cellBg = 'bg-white';
                             if (isOver) {
