@@ -15,6 +15,7 @@ import { generateScheduleWithOpenRouter } from '../services/openRouterService';
 import { runIterativeScheduler } from '../services/iterativeScheduler';
 import { generateSessionSchedule } from '../services/sessionScheduler';
 import { areGroupsCompatibleWithTimeSlot, getGroupsShiftMismatchText, getTimeSlotShiftLabel } from '../utils/shiftUtils';
+import { isSemesterInCourse } from '../utils/semesterUtils';
 
 // MOCK DATA (Initial State)
 const initialFaculties: Faculty[] = [{
@@ -279,7 +280,10 @@ const generateUnscheduledEntries = (
         if (!plan) return;
 
         const groupSubgroups = subgroups.filter(sg => sg.parentGroupId === group.id);
-        const relevantEntries = plan.entries.filter(e => e.lectureHours > 0 || e.practiceHours > 0 || e.labHours > 0);
+        const relevantEntries = plan.entries.filter(e =>
+            isSemesterInCourse(e.semester, group.course) &&
+            (e.lectureHours > 0 || e.practiceHours > 0 || e.labHours > 0)
+        );
 
         relevantEntries.forEach(planEntry => {
             const planEntrySemester = planEntry.semester || 1;

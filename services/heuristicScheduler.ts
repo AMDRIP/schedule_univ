@@ -7,6 +7,7 @@ import {
 import { DAYS_OF_WEEK } from '../constants';
 import { getWeekNumber, toYYYYMMDD } from '../utils/dateUtils';
 import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
+import { isSemesterInCourse } from '../utils/semesterUtils';
 
 interface GenerationData {
     teachers: Teacher[];
@@ -575,7 +576,10 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
         if (!plan) return;
 
         const groupSubgroups = index.subgroupsByParent.get(group.id) || [];
-        const relevantEntries = plan.entries.filter(e => e.lectureHours > 0 || e.practiceHours > 0 || e.labHours > 0);
+        const relevantEntries = plan.entries.filter(e =>
+            isSemesterInCourse(e.semester, group.course) &&
+            (e.lectureHours > 0 || e.practiceHours > 0 || e.labHours > 0)
+        );
 
         relevantEntries.forEach(planEntry => {
             const planEntrySemester = planEntry.semester || 1;

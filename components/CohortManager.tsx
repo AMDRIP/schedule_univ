@@ -21,6 +21,7 @@ import {
   UserGroupIcon,
 } from './icons';
 import AvailabilityGridEditor from './AvailabilityGridEditor';
+import { formatSemesterCourse } from '../utils/semesterUtils';
 
 type TabId = 'overview' | 'groups' | 'subgroups' | 'streams' | 'quality';
 
@@ -595,6 +596,11 @@ const CohortManager: React.FC = () => {
                 <Select label="Тип" value={streamDraft.type || 'lecture'} onChange={value => setStreamDraft(prev => ({ ...prev, type: value as StreamType }))} options={Object.entries(STREAM_TYPE_LABELS).map(([value, label]) => ({ value, label }))} />
                 <Input label="Семестр" type="number" value={streamDraft.semester || ''} onChange={value => setStreamDraft(prev => ({ ...prev, semester: Number(value) || undefined }))} />
               </div>
+              {streamDraft.semester && (
+                <div className="rounded-md bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                  {formatSemesterCourse(streamDraft.semester)}. Если семестр не задан, поток подходит для общих дисциплин разных курсов.
+                </div>
+              )}
               <Select label="Дисциплина (необязательно, ограничивает поток)" value={streamDraft.subjectId || ''} onChange={value => setStreamDraft(prev => ({ ...prev, subjectId: value }))} options={[{ value: '', label: 'Любые общие дисциплины' }, ...subjects.map(item => ({ value: item.id, label: item.name }))]} />
               <Select label="Преподаватель" value={streamDraft.teacherId || ''} onChange={value => setStreamDraft(prev => ({ ...prev, teacherId: value }))} options={[{ value: '', label: 'Не задан' }, ...teachers.map(item => ({ value: item.id, label: item.name }))]} />
               <Select label="Тип аудитории" value={streamDraft.classroomTypeId || ''} onChange={value => setStreamDraft(prev => ({ ...prev, classroomTypeId: value }))} options={[{ value: '', label: 'Любой' }, ...classroomTypes.map(item => ({ value: item.id, label: item.name }))]} />

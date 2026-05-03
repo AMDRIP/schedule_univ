@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { ClassType, Classroom, Department, EducationalPlan, FormOfStudy, Group, ScheduleEntry, Specialty, Subject, Teacher } from '../types';
+import { isSemesterInCourse } from '../utils/semesterUtils';
 
 type ResourceStat = {
   id: string;
@@ -551,8 +552,7 @@ const AnalyticsView: React.FC = () => {
 
     scenarioGroups.forEach(group => {
       const plan = findPlanForScenarioGroup(group);
-      const courseSemesters = new Set([group.course * 2 - 1, group.course * 2]);
-      plan?.entries.filter(entry => courseSemesters.has(entry.semester || 1)).forEach(entry => {
+      plan?.entries.filter(entry => isSemesterInCourse(entry.semester, group.course)).forEach(entry => {
         const subjectName = subjectById.get(entry.subjectId)?.name || 'Дисциплина';
         [
           [ClassType.Lecture, entry.lectureHours],

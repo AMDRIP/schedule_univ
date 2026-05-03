@@ -13,6 +13,7 @@ import {
     FormOfStudy,
 } from '../types';
 import { PlusIcon, EditIcon, TrashIcon, BookOpenIcon, CopyIcon, DocumentTextIcon } from './icons';
+import { formatSemesterCourse } from '../utils/semesterUtils';
 
 const UNASSIGNED_BLOCK_ID = '__unassigned__';
 const BLOCK_COLORS = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#be123c', '#4b5563'];
@@ -643,7 +644,7 @@ const EducationalPlanManager: React.FC = () => {
                         return (
                             <div key={semester} className="border border-gray-200 rounded-lg overflow-hidden">
                                 <div className="flex items-center justify-between bg-gray-100 px-4 py-3">
-                                    <h3 className="text-lg font-semibold text-gray-800">{semester} семестр</h3>
+                                    <h3 className="text-lg font-semibold text-gray-800">{formatSemesterCourse(Number(semester))}</h3>
                                     <div className="text-sm text-gray-600">Всего: <span className="font-semibold">{semesterTotals.total} ч</span> / {semesterTotals.zet} ЗЕТ</div>
                                 </div>
                                 <div className="divide-y divide-gray-200">
