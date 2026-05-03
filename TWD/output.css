@@ -1014,6 +1014,10 @@ video {
   min-height: 6rem;
 }
 
+.min-h-28 {
+  min-height: 7rem;
+}
+
 .min-h-\[260px\] {
   min-height: 260px;
 }
@@ -1353,6 +1357,10 @@ video {
   resize: none;
 }
 
+.list-decimal {
+  list-style-type: decimal;
+}
+
 .appearance-none {
   -webkit-appearance: none;
      -moz-appearance: none;
@@ -1485,6 +1493,10 @@ video {
 
 .gap-4 {
   gap: 1rem;
+}
+
+.gap-5 {
+  gap: 1.25rem;
 }
 
 .gap-6 {
@@ -2282,6 +2294,10 @@ video {
   background-color: rgb(254 242 242 / 0.5);
 }
 
+.bg-red-50\/60 {
+  background-color: rgb(254 242 242 / 0.6);
+}
+
 .bg-red-500 {
   --tw-bg-opacity: 1;
   background-color: rgb(239 68 68 / var(--tw-bg-opacity, 1));
@@ -2445,6 +2461,11 @@ video {
   padding: 2rem;
 }
 
+.px-1 {
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+}
+
 .px-2 {
   padding-left: 0.5rem;
   padding-right: 0.5rem;
@@ -2548,6 +2569,10 @@ video {
   padding-bottom: 1rem;
 }
 
+.pl-5 {
+  padding-left: 1.25rem;
+}
+
 .pl-9 {
   padding-left: 2.25rem;
 }
@@ -2600,6 +2625,10 @@ video {
   vertical-align: middle;
 }
 
+.font-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
 .font-sans {
   font-family: Inter, sans-serif;
 }
@@ -2617,6 +2646,10 @@ video {
 .text-4xl {
   font-size: 2.25rem;
   line-height: 2.5rem;
+}
+
+.text-\[10px\] {
+  font-size: 10px;
 }
 
 .text-\[11px\] {
@@ -2678,6 +2711,10 @@ video {
 
 .italic {
   font-style: italic;
+}
+
+.leading-5 {
+  line-height: 1.25rem;
 }
 
 .leading-6 {
@@ -2777,6 +2814,11 @@ video {
 .text-emerald-700 {
   --tw-text-opacity: 1;
   color: rgb(4 120 87 / var(--tw-text-opacity, 1));
+}
+
+.text-emerald-800 {
+  --tw-text-opacity: 1;
+  color: rgb(6 95 70 / var(--tw-text-opacity, 1));
 }
 
 .text-gray-300 {
@@ -3065,6 +3107,11 @@ video {
 .ring-blue-700 {
   --tw-ring-opacity: 1;
   --tw-ring-color: rgb(29 78 216 / var(--tw-ring-opacity, 1));
+}
+
+.ring-gray-200 {
+  --tw-ring-opacity: 1;
+  --tw-ring-color: rgb(229 231 235 / var(--tw-ring-opacity, 1));
 }
 
 .ring-gray-400 {
@@ -3785,6 +3832,10 @@ video {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
+  .lg\:grid-cols-6 {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
   .lg\:grid-cols-\[1\.4fr_1fr_1fr_1fr_1fr_1fr\] {
     grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr;
   }
@@ -3863,6 +3914,14 @@ video {
 }
 
 @media (min-width: 1280px) {
+  .xl\:col-span-1 {
+    grid-column: span 1 / span 1;
+  }
+
+  .xl\:col-span-2 {
+    grid-column: span 2 / span 2;
+  }
+
   .xl\:col-span-3 {
     grid-column: span 3 / span 3;
   }
@@ -3873,6 +3932,10 @@ video {
 
   .xl\:grid-cols-2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .xl\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .xl\:grid-cols-4 {

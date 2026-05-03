@@ -92,6 +92,49 @@ const initialTeacherSubjectLinks: TeacherSubjectLink[] = [
 ];
 const initialSchedulingRules: SchedulingRule[] = [];
 const initialProductionCalendar: ProductionCalendarEvent[] = [];
+const defaultColorPolicy: SchedulingSettings['colorPolicy'] = {
+    defaultScheduleColorMode: 'type',
+    firstShiftColor: '#e0f2fe',
+    secondShiftColor: '#fef3c7',
+    teacherFallbackColor: '#dbeafe',
+    subjectFallbackColor: '#ede9fe',
+    conflictColor: '#dc2626',
+    undesirableColor: '#f59e0b',
+    classTypeColors: {
+        [ClassType.Lecture]: '#bfdbfe',
+        [ClassType.Practical]: '#bbf7d0',
+        [ClassType.Lab]: '#fde68a',
+        [ClassType.Consultation]: '#c7d2fe',
+        [ClassType.PracticeConsultation]: '#99f6e4',
+        [ClassType.PracticeDefense]: '#fed7aa',
+        [ClassType.Test]: '#fbcfe8',
+        [ClassType.Exam]: '#fecaca',
+        [ClassType.Elective]: '#e9d5ff',
+    },
+};
+const defaultImportPolicy: SchedulingSettings['importPolicy'] = {
+    csvEncoding: 'utf-8',
+    csvDelimiter: 'auto',
+    columnMappings: 'ФИО=name\nПреподаватель=name\nГруппа=number\nАудитория=number\nВместимость=capacity\nКафедра=departmentId\nДисциплина=subjectId',
+};
+const defaultAnalyticsThresholds: SchedulingSettings['analyticsThresholds'] = {
+    teacherOverloadWarningPercent: 70,
+    teacherOverloadCriticalPercent: 90,
+    classroomOverloadWarningPercent: 75,
+    classroomOverloadCriticalPercent: 92,
+    windowMinGapSlots: 1,
+    targetWeeklyTeacherLoad: 18,
+};
+const defaultWhatIfDefaults: SchedulingSettings['whatIfDefaults'] = {
+    extraGroups: 1,
+    lessonsPerGroupPerWeek: 28,
+    studentsPerGroup: 25,
+    extraTeachers: 0,
+    teacherCapacityPerWeek: 18,
+    extraClassrooms: 0,
+    classroomSlotsPerWeek: 36,
+    newClassroomCapacity: 30,
+};
 const initialSettings: SchedulingSettings = {
     semesterStart: '2024-09-02',
     semesterEnd: '2024-12-31',
@@ -113,6 +156,10 @@ const initialSettings: SchedulingSettings = {
     allowManualOverrideOfForbidden: false,
     enforceStandardRules: true,
     openRouterModel: 'deepseek/deepseek-chat-v3.1:free',
+    colorPolicy: defaultColorPolicy,
+    importPolicy: defaultImportPolicy,
+    analyticsThresholds: defaultAnalyticsThresholds,
+    whatIfDefaults: defaultWhatIfDefaults,
 };
 const initialScheduleTemplates: ScheduleTemplate[] = [];
 const initialEducationalPlanTemplates: EducationalPlanTemplate[] = [];
@@ -403,7 +450,30 @@ const getInitialEmptySettings = (): SchedulingSettings => ({
     allowManualOverrideOfForbidden: false,
     enforceStandardRules: true,
     openRouterModel: 'deepseek/deepseek-chat-v3.1:free',
+    colorPolicy: defaultColorPolicy,
+    importPolicy: defaultImportPolicy,
+    analyticsThresholds: defaultAnalyticsThresholds,
+    whatIfDefaults: defaultWhatIfDefaults,
 });
+
+const normalizeSettings = (settings?: Partial<SchedulingSettings>): SchedulingSettings => {
+  const base = getInitialEmptySettings();
+  return {
+    ...base,
+    ...(settings || {}),
+    colorPolicy: {
+      ...base.colorPolicy,
+      ...(settings?.colorPolicy || {}),
+      classTypeColors: {
+        ...base.colorPolicy.classTypeColors,
+        ...(settings?.colorPolicy?.classTypeColors || {}),
+      },
+    },
+    importPolicy: { ...base.importPolicy, ...(settings?.importPolicy || {}) },
+    analyticsThresholds: { ...base.analyticsThresholds, ...(settings?.analyticsThresholds || {}) },
+    whatIfDefaults: { ...base.whatIfDefaults, ...(settings?.whatIfDefaults || {}) },
+  };
+};
 
 
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -604,7 +674,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setTeacherSubjectLinks(data.teacherSubjectLinks || []);
     setSchedulingRules(data.schedulingRules || []);
     setProductionCalendar(data.productionCalendar || []);
-    setSettings({ ...getInitialEmptySettings(), ...(data.settings || {}) });
+    setSettings(normalizeSettings(data.settings));
     setUgs(data.ugs || []);
     setSpecialties(data.specialties || []);
     setEducationalPlans(data.educationalPlans || []);
@@ -670,7 +740,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
 
     if (data.settings) {
-      setSettings(prev => ({ ...prev, ...data.settings }));
+      setSettings(prev => normalizeSettings({ ...prev, ...data.settings }));
     }
   };
   

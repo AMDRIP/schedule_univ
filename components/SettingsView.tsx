@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../hooks/useStore';
-import { SchedulingSettings } from '../types';
+import { ClassType, SchedulingSettings } from '../types';
 import { CogIcon, SparklesIcon } from './icons';
 import { exportAllDataAsPdf } from '../services/pdfExporter';
 import { readTabularImport } from '../services/tabularImport';
@@ -96,6 +96,65 @@ const SettingsView: React.FC = () => {
     setIsSaved(false);
   };
 
+  const applySettings = (newSettings: SchedulingSettings) => {
+    setFormData(newSettings);
+    updateSettings(newSettings);
+    setIsSaved(false);
+  };
+
+  const updateColorPolicy = <K extends keyof SchedulingSettings['colorPolicy']>(key: K, value: SchedulingSettings['colorPolicy'][K]) => {
+    applySettings({
+      ...formData,
+      colorPolicy: {
+        ...formData.colorPolicy,
+        [key]: value,
+      },
+    });
+  };
+
+  const updateClassTypeColor = (classType: ClassType, value: string) => {
+    applySettings({
+      ...formData,
+      colorPolicy: {
+        ...formData.colorPolicy,
+        classTypeColors: {
+          ...formData.colorPolicy.classTypeColors,
+          [classType]: value,
+        },
+      },
+    });
+  };
+
+  const updateImportPolicy = <K extends keyof SchedulingSettings['importPolicy']>(key: K, value: SchedulingSettings['importPolicy'][K]) => {
+    applySettings({
+      ...formData,
+      importPolicy: {
+        ...formData.importPolicy,
+        [key]: value,
+      },
+    });
+  };
+
+  const updateAnalyticsThreshold = <K extends keyof SchedulingSettings['analyticsThresholds']>(key: K, value: SchedulingSettings['analyticsThresholds'][K]) => {
+    applySettings({
+      ...formData,
+      analyticsThresholds: {
+        ...formData.analyticsThresholds,
+        [key]: value,
+      },
+    });
+  };
+
+  const updateWhatIfDefault = <K extends keyof SchedulingSettings['whatIfDefaults']>(key: K, value: SchedulingSettings['whatIfDefaults'][K]) => {
+    applySettings({
+      ...formData,
+      whatIfDefaults: {
+        ...formData.whatIfDefaults,
+        [key]: value,
+      },
+    });
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     // Data is already saved by handleChange, this just shows confirmation
@@ -150,7 +209,7 @@ const SettingsView: React.FC = () => {
       const file = event.target.files?.[0];
       if (!file) return;
       try {
-          const data = await readTabularImport(file);
+          const data = await readTabularImport(file, formData.importPolicy);
           if (Object.keys(data).length === 0) {
               alert('Не удалось определить раздел для импорта. Для CSV назовите файл как раздел данных, например teachers.csv или groups.csv. Для XLSX используйте листы с именами teachers, groups, classrooms, educationalPlans.');
               return;
@@ -200,9 +259,22 @@ const SettingsView: React.FC = () => {
   };
 
   const defaultInputClass = "w-full p-2 border border-gray-300 rounded bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500";
+  const nestedNumberInput = (label: string, value: number, onChange: (value: number) => void, min = 0, max?: number) => (
+    <label className="block">
+      <span className="block text-sm font-medium text-gray-700 mb-1">{label}</span>
+      <input
+        type="number"
+        value={value}
+        min={min}
+        max={max}
+        onChange={event => onChange(Number(event.target.value))}
+        className={defaultInputClass}
+      />
+    </label>
+  );
 
   return (
-    <div className="bg-white p-8 rounded-lg shadow-lg max-w-2xl mx-auto space-y-10">
+    <div className="bg-white p-8 rounded-lg shadow-lg max-w-6xl mx-auto space-y-10">
        <div>
          <div className="flex items-center mb-6">
             <CogIcon className="h-8 w-8 text-blue-600 mr-3" />
@@ -416,6 +488,119 @@ const SettingsView: React.FC = () => {
                       {formData.showScheduleColors ? 'Включено' : 'Выключено'} (использовать цвета преподавателей и дисциплин)
                       </div>
                   </label>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-4">
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-900">Цветовая политика приложения</h4>
+                    <p className="text-xs text-gray-500 mt-1">Настраивает смены, типы занятий и поведение цветовых режимов в сетке расписания.</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="block">
+                      <span className="block text-sm font-medium text-gray-700 mb-1">Цвет по умолчанию</span>
+                      <select
+                        value={formData.colorPolicy.defaultScheduleColorMode}
+                        onChange={event => updateColorPolicy('defaultScheduleColorMode', event.target.value as SchedulingSettings['colorPolicy']['defaultScheduleColorMode'])}
+                        className={defaultInputClass}
+                      >
+                        <option value="type">По типу занятия</option>
+                        <option value="teacher">По преподавателю</option>
+                        <option value="subject">По дисциплине</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="block text-sm font-medium text-gray-700 mb-1">Цвет коллизий</span>
+                      <input type="color" value={formData.colorPolicy.conflictColor} onChange={event => updateColorPolicy('conflictColor', event.target.value)} className="h-10 w-full rounded border border-gray-300 bg-white p-1" />
+                    </label>
+                    <label className="block">
+                      <span className="block text-sm font-medium text-gray-700 mb-1">Цвет 1 смены</span>
+                      <input type="color" value={formData.colorPolicy.firstShiftColor} onChange={event => updateColorPolicy('firstShiftColor', event.target.value)} className="h-10 w-full rounded border border-gray-300 bg-white p-1" />
+                    </label>
+                    <label className="block">
+                      <span className="block text-sm font-medium text-gray-700 mb-1">Цвет 2 смены</span>
+                      <input type="color" value={formData.colorPolicy.secondShiftColor} onChange={event => updateColorPolicy('secondShiftColor', event.target.value)} className="h-10 w-full rounded border border-gray-300 bg-white p-1" />
+                    </label>
+                    <label className="block">
+                      <span className="block text-sm font-medium text-gray-700 mb-1">Цвет преподавателя без метки</span>
+                      <input type="color" value={formData.colorPolicy.teacherFallbackColor} onChange={event => updateColorPolicy('teacherFallbackColor', event.target.value)} className="h-10 w-full rounded border border-gray-300 bg-white p-1" />
+                    </label>
+                    <label className="block">
+                      <span className="block text-sm font-medium text-gray-700 mb-1">Цвет дисциплины без метки</span>
+                      <input type="color" value={formData.colorPolicy.subjectFallbackColor} onChange={event => updateColorPolicy('subjectFallbackColor', event.target.value)} className="h-10 w-full rounded border border-gray-300 bg-white p-1" />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {Object.values(ClassType).map(classType => (
+                      <label key={classType} className="flex items-center justify-between gap-3 rounded border border-gray-200 bg-white px-3 py-2">
+                        <span className="text-sm text-gray-700 truncate">{classType}</span>
+                        <input
+                          type="color"
+                          value={formData.colorPolicy.classTypeColors[classType] || '#e5e7eb'}
+                          onChange={event => updateClassTypeColor(classType, event.target.value)}
+                          className="h-8 w-10 rounded border border-gray-300 bg-white p-1"
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-4">
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-900">Импорт CSV/XLSX</h4>
+                    <p className="text-xs text-gray-500 mt-1">Правила применяются при загрузке табличных файлов через кнопку “Импорт XLSX/CSV”.</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="block">
+                      <span className="block text-sm font-medium text-gray-700 mb-1">Кодировка CSV</span>
+                      <select value={formData.importPolicy.csvEncoding} onChange={event => updateImportPolicy('csvEncoding', event.target.value)} className={defaultInputClass}>
+                        <option value="utf-8">UTF-8</option>
+                        <option value="windows-1251">Windows-1251</option>
+                        <option value="iso-8859-1">ISO-8859-1</option>
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="block text-sm font-medium text-gray-700 mb-1">Разделитель CSV</span>
+                      <select value={formData.importPolicy.csvDelimiter} onChange={event => updateImportPolicy('csvDelimiter', event.target.value)} className={defaultInputClass}>
+                        <option value="auto">Определять автоматически</option>
+                        <option value=",">Запятая</option>
+                        <option value=";">Точка с запятой</option>
+                        <option value="\t">Табуляция</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label className="block">
+                    <span className="block text-sm font-medium text-gray-700 mb-1">Сопоставление колонок</span>
+                    <textarea
+                      value={formData.importPolicy.columnMappings}
+                      onChange={event => updateImportPolicy('columnMappings', event.target.value)}
+                      className={`${defaultInputClass} min-h-28 font-mono text-xs`}
+                      placeholder="ФИО=name"
+                    />
+                    <span className="text-xs text-gray-500">Одна строка на правило: название колонки = поле приложения. Например: ФИО=name, Вместимость=capacity.</span>
+                  </label>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 space-y-4">
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-900">Аналитика и “Что, если?”</h4>
+                    <p className="text-xs text-gray-500 mt-1">Пороги перегрузки и базовые вводные для сценарного анализа.</p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {nestedNumberInput('Порог перегрузки преподавателя, предупреждение (%)', formData.analyticsThresholds.teacherOverloadWarningPercent, value => updateAnalyticsThreshold('teacherOverloadWarningPercent', value), 0, 100)}
+                    {nestedNumberInput('Порог перегрузки преподавателя, критично (%)', formData.analyticsThresholds.teacherOverloadCriticalPercent, value => updateAnalyticsThreshold('teacherOverloadCriticalPercent', value), 0, 100)}
+                    {nestedNumberInput('Порог перегрузки аудитории, предупреждение (%)', formData.analyticsThresholds.classroomOverloadWarningPercent, value => updateAnalyticsThreshold('classroomOverloadWarningPercent', value), 0, 100)}
+                    {nestedNumberInput('Порог перегрузки аудитории, критично (%)', formData.analyticsThresholds.classroomOverloadCriticalPercent, value => updateAnalyticsThreshold('classroomOverloadCriticalPercent', value), 0, 100)}
+                    {nestedNumberInput('Что считать окном: минимум пустых слотов', formData.analyticsThresholds.windowMinGapSlots, value => updateAnalyticsThreshold('windowMinGapSlots', value), 1)}
+                    {nestedNumberInput('Целевая недельная нагрузка преподавателя', formData.analyticsThresholds.targetWeeklyTeacherLoad, value => updateAnalyticsThreshold('targetWeeklyTeacherLoad', value), 1)}
+                    {nestedNumberInput('Что, если: групп по умолчанию', formData.whatIfDefaults.extraGroups, value => updateWhatIfDefault('extraGroups', value))}
+                    {nestedNumberInput('Что, если: пар на группу в неделю', formData.whatIfDefaults.lessonsPerGroupPerWeek, value => updateWhatIfDefault('lessonsPerGroupPerWeek', value), 1)}
+                    {nestedNumberInput('Что, если: студентов в группе', formData.whatIfDefaults.studentsPerGroup, value => updateWhatIfDefault('studentsPerGroup', value), 1)}
+                    {nestedNumberInput('Что, если: добавить преподавателей', formData.whatIfDefaults.extraTeachers, value => updateWhatIfDefault('extraTeachers', value))}
+                    {nestedNumberInput('Что, если: пар на преподавателя', formData.whatIfDefaults.teacherCapacityPerWeek, value => updateWhatIfDefault('teacherCapacityPerWeek', value), 1)}
+                    {nestedNumberInput('Что, если: добавить аудиторий', formData.whatIfDefaults.extraClassrooms, value => updateWhatIfDefault('extraClassrooms', value))}
+                    {nestedNumberInput('Что, если: слотов на аудиторию', formData.whatIfDefaults.classroomSlotsPerWeek, value => updateWhatIfDefault('classroomSlotsPerWeek', value), 1)}
+                    {nestedNumberInput('Что, если: мест в новой аудитории', formData.whatIfDefaults.newClassroomCapacity, value => updateWhatIfDefault('newClassroomCapacity', value), 1)}
+                  </div>
                 </div>
             </div>
 

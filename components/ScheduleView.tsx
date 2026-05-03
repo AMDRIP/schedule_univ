@@ -206,7 +206,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   const { schedule, groups, teachers, subjects, classrooms, timeSlots, timeSlotsShortened, settings, updateSettings, scheduleTemplates, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate, removeScheduleEntries, productionCalendar, departments, teacherSubjectLinks, streams, runLocalOptimizer } = store;
   const [filterType, setFilterType] = useState<'group' | 'teacher' | 'classroom'>('group');
   const [selectedId, setSelectedId] = useState<string>(groups[0]?.id || '');
-  const [colorBy, setColorBy] = useState<'type' | 'teacher' | 'subject'>('type');
+  const [colorBy, setColorBy] = useState<'type' | 'teacher' | 'subject'>(settings.colorPolicy?.defaultScheduleColorMode || 'type');
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
   const [isSaveTemplateModalOpen, setIsSaveTemplateModalOpen] = useState(false);
   const [isLoadTemplateModalOpen, setIsLoadTemplateModalOpen] = useState(false);
@@ -219,6 +219,10 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
   const datePickerRef = useRef<HTMLDivElement>(null);
   const templateDropdownRef = useRef<HTMLDivElement>(null);
   const clearDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setColorBy(settings.colorPolicy?.defaultScheduleColorMode || 'type');
+  }, [settings.colorPolicy?.defaultScheduleColorMode]);
   
   const weekDays = useMemo(() => getWeekDays(new Date(viewDate)), [viewDate]);
   const weekStart = useMemo(() => toYYYYMMDD(weekDays[0]), [weekDays]);

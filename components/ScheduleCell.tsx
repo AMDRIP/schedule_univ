@@ -16,6 +16,16 @@ interface ScheduleEntryCardProps {
   cellDate: string;
 }
 
+const getEntryGroupIds = (entry: Pick<ScheduleEntry, 'groupId' | 'groupIds'>) => {
+  const ids = new Set<string>();
+  entry.groupIds?.forEach(id => ids.add(id));
+  if (entry.groupId) ids.add(entry.groupId);
+  return Array.from(ids);
+};
+
+const withAlpha = (hex: string, alpha: string) =>
+  /^#[0-9a-fA-F]{6}$/.test(hex) ? `${hex}${alpha}` : hex;
+
 const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable, colorBy, cellDate }) => {
   const { subjects, teachers, classrooms, groups, subgroups, streams, electives, schedule, updateScheduleEntry, deleteScheduleEntry, settings, classroomTags } = useStore();
   const [isEditingClassroom, setIsEditingClassroom] = useState(false);
@@ -123,37 +133,68 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     return teacherAvailability === AvailabilityType.Undesirable || groupAvailabilities.some(a => a === AvailabilityType.Undesirable);
   }, [entry, teacher, getInvolvedGroups]);
 
-  const isConflicting = useMemo(() => {
-    if (!entry.teacherId || !entry.timeSlotId) return false;
+  const conflictReasons = useMemo(() => {
+    if (!entry.timeSlotId) return [];
 
     const entryDate = entry.date || cellDate;
-    if (!entryDate) return false;
+    if (!entryDate) return [];
 
-    // Find all entries for this teacher that fall on the same concrete date and time slot
-    const entriesAtSameTime = schedule.filter(otherEntry => {
+    const reasons = new Set<string>();
+    const getConflictGroupIds = (scheduleEntry: ScheduleEntry) => {
+      const ids = new Set(getEntryGroupIds(scheduleEntry));
+      if (scheduleEntry.streamId) {
+        streams.find(s => s.id === scheduleEntry.streamId)?.groupIds.forEach(groupId => ids.add(groupId));
+      }
+      return Array.from(ids);
+    };
+
+    const entryGroupIds = getConflictGroupIds(entry);
+    const entryGroupIdSet = new Set(entryGroupIds);
+
+    const matchesSameConcreteTime = (otherEntry: ScheduleEntry) => {
       if (otherEntry.id === entry.id) return false;
-      if (otherEntry.teacherId !== entry.teacherId) return false;
       if (otherEntry.timeSlotId !== entry.timeSlotId) return false;
 
-      // Determine the concrete date of the other entry for comparison
       if (otherEntry.date) {
         return otherEntry.date === entryDate;
-      } else {
-        // otherEntry is a template. Check if it applies on entryDate.
-        const d = new Date(entryDate + 'T00:00:00');
-        const dayName = DAYS_OF_WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1];
-        if (otherEntry.day !== dayName) return false;
+      }
 
-        const semesterStart = new Date(settings.semesterStart);
-        const week = getWeekType(d, semesterStart);
-        const effectiveWeek = settings.useEvenOddWeekSeparation ? week : 'every';
+      const d = new Date(entryDate + 'T00:00:00');
+      const dayName = DAYS_OF_WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1];
+      if (otherEntry.day !== dayName) return false;
 
-        return otherEntry.weekType === 'every' || otherEntry.weekType === effectiveWeek;
+      const semesterStart = new Date(settings.semesterStart);
+      const week = getWeekType(d, semesterStart);
+      const effectiveWeek = settings.useEvenOddWeekSeparation ? week : 'every';
+
+      return otherEntry.weekType === 'every' || otherEntry.weekType === effectiveWeek;
+    };
+
+    schedule.forEach(otherEntry => {
+      if (!matchesSameConcreteTime(otherEntry)) return;
+
+      if (entry.teacherId && otherEntry.teacherId === entry.teacherId) {
+        reasons.add(`Коллизия преподавателя: ${teacher?.name || entry.teacherId}`);
+      }
+
+      if (entry.streamId && otherEntry.streamId === entry.streamId) {
+        const streamName = streams.find(s => s.id === entry.streamId)?.name || 'поток';
+        reasons.add(`Коллизия потока: ${streamName}`);
+      }
+
+      const overlappingGroupIds = getConflictGroupIds(otherEntry).filter(groupId => entryGroupIdSet.has(groupId));
+      if (overlappingGroupIds.length > 0) {
+        const groupNames = overlappingGroupIds
+          .map(groupId => groups.find(g => g.id === groupId)?.number || groupId)
+          .join(', ');
+        reasons.add(`Коллизия группы/потока: ${groupNames}`);
       }
     });
 
-    return entriesAtSameTime.length > 0;
-  }, [entry, cellDate, schedule, settings]);
+    return Array.from(reasons);
+  }, [entry, cellDate, schedule, settings, teacher, streams, groups]);
+
+  const isConflicting = conflictReasons.length > 0;
 
 
   if (!subject || !teacher || !classroom) {
@@ -167,13 +208,21 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
 
   let colorClass = 'bg-gray-100 border-gray-300';
   let borderClass = '';
+  const cardStyle: React.CSSProperties = {};
   const warningClass = isUndesirable ? 'ring-2 ring-yellow-400 ring-offset-1' : '';
   const conflictClass = isConflicting ? 'ring-2 ring-offset-1 ring-red-600' : '';
 
   if (settings.showScheduleColors) {
     switch (colorBy) {
       case 'type':
-        colorClass = CLASS_TYPE_COLORS[entry.classType] || colorClass;
+        if (settings.colorPolicy?.classTypeColors?.[entry.classType]) {
+          const color = settings.colorPolicy.classTypeColors[entry.classType]!;
+          colorClass = 'text-gray-900';
+          cardStyle.backgroundColor = withAlpha(color, '33');
+          cardStyle.borderColor = color;
+        } else {
+          colorClass = CLASS_TYPE_COLORS[entry.classType] || colorClass;
+        }
         break;
       case 'teacher': {
         const teacherColorName = teacher?.color;
@@ -181,6 +230,13 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
           const colorData = COLOR_MAP[teacherColorName];
           colorClass = `${colorData.bg} ${colorData.border}`;
           borderClass = `border-l-4 ${colorData.borderL}`;
+        } else if (settings.colorPolicy?.teacherFallbackColor) {
+          const color = settings.colorPolicy.teacherFallbackColor;
+          colorClass = 'text-gray-900';
+          cardStyle.backgroundColor = withAlpha(color, '33');
+          cardStyle.borderColor = color;
+          cardStyle.borderLeftColor = color;
+          cardStyle.borderLeftWidth = 4;
         }
         break;
       }
@@ -190,10 +246,23 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
           const colorData = COLOR_MAP[subjectColorName];
           colorClass = `${colorData.bg} ${colorData.border}`;
           borderClass = `border-l-4 ${colorData.borderL}`;
+        } else if (settings.colorPolicy?.subjectFallbackColor) {
+          const color = settings.colorPolicy.subjectFallbackColor;
+          colorClass = 'text-gray-900';
+          cardStyle.backgroundColor = withAlpha(color, '33');
+          cardStyle.borderColor = color;
+          cardStyle.borderLeftColor = color;
+          cardStyle.borderLeftWidth = 4;
         }
         break;
       }
     }
+  }
+
+  if (isConflicting && settings.colorPolicy?.conflictColor) {
+    cardStyle.boxShadow = `0 0 0 2px ${settings.colorPolicy.conflictColor}`;
+  } else if (isUndesirable && settings.colorPolicy?.undesirableColor) {
+    cardStyle.boxShadow = `0 0 0 2px ${settings.colorPolicy.undesirableColor}`;
   }
 
   const teacherName = (settings.showDegreeInSchedule && teacher.academicDegree)
@@ -223,7 +292,12 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
 
   return (
     <>
-      <div ref={isEditable ? drag as any : null} className={`shadow-sm p-1.5 rounded-lg text-xs cursor-grab relative group transition-all duration-200 hover:shadow-lg hover:-translate-y-1 ${colorClass} ${borderClass} ${warningClass} ${conflictClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}>
+      <div
+        ref={isEditable ? drag as any : null}
+        className={`shadow-sm p-1.5 rounded-lg text-xs cursor-grab relative group transition-all duration-200 hover:shadow-lg hover:-translate-y-1 ${colorClass} ${borderClass} ${warningClass} ${conflictClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}
+        style={cardStyle}
+        title={isConflicting ? conflictReasons.join('\n') : undefined}
+      >
         <div>
           <p className="truncate" title={elective ? `${subject.name} (${elective.name})` : subject.name}>
             <span className="font-bold">{subject.name}</span>
@@ -254,6 +328,11 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
         </div>
         <div className="mt-1">
           <p className="truncate" title={teacherName}>{teacherName}</p>
+          {isConflicting && (
+            <p className="mt-0.5 truncate rounded border border-red-200 bg-red-50 px-1 py-0.5 text-[10px] font-semibold text-red-700" title={conflictReasons.join('\n')}>
+              Коллизия ресурсов
+            </p>
+          )}
           <div className="font-semibold flex items-center justify-between">
             <div className="flex items-center gap-1">
               {isEditingClassroom ? (
@@ -378,15 +457,26 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
   }), [entries, day, timeSlotId, weekType, date, placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups, timeSlots, timeSlotsShortened]);
 
   let cellBgClass = getShiftCellClass(timeSlotShift);
+  const cellStyle: React.CSSProperties = {};
+  const shiftColor = timeSlotShift === 'first'
+    ? settings.colorPolicy?.firstShiftColor
+    : timeSlotShift === 'second'
+      ? settings.colorPolicy?.secondShiftColor
+      : undefined;
+  if (shiftColor) {
+    cellStyle.backgroundColor = withAlpha(shiftColor, '66');
+    cellStyle.borderLeftColor = shiftColor;
+  }
   if (canDrop && isOver) cellBgClass = 'bg-green-200';
   else if (canDrop) cellBgClass = 'bg-green-50';
 
   if (entries.length > 1) {
     cellBgClass = 'bg-red-200 border-red-400';
+    cellStyle.backgroundColor = undefined;
   }
 
   return (
-    <td ref={isEditable ? drop as any : null} className={`p-1 border align-top transition-colors ${cellBgClass}`}>
+    <td ref={isEditable ? drop as any : null} className={`p-1 border align-top transition-colors ${cellBgClass}`} style={cellStyle}>
       <div className="h-full flex flex-col gap-1">
         {entries.map(entry => (
           <ScheduleEntryCard key={entry.id} entry={entry} isEditable={isEditable} colorBy={colorBy} cellDate={date} />

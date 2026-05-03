@@ -20,6 +20,7 @@ import {
   TrashIcon,
   UserGroupIcon,
 } from './icons';
+import AvailabilityGridEditor from './AvailabilityGridEditor';
 
 type TabId = 'overview' | 'groups' | 'subgroups' | 'streams' | 'quality';
 
@@ -57,6 +58,7 @@ const emptyGroupDraft = (departmentId = '', specialtyId = ''): Omit<Group, 'id'>
   studentCount: 25,
   formOfStudy: FormOfStudy.FullTime,
   shift: 'first',
+  availabilityGrid: {},
   pinnedClassroomId: '',
   curatorTeacherId: '',
   admissionYear: new Date().getFullYear(),
@@ -457,6 +459,16 @@ const CohortManager: React.FC = () => {
                 <Select label="Закреплённая аудитория" value={groupDraft.pinnedClassroomId || ''} onChange={value => setGroupDraft(prev => ({ ...prev, pinnedClassroomId: value }))} options={[{ value: '', label: 'Не задана' }, ...classrooms.map(item => ({ value: item.id, label: `${item.number} · ${item.capacity} мест` }))]} />
               </div>
               <Select label="Куратор" value={groupDraft.curatorTeacherId || ''} onChange={value => setGroupDraft(prev => ({ ...prev, curatorTeacherId: value }))} options={[{ value: '', label: 'Не задан' }, ...teachers.map(item => ({ value: item.id, label: item.name }))]} />
+              <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+                <div className="mb-3">
+                  <h3 className="text-sm font-semibold text-gray-900">Сетка расписания группы</h3>
+                  <p className="mt-1 text-xs text-gray-500">Отмечайте желательные, нежелательные и запрещённые слоты для генератора расписания.</p>
+                </div>
+                <AvailabilityGridEditor
+                  grid={groupDraft.availabilityGrid || {}}
+                  onGridChange={availabilityGrid => setGroupDraft(prev => ({ ...prev, availabilityGrid }))}
+                />
+              </div>
               <Textarea label="Заметки" value={groupDraft.notes || ''} onChange={value => setGroupDraft(prev => ({ ...prev, notes: value }))} />
               <div className="flex gap-2">
                 <button onClick={saveGroup} className="inline-flex flex-1 items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">

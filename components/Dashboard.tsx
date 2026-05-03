@@ -20,6 +20,7 @@ import AcademicProgramsManager from './AcademicProgramsManager';
 import CohortManager from './CohortManager';
 import RoomResourcesManager from './RoomResourcesManager';
 import BellScheduleManager from './BellScheduleManager';
+import AnalyticsView from './AnalyticsView';
 
 
 interface DashboardProps {
@@ -62,6 +63,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
         return <ScheduleView currentRole={currentRole} viewDate={viewDate} setViewDate={setViewDate} />;
       case 'Сводное расписание':
         return <UniversityWideSchedule setViewDate={setViewDate} setActiveView={setActiveView} />;
+      case 'Статистика':
+        return <AnalyticsView />;
       case 'Академический календарь':
         return <AcademicCalendarView setViewDate={setViewDate} setActiveView={setActiveView} />;
       case 'Составление расписания':

@@ -4,7 +4,7 @@ import { dejavu_sans_base64 } from '../utils/fonts';
 import { ScheduleEntry, TimeSlot, Group, Teacher, Subject, Classroom, SchedulingSettings, ProductionCalendarEvent, ProductionCalendarEventType } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { useStore } from '../hooks/useStore';
-import { calculateExperience } from '../utils/dateUtils';
+import { calculateExperience, toYYYYMMDD } from '../utils/dateUtils';
 
 const FONT_NAME = 'DejaVuSans';
 const FONT_STYLES = ['normal', 'bold', 'italic', 'bolditalic'] as const;
@@ -52,19 +52,24 @@ export const exportScheduleAsPdf = async (data: ScheduleExportData, settings: Sc
 
     const head = normalizeTable([['Время', ...weekDays.map(d => `${DAYS_OF_WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1]}, ${d.getDate()}`)]]);
 
-    const allTimeSlots = [...timeSlots, ...timeSlotsShortened];
-    const displayTimeSlots: TimeSlot[] = Array.from(new Map(allTimeSlots.map(item => [item.time, item])).values())
+    const getActiveTimeSlotsForDate = (date: Date) => {
+        const dateStr = toYYYYMMDD(date);
+        const dayInfo = productionCalendar.find(e => e.date === dateStr);
+        const isPreHoliday = settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
+        return isPreHoliday ? timeSlotsShortened : timeSlots;
+    };
+
+    const displayTimeSlots: TimeSlot[] = Array.from(
+        new Map(weekDays.flatMap(getActiveTimeSlotsForDate).map(item => [item.id, item])).values()
+    )
         .sort((a, b) => a.time.localeCompare(b.time));
 
     const body = displayTimeSlots.map(slot => {
         const row = [slot.time];
         weekDays.forEach(date => {
             const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
-            const dateStr = date.toISOString().split('T')[0];
-
-            const dayInfo = productionCalendar.find(e => e.date === dateStr);
-            const isPreHoliday = settings.useShortenedPreHolidaySchedule && dayInfo?.type === ProductionCalendarEventType.PreHoliday;
-            const activeTimeSlots = isPreHoliday ? timeSlotsShortened : timeSlots;
+            const dateStr = toYYYYMMDD(date);
+            const activeTimeSlots = getActiveTimeSlotsForDate(date);
 
             if (!activeTimeSlots.some(ts => ts.id === slot.id)) {
                 row.push(''); // This slot doesn't exist on this day type

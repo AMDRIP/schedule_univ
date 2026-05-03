@@ -396,6 +396,39 @@ export interface SchedulingSettings {
   allowManualOverrideOfForbidden: boolean;
   enforceStandardRules: boolean;
   openRouterModel: string;
+  colorPolicy: {
+    defaultScheduleColorMode: 'type' | 'teacher' | 'subject';
+    firstShiftColor: string;
+    secondShiftColor: string;
+    teacherFallbackColor: string;
+    subjectFallbackColor: string;
+    conflictColor: string;
+    undesirableColor: string;
+    classTypeColors: Partial<Record<ClassType, string>>;
+  };
+  importPolicy: {
+    csvEncoding: string;
+    csvDelimiter: string;
+    columnMappings: string;
+  };
+  analyticsThresholds: {
+    teacherOverloadWarningPercent: number;
+    teacherOverloadCriticalPercent: number;
+    classroomOverloadWarningPercent: number;
+    classroomOverloadCriticalPercent: number;
+    windowMinGapSlots: number;
+    targetWeeklyTeacherLoad: number;
+  };
+  whatIfDefaults: {
+    extraGroups: number;
+    lessonsPerGroupPerWeek: number;
+    studentsPerGroup: number;
+    extraTeachers: number;
+    teacherCapacityPerWeek: number;
+    extraClassrooms: number;
+    classroomSlotsPerWeek: number;
+    newClassroomCapacity: number;
+  };
 }
 
 export interface HeuristicConfig {

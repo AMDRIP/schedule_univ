@@ -194,6 +194,17 @@ const markUnscheduled = (
 const getEntryGroupIds = (entry: Pick<ScheduleEntry, 'groupId' | 'groupIds'> | Pick<UnscheduledEntry, 'groupId' | 'groupIds'>) =>
     entry.groupIds || (entry.groupId ? [entry.groupId] : []);
 
+const getSeriesGroupKey = (entry: Pick<ScheduleEntry, 'groupId' | 'groupIds' | 'subgroupId'> | Pick<UnscheduledEntry, 'groupId' | 'groupIds' | 'subgroupId'>) =>
+    `${getEntryGroupIds(entry).slice().sort().join(',')}::${entry.subgroupId || ''}`;
+
+const entriesBelongToSameSeries = (
+    first: Pick<ScheduleEntry, 'subjectId' | 'classType' | 'groupId' | 'groupIds' | 'subgroupId'> | Pick<UnscheduledEntry, 'subjectId' | 'classType' | 'groupId' | 'groupIds' | 'subgroupId'>,
+    second: Pick<ScheduleEntry, 'subjectId' | 'classType' | 'groupId' | 'groupIds' | 'subgroupId'> | Pick<UnscheduledEntry, 'subjectId' | 'classType' | 'groupId' | 'groupIds' | 'subgroupId'>
+) =>
+    first.subjectId === second.subjectId &&
+    first.classType === second.classType &&
+    getSeriesGroupKey(first) === getSeriesGroupKey(second);
+
 const addBooking = (bookings: Map<string, Set<string>>, resourceKey: string, bookingKey: string) => {
     if (!bookings.has(resourceKey)) bookings.set(resourceKey, new Set());
     bookings.get(resourceKey)!.add(bookingKey);
@@ -460,6 +471,10 @@ const estimateDomainSize = (
         const compatibleTimeSlots = getShiftCompatibleTimeSlots(
             getActiveTimeSlotsForDate(data, date, index),
             involvedGroups
+        ).filter(timeSlot =>
+            involvedGroups.every(group =>
+                group.availabilityGrid?.[dayName]?.[timeSlot.id] !== AvailabilityType.Forbidden
+            )
         );
 
         for (const timeSlot of compatibleTimeSlots) {
@@ -831,6 +846,13 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                         continue;
                     }
 
+                    const forbiddenGroup = involvedGroups.find(g => g.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden);
+                    if (forbiddenGroup) {
+                        stats.group++;
+                        conflicts.push(`У группы ${forbiddenGroup.number} запрещен слот: ${dayName}, ${timeSlot.time}.`);
+                        continue;
+                    }
+
                     for (const teacherId of teacherCandidates) {
                         if (resourceBookings.get(`teacher-${teacherId}`)?.has(bookingKey)) {
                             stats.teacher++;
@@ -976,6 +998,7 @@ const getConstraintScore = (entry: UnscheduledEntry, data: GenerationData, index
         const involvedGroups = getInvolvedGroups(entry, index);
         return count + getActiveTimeSlotsForDate(data, date, index)
             .filter(slot => areGroupsCompatibleWithTimeSlot(slot, involvedGroups))
+            .filter(slot => involvedGroups.every(group => group.availabilityGrid?.[dayName]?.[slot.id] !== AvailabilityType.Forbidden))
             .filter(slot => teacher?.availabilityGrid?.[dayName]?.[slot.id] !== AvailabilityType.Forbidden)
             .length;
     }, 0);
@@ -1252,6 +1275,101 @@ const applySchedulingRules = (context: RuleEvaluationContext, rules: SchedulingR
     return cost;
 };
 
+const getTeacherLoadPenalty = (
+    teacherId: string,
+    dateStr: string,
+    allScheduleForScoring: ScheduleEntry[],
+    penaltyMultiplier: number
+) => {
+    const totalLoad = allScheduleForScoring.filter(entry => entry.teacherId === teacherId).length;
+    const dayLoad = allScheduleForScoring.filter(entry => entry.teacherId === teacherId && entry.date === dateStr).length;
+    return (totalLoad * 3 + dayLoad * 18) * penaltyMultiplier;
+};
+
+const getLectureSequencePenalty = (
+    entry: UnscheduledEntry,
+    dateStr: string,
+    timeSlotId: string,
+    activeTimeSlots: TimeSlot[],
+    allScheduleForScoring: ScheduleEntry[],
+    penaltyMultiplier: number,
+    enforceLectureOrder: boolean
+) => {
+    const entryGroupIds = getEntryGroupIds(entry);
+    if (entryGroupIds.length === 0) return 0;
+
+    const candidateIndex = slotIndexOf(activeTimeSlots, timeSlotId);
+    const sequenceMultiplier = enforceLectureOrder ? 2.5 : 1;
+    const relatedEntries = allScheduleForScoring.filter(other => {
+        if (!other.date || other.subjectId !== entry.subjectId) return false;
+        const otherGroupIds = getEntryGroupIds(other);
+        return otherGroupIds.some(groupId => entryGroupIds.includes(groupId));
+    });
+
+    const candidateOrderKey = `${dateStr}-${String(candidateIndex).padStart(3, '0')}`;
+    const orderKeyOf = (other: ScheduleEntry) => {
+        const slotsForDate = activeTimeSlots;
+        const slotIndex = other.date === dateStr
+            ? slotIndexOf(slotsForDate, other.timeSlotId)
+            : 0;
+        return `${other.date}-${String(slotIndex).padStart(3, '0')}`;
+    };
+
+    if (entry.classType === ClassType.Practical || entry.classType === ClassType.Lab) {
+        const lectures = relatedEntries.filter(other => other.classType === ClassType.Lecture);
+        if (lectures.length === 0) return 80 * penaltyMultiplier;
+
+        const hasEarlierLecture = lectures.some(other => orderKeyOf(other) <= candidateOrderKey);
+        if (!hasEarlierLecture) return 300 * sequenceMultiplier * penaltyMultiplier;
+
+        const laterLectures = lectures.filter(other => orderKeyOf(other) > candidateOrderKey).length;
+        return laterLectures * 45 * penaltyMultiplier;
+    }
+
+    if (entry.classType === ClassType.Lecture) {
+        const practicesBefore = relatedEntries.filter(other =>
+            (other.classType === ClassType.Practical || other.classType === ClassType.Lab) &&
+            orderKeyOf(other) < candidateOrderKey
+        ).length;
+        return practicesBefore * 120 * sequenceMultiplier * penaltyMultiplier;
+    }
+
+    return 0;
+};
+
+const getWeekSimilarityPenalty = (
+    entry: UnscheduledEntry,
+    date: Date,
+    timeSlotId: string,
+    allScheduleForScoring: ScheduleEntry[],
+    penaltyMultiplier: number
+) => {
+    const candidateWeekParity = getWeekNumber(date) % 2;
+    const relatedEntries = allScheduleForScoring.filter(other => {
+        if (!other.date || !entriesBelongToSameSeries(entry, other)) return false;
+        const otherDate = new Date(other.date + 'T00:00:00');
+        return getWeekNumber(otherDate) % 2 === candidateWeekParity;
+    });
+
+    if (relatedEntries.length === 0) return 0;
+
+    const patternCounts = new Map<string, number>();
+    relatedEntries.forEach(other => {
+        const key = `${other.day}::${other.timeSlotId}`;
+        patternCounts.set(key, (patternCounts.get(key) || 0) + 1);
+    });
+
+    const dominantPattern = Array.from(patternCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+    if (!dominantPattern) return 0;
+
+    const [dominantDay, dominantTimeSlotId] = dominantPattern.split('::');
+    const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+    let penalty = 0;
+    if (dayName !== dominantDay) penalty += 90;
+    if (timeSlotId !== dominantTimeSlotId) penalty += 60;
+    return penalty * penaltyMultiplier;
+};
+
 // Calculates the "cost" of placing a class in a specific slot.
 const calculateSlotCost = (
     entry: UnscheduledEntry,
@@ -1288,13 +1406,16 @@ const calculateSlotCost = (
 
     // Availability Grids
     const teacherAvailability = teacher?.availabilityGrid?.[dayName]?.[timeSlotId];
+    if (teacherAvailability === AvailabilityType.Forbidden) return Infinity;
     if (teacherAvailability === AvailabilityType.Undesirable) cost += 20 * penaltyMultiplier;
     if (teacherAvailability === AvailabilityType.Desirable) cost -= 10 * penaltyMultiplier;
     involvedGroups.forEach(g => {
         const groupAvailability = g.availabilityGrid?.[dayName]?.[timeSlotId];
+        if (groupAvailability === AvailabilityType.Forbidden) cost = Infinity;
         if (groupAvailability === AvailabilityType.Undesirable) cost += 20 * penaltyMultiplier;
         if (groupAvailability === AvailabilityType.Desirable) cost -= 10 * penaltyMultiplier;
     });
+    if (cost === Infinity) return Infinity;
 
     // Pinned Classrooms
     const teacherPin = teacher?.pinnedClassroomId;
@@ -1337,6 +1458,7 @@ const calculateSlotCost = (
     // Day Load Penalty
     const teacherBookingsToday = allScheduleForScoring.filter(e => e.teacherId === teacher?.id && e.date === dateStr);
     const teacherClassesOnDay = teacherBookingsToday.length;
+    cost += getTeacherLoadPenalty(entry.teacherId, dateStr, allScheduleForScoring, penaltyMultiplier);
 
     if (settings.enforceStandardRules && teacherClassesOnDay >= 4) {
         cost += (teacherClassesOnDay - 3) * 150 * penaltyMultiplier;
@@ -1444,6 +1566,9 @@ const calculateSlotCost = (
             cost += weekDifference * 150 * penaltyMultiplier;
         }
     }
+
+    cost += getWeekSimilarityPenalty(entry, date, timeSlotId, allScheduleForScoring, penaltyMultiplier);
+    cost += getLectureSequencePenalty(entry, dateStr, timeSlotId, activeTimeSlots, allScheduleForScoring, penaltyMultiplier, enforceLectureOrder);
 
     // Lecture-Practice Order Penalty
     if (enforceLectureOrder) {
@@ -1595,7 +1720,8 @@ export const optimizeScheduleLocally = async (
         return previous && (
             previous.date !== entry.date ||
             previous.timeSlotId !== entry.timeSlotId ||
-            previous.classroomId !== entry.classroomId
+            previous.classroomId !== entry.classroomId ||
+            previous.teacherId !== entry.teacherId
         );
     }).length;
 
@@ -1698,7 +1824,7 @@ async function refineSchedule(
             removeBooking(resourceBookings, `classroom-${currentEntryInSchedule.classroomId}`, originalBookingKey);
             getEntryGroupIds(currentEntryInSchedule).forEach(gid => removeBooking(resourceBookings, `group-${gid}`, originalBookingKey));
 
-            let bestAlternativeSlot: { date: Date, timeSlotId: string, classroom: Classroom, cost: number } | null = null;
+            let bestAlternativeSlot: { date: Date, timeSlotId: string, classroom: Classroom, teacherId: string, cost: number } | null = null;
 
             const involvedGroups = getInvolvedGroups(entryToMove, index);
             const subGroup = entryToMove.subgroupId ? index.subgroupsById.get(entryToMove.subgroupId) : undefined;
@@ -1707,9 +1833,15 @@ async function refineSchedule(
             const unscheduledVersion = { ...entryToMove, studentCount, uid: entryToMove.unscheduledUid! } as unknown as UnscheduledEntry;
 
             const subject = index.subjectsById.get(unscheduledVersion.subjectId);
-            if (!subject) continue;
+            if (!subject) {
+                addBooking(resourceBookings, `teacher-${currentEntryInSchedule.teacherId}`, originalBookingKey);
+                addBooking(resourceBookings, `classroom-${currentEntryInSchedule.classroomId}`, originalBookingKey);
+                getEntryGroupIds(currentEntryInSchedule).forEach(gid => addBooking(resourceBookings, `group-${gid}`, originalBookingKey));
+                continue;
+            }
             const suitableClassrooms = getSuitableClassrooms(unscheduledVersion, subject, index) || [];
-            const primaryClassrooms = getPrimaryClassroomCandidates(unscheduledVersion, subject, suitableClassrooms, involvedGroups, [unscheduledVersion.teacherId], data, config, index);
+            const teacherCandidates = getTeacherCandidates(unscheduledVersion.subjectId, unscheduledVersion.classType, index, unscheduledVersion.teacherId);
+            const primaryClassrooms = getPrimaryClassroomCandidates(unscheduledVersion, subject, suitableClassrooms, involvedGroups, teacherCandidates, data, config, index);
             const primaryWorkDays = getPrimaryWorkDaysForEntry(unscheduledVersion, workDays, config.distributeEvenly);
 
             const scanAlternativeClassrooms = async (classroomsToScan: Classroom[], daysToScan: Date[]) => {
@@ -1722,16 +1854,25 @@ async function refineSchedule(
 
                     for (const timeSlot of compatibleTimeSlots) {
                         const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
-                        if (resourceBookings.get(`teacher-${unscheduledVersion.teacherId}`)?.has(bookingKey)) continue;
                         if (involvedGroups.some(g => resourceBookings.get(`group-${g.id}`)?.has(bookingKey))) continue;
 
-                        for (const classroom of classroomsToScan) {
-                            if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
+                        for (const teacherId of teacherCandidates) {
+                            if (resourceBookings.get(`teacher-${teacherId}`)?.has(bookingKey)) continue;
+                            if (index.teachersById.get(teacherId)?.availabilityGrid?.[DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1]]?.[timeSlot.id] === AvailabilityType.Forbidden) continue;
 
-                            const cost = calculateSlotCost(unscheduledVersion, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, config.strictness / 4.0, refinedSchedule.filter(e => e.id !== entryToMove.id), config, activeTimeSlots, index);
+                            const candidateVersion = { ...unscheduledVersion, teacherId };
 
-                            if (cost < (bestAlternativeSlot?.cost ?? Infinity)) {
-                                bestAlternativeSlot = { date, timeSlotId: timeSlot.id, classroom, cost };
+                            for (const classroom of classroomsToScan) {
+                                if (resourceBookings.get(`classroom-${classroom.id}`)?.has(bookingKey)) continue;
+
+                                let cost = calculateSlotCost(candidateVersion, date, timeSlot.id, classroom, involvedGroups, resourceBookings, data, config.strictness / 4.0, refinedSchedule.filter(e => e.id !== entryToMove.id), config, activeTimeSlots, index);
+                                if (teacherId !== entryToMove.teacherId) {
+                                    cost += 35 * (config.strictness / 5.0);
+                                }
+
+                                if (cost < (bestAlternativeSlot?.cost ?? Infinity)) {
+                                    bestAlternativeSlot = { date, timeSlotId: timeSlot.id, classroom, teacherId, cost };
+                                }
                             }
                         }
                     }
@@ -1760,12 +1901,17 @@ async function refineSchedule(
                         day: DAYS_OF_WEEK[newEntryData.date.getDay() === 0 ? 6 : newEntryData.date.getDay() - 1],
                         timeSlotId: newEntryData.timeSlotId,
                         classroomId: newEntryData.classroom.id,
+                        teacherId: newEntryData.teacherId,
                     };
 
                     const newBookingKey = `${toYYYYMMDD(newEntryData.date)}-${newEntryData.timeSlotId}`;
-                    addBooking(resourceBookings, `teacher-${entryToMove.teacherId}`, newBookingKey);
+                    addBooking(resourceBookings, `teacher-${newEntryData.teacherId}`, newBookingKey);
                     addBooking(resourceBookings, `classroom-${newEntryData.classroom.id}`, newBookingKey);
                     getEntryGroupIds(entryToMove).forEach(gid => addBooking(resourceBookings, `group-${gid}`, newBookingKey));
+                } else {
+                    addBooking(resourceBookings, `teacher-${currentEntryInSchedule.teacherId}`, originalBookingKey);
+                    addBooking(resourceBookings, `classroom-${currentEntryInSchedule.classroomId}`, originalBookingKey);
+                    getEntryGroupIds(currentEntryInSchedule).forEach(gid => addBooking(resourceBookings, `group-${gid}`, originalBookingKey));
                 }
             } else {
                 addBooking(resourceBookings, `teacher-${currentEntryInSchedule.teacherId}`, originalBookingKey);
