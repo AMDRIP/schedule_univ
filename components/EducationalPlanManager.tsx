@@ -10,6 +10,7 @@ import {
     AttestationType,
     TeacherSubjectLink,
     ClassType,
+    FormOfStudy,
 } from '../types';
 import { PlusIcon, EditIcon, TrashIcon, BookOpenIcon, CopyIcon, DocumentTextIcon } from './icons';
 
@@ -250,6 +251,7 @@ const EducationalPlanManager: React.FC = () => {
         deleteItem,
     } = useStore();
     const [selectedSpecialtyId, setSelectedSpecialtyId] = useState<string>(specialties[0]?.id || '');
+    const [selectedFormOfStudy, setSelectedFormOfStudy] = useState<FormOfStudy>(FormOfStudy.FullTime);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [currentEntry, setCurrentEntry] = useState<PlanEntry | null>(null);
     const [copyDialog, setCopyDialog] = useState<CopyDialogState>(null);
@@ -264,8 +266,9 @@ const EducationalPlanManager: React.FC = () => {
     const [templateDialogDescription, setTemplateDialogDescription] = useState('');
 
     const activePlan = useMemo(() => {
-        return educationalPlans.find(p => p.specialtyId === selectedSpecialtyId);
-    }, [selectedSpecialtyId, educationalPlans]);
+        return educationalPlans.find(p => p.specialtyId === selectedSpecialtyId && p.formOfStudy === selectedFormOfStudy) ||
+            educationalPlans.find(p => p.specialtyId === selectedSpecialtyId && !p.formOfStudy);
+    }, [selectedSpecialtyId, selectedFormOfStudy, educationalPlans]);
 
     const activeBlocks = activePlan?.blocks || [];
     const availableCopyTargets = useMemo(() => specialties.filter(s => s.id !== selectedSpecialtyId), [specialties, selectedSpecialtyId]);
@@ -328,6 +331,12 @@ const EducationalPlanManager: React.FC = () => {
     }, [activePlan, subjects]);
 
     const updatePlan = (plan: EducationalPlan) => updateItem('educationalPlans', plan);
+    const createPlanPayload = (entries: PlanEntry[] = [], blocks: PlanBlock[] = []): Omit<EducationalPlan, 'id'> => ({
+        specialtyId: selectedSpecialtyId,
+        formOfStudy: selectedFormOfStudy,
+        blocks,
+        entries,
+    });
 
     const handleAddEntry = () => {
         setCurrentEntry(null);
@@ -373,11 +382,7 @@ const EducationalPlanManager: React.FC = () => {
         if (!selectedSpecialtyId) return;
 
         if (!activePlan) {
-            addItem('educationalPlans', {
-                specialtyId: selectedSpecialtyId,
-                blocks: [],
-                entries: [finalEntry],
-            });
+            addItem('educationalPlans', createPlanPayload([finalEntry], []));
         } else {
             const existingEntryIndex = activePlan.entries.findIndex(e => e.subjectId === currentEntry?.subjectId && e.semester === currentEntry?.semester);
             const updatedEntries = [...activePlan.entries];
@@ -386,7 +391,7 @@ const EducationalPlanManager: React.FC = () => {
             } else {
                 updatedEntries.push(finalEntry);
             }
-            updatePlan({ ...activePlan, entries: sortPlanEntries(updatedEntries), blocks: activePlan.blocks || [] });
+            updatePlan({ ...activePlan, formOfStudy: activePlan.formOfStudy || selectedFormOfStudy, entries: sortPlanEntries(updatedEntries), blocks: activePlan.blocks || [] });
         }
 
         applyTeacherBindings(subjectId, bindings);
@@ -412,13 +417,9 @@ const EducationalPlanManager: React.FC = () => {
             const color = BLOCK_COLORS[(activePlan?.blocks || []).length % BLOCK_COLORS.length];
             const block: PlanBlock = { id: createLocalId('plan-block'), name, color };
             if (activePlan) {
-                updatePlan({ ...activePlan, blocks: [...(activePlan.blocks || []), block] });
+                updatePlan({ ...activePlan, formOfStudy: activePlan.formOfStudy || selectedFormOfStudy, blocks: [...(activePlan.blocks || []), block] });
             } else {
-                addItem('educationalPlans', {
-                    specialtyId: selectedSpecialtyId,
-                    blocks: [block],
-                    entries: [],
-                });
+                addItem('educationalPlans', createPlanPayload([], [block]));
             }
         } else if (activePlan && blockDialog.block) {
             updatePlan({
@@ -501,15 +502,17 @@ const EducationalPlanManager: React.FC = () => {
         let createdPlans = 0;
         let updatedPlans = 0;
         targetSpecialtyIds.forEach(targetSpecialtyId => {
-            const targetPlan = educationalPlans.find(plan => plan.specialtyId === targetSpecialtyId);
+            const targetPlan = educationalPlans.find(plan => plan.specialtyId === targetSpecialtyId && plan.formOfStudy === selectedFormOfStudy) ||
+                educationalPlans.find(plan => plan.specialtyId === targetSpecialtyId && !plan.formOfStudy);
             if (targetPlan) {
                 const nextBlocks = copyDialog.mode === 'plan' && replaceTargetPlan ? blocks : mergeBlocks(targetPlan.blocks || [], blocks);
                 const nextEntries = copyDialog.mode === 'plan' && replaceTargetPlan ? sortPlanEntries(entries) : mergePlanEntries(targetPlan.entries, entries);
-                updatePlan({ ...targetPlan, blocks: nextBlocks, entries: nextEntries });
+                updatePlan({ ...targetPlan, formOfStudy: targetPlan.formOfStudy || selectedFormOfStudy, blocks: nextBlocks, entries: nextEntries });
                 updatedPlans += 1;
             } else {
                 addItem('educationalPlans', {
                     specialtyId: targetSpecialtyId,
+                    formOfStudy: selectedFormOfStudy,
                     blocks,
                     entries: sortPlanEntries(entries),
                 });
@@ -564,16 +567,13 @@ const EducationalPlanManager: React.FC = () => {
         const entries = selectedTemplate.entries.map(entry => ({ ...entry }));
         if (!selectedSpecialtyId) return;
         if (!activePlan) {
-            addItem('educationalPlans', {
-                specialtyId: selectedSpecialtyId,
-                blocks,
-                entries: sortPlanEntries(entries),
-            });
+            addItem('educationalPlans', createPlanPayload(sortPlanEntries(entries), blocks));
         } else if (templateMethod === 'replace') {
-            updatePlan({ ...activePlan, blocks, entries: sortPlanEntries(entries) });
+            updatePlan({ ...activePlan, formOfStudy: activePlan.formOfStudy || selectedFormOfStudy, blocks, entries: sortPlanEntries(entries) });
         } else {
             updatePlan({
                 ...activePlan,
+                formOfStudy: activePlan.formOfStudy || selectedFormOfStudy,
                 blocks: mergeBlocks(activePlan.blocks || [], blocks),
                 entries: mergePlanEntries(activePlan.entries, entries),
             });
@@ -613,6 +613,9 @@ const EducationalPlanManager: React.FC = () => {
                 <div className="flex flex-wrap items-center gap-3">
                     <select value={selectedSpecialtyId} onChange={e => setSelectedSpecialtyId(e.target.value)} className="p-2 border rounded-md bg-white min-w-[300px] text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75">
                         {specialties.map(s => <option key={s.id} value={s.id}>{s.code} {s.name}</option>)}
+                    </select>
+                    <select value={selectedFormOfStudy} onChange={e => setSelectedFormOfStudy(e.target.value as FormOfStudy)} className="p-2 border rounded-md bg-white min-w-[180px] text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-75">
+                        {Object.values(FormOfStudy).map(value => <option key={value} value={value}>{value}</option>)}
                     </select>
                     <button onClick={handleAddBlock} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2 px-4 rounded-lg flex items-center shrink-0 transition-transform transform hover:scale-105 active:scale-95">
                         <PlusIcon className="w-5 h-5 mr-2" />
@@ -854,7 +857,7 @@ const EducationalPlanManager: React.FC = () => {
                                             <input type="checkbox" checked={targetSpecialtyIds.includes(specialty.id)} onChange={() => toggleTargetSpecialty(specialty.id)} className="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
                                             <span>
                                                 <span className="block text-sm font-semibold text-gray-900">{getSpecialtyLabel(specialty)}</span>
-                                                <span className="block text-xs text-gray-500">{educationalPlans.some(plan => plan.specialtyId === specialty.id) ? 'Есть учебный план: совпадающие дисциплины будут обновлены' : 'Учебного плана пока нет: он будет создан'}</span>
+                                                <span className="block text-xs text-gray-500">{educationalPlans.some(plan => plan.specialtyId === specialty.id && (plan.formOfStudy === selectedFormOfStudy || !plan.formOfStudy)) ? `Есть учебный план (${selectedFormOfStudy}): совпадающие дисциплины будут обновлены` : `Учебного плана (${selectedFormOfStudy}) пока нет: он будет создан`}</span>
                                             </span>
                                         </label>
                                     ))}

@@ -70,7 +70,7 @@ const initialSubjects: Subject[] = [
     { id: 'sub2', name: 'Базы данных', classroomTypeRequirements: { [ClassType.Lecture]: ['ct1'], [ClassType.Lab]: ['ct3', 'ct4'] }, color: 'red' },
 ];
 const initialEducationalPlans: EducationalPlan[] = [
-    { id: 'plan1', specialtyId: 'spec1', entries: [
+    { id: 'plan1', specialtyId: 'spec1', formOfStudy: FormOfStudy.FullTime, entries: [
         { subjectId: 'sub1', semester: 1, lectureHours: 32, practiceHours: 32, labHours: 0, attestation: AttestationType.Exam, splitForSubgroups: true },
         { subjectId: 'sub2', semester: 1, lectureHours: 16, practiceHours: 0, labHours: 32, attestation: AttestationType.Test },
     ]}
@@ -171,13 +171,18 @@ const streamCanScheduleLecture = (stream: Stream, subjectId: string) => {
     return isLectureStream && matchesSubject;
 };
 
+const findEducationalPlanForGroup = (educationalPlans: EducationalPlan[], group: Pick<Group, 'specialtyId' | 'formOfStudy'>) =>
+    educationalPlans.find(plan => plan.specialtyId === group.specialtyId && plan.formOfStudy === group.formOfStudy) ||
+    educationalPlans.find(plan => plan.specialtyId === group.specialtyId && !plan.formOfStudy) ||
+    educationalPlans.find(plan => plan.specialtyId === group.specialtyId);
+
 const groupHasLectureInSemester = (
     group: Group,
     subjectId: string,
     semester: number,
     educationalPlans: EducationalPlan[]
 ) => {
-    const plan = educationalPlans.find(p => p.specialtyId === group.specialtyId);
+    const plan = findEducationalPlanForGroup(educationalPlans, group);
     return !!plan?.entries.some(entry =>
         entry.semester === semester &&
         entry.subjectId === subjectId &&
@@ -270,7 +275,7 @@ const generateUnscheduledEntries = (
     const processedGroupLectures = new Set<string>();
 
     groups.forEach(group => {
-        const plan = educationalPlans.find(p => p.specialtyId === group.specialtyId);
+        const plan = findEducationalPlanForGroup(educationalPlans, group);
         if (!plan) return;
 
         const groupSubgroups = subgroups.filter(sg => sg.parentGroupId === group.id);

@@ -149,13 +149,18 @@ const CohortManager: React.FC = () => {
     return groupCount + subgroupCount;
   };
 
+  const getPlanForGroup = (group: Group) =>
+    educationalPlans.find(item => item.specialtyId === group.specialtyId && item.formOfStudy === group.formOfStudy) ||
+    educationalPlans.find(item => item.specialtyId === group.specialtyId && !item.formOfStudy) ||
+    educationalPlans.find(item => item.specialtyId === group.specialtyId);
+
   const qualityIssues = useMemo(() => {
     const issues: { title: string; detail: string; severity: 'critical' | 'warning' | 'info'; groupId?: string }[] = [];
 
     groups.forEach(group => {
       const groupSubgroups = subgroups.filter(item => item.parentGroupId === group.id);
       const subgroupTotal = groupSubgroups.reduce((sum, item) => sum + item.studentCount, 0);
-      const plan = educationalPlans.find(item => item.specialtyId === group.specialtyId);
+      const plan = getPlanForGroup(group);
       const splitRequired = plan?.entries.some(entry => entry.splitForSubgroups);
 
       if (!group.specialtyId || !specialties.some(item => item.id === group.specialtyId)) {
@@ -301,7 +306,7 @@ const CohortManager: React.FC = () => {
     const payload = {
       ...streamDraft,
       name: streamDraft.name.trim(),
-      groupIds: streamDraft.groupIds.length > 0 ? streamDraft.groupIds : selectedGroups,
+      groupIds: selectedGroups,
       subgroupIds: streamDraft.subgroupIds || [],
       maxStudentCount: Number(streamDraft.maxStudentCount) || undefined,
       semester: Number(streamDraft.semester) || undefined,

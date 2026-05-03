@@ -62,7 +62,7 @@ interface SchedulerIndex {
     productionByDate: Map<string, ProductionCalendarEvent>;
     subgroupsById: Map<string, Subgroup>;
     subgroupsByParent: Map<string, Subgroup[]>;
-    plansBySpecialty: Map<string, EducationalPlan>;
+    plansBySpecialty: Map<string, EducationalPlan[]>;
     groupToStreamIds: Map<string, string[]>;
     teacherLinksBySubjectType: Map<string, TeacherSubjectLink[]>;
     classroomsByType: Map<string, Classroom[]>;
@@ -119,7 +119,12 @@ const createSchedulerIndex = (data: GenerationData): SchedulerIndex => {
         productionByDate: new Map(data.productionCalendar.map(event => [event.date, event])),
         subgroupsById: mapById(data.subgroups),
         subgroupsByParent,
-        plansBySpecialty: new Map(data.educationalPlans.map(plan => [plan.specialtyId, plan])),
+        plansBySpecialty: data.educationalPlans.reduce((map, plan) => {
+            const current = map.get(plan.specialtyId) || [];
+            current.push(plan);
+            map.set(plan.specialtyId, current);
+            return map;
+        }, new Map<string, EducationalPlan[]>()),
         groupToStreamIds,
         teacherLinksBySubjectType,
         classroomsByType,
@@ -365,8 +370,15 @@ const streamCanScheduleLecture = (stream: Stream, subjectId: string) => {
     return isLectureStream && matchesSubject;
 };
 
+const getPlanForGroup = (group: Group, index: SchedulerIndex) => {
+    const plans = index.plansBySpecialty.get(group.specialtyId) || [];
+    return plans.find(plan => plan.formOfStudy === group.formOfStudy) ||
+        plans.find(plan => !plan.formOfStudy) ||
+        plans[0];
+};
+
 const groupHasLecture = (group: Group, subjectId: string, semester: number, index: SchedulerIndex) => {
-    const plan = index.plansBySpecialty.get(group.specialtyId);
+    const plan = getPlanForGroup(group, index);
     return !!plan?.entries.some(entry =>
         entry.semester === semester &&
         entry.subjectId === subjectId &&
@@ -559,7 +571,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
     const processedGroupLectures = new Set<string>();
 
     groups.forEach(group => {
-        const plan = index.plansBySpecialty.get(group.specialtyId);
+        const plan = getPlanForGroup(group, index);
         if (!plan) return;
 
         const groupSubgroups = index.subgroupsByParent.get(group.id) || [];

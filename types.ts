@@ -295,6 +295,7 @@ export interface PlanBlock extends BaseItem {
 
 export interface EducationalPlan extends BaseItem {
   specialtyId: string;
+  formOfStudy?: FormOfStudy;
   blocks?: PlanBlock[];
   entries: PlanEntry[];
 }

@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
-import { ClassType, Classroom, Department, EducationalPlan, Group, ScheduleEntry, Specialty, Subject, Teacher } from '../types';
+import { ClassType, Classroom, Department, EducationalPlan, FormOfStudy, Group, ScheduleEntry, Specialty, Subject, Teacher } from '../types';
 
 type ResourceStat = {
   id: string;
@@ -72,11 +72,15 @@ type LoadLimitIssue = {
 
 type WhatIfScenario = {
   specialtyId: string;
+  formOfStudy: FormOfStudy | '';
+  course: number;
   groupIds: string[];
   plannedGroups: Array<{
     id: string;
     number: string;
     specialtyId: string;
+    formOfStudy: FormOfStudy;
+    course: number;
     studentCount: number;
   }>;
   extraGroups: number;
@@ -147,6 +151,8 @@ const AnalyticsView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'overview' | 'departments' | 'teachers' | 'groups' | 'classrooms' | 'whatif' | 'advice'>('overview');
   const [whatIf, setWhatIf] = useState<WhatIfScenario>({
     specialtyId: '',
+    formOfStudy: '',
+    course: 1,
     groupIds: [],
     plannedGroups: [],
     extraGroups: settings.whatIfDefaults.extraGroups,
@@ -163,6 +169,8 @@ const AnalyticsView: React.FC = () => {
   const [whatIfGroupDraft, setWhatIfGroupDraft] = useState({
     number: '',
     specialtyId: '',
+    formOfStudy: FormOfStudy.FullTime,
+    course: 1,
     studentCount: settings.whatIfDefaults.studentsPerGroup,
   });
 
@@ -328,7 +336,7 @@ const AnalyticsView: React.FC = () => {
 
     educationalPlans.forEach(plan => {
       const specialtyName = specialtyById.get(plan.specialtyId)?.name || plan.specialtyId;
-      const planGroups = groups.filter(group => group.specialtyId === plan.specialtyId);
+      const planGroups = groups.filter(group => group.specialtyId === plan.specialtyId && (!plan.formOfStudy || group.formOfStudy === plan.formOfStudy));
       plan.entries.forEach(entry => {
         const classHours: Array<[ClassType, number]> = [
           [ClassType.Lecture, entry.lectureHours],
@@ -516,25 +524,35 @@ const AnalyticsView: React.FC = () => {
     const selectedExistingGroups = groups
       .filter(group =>
         whatIf.groupIds.includes(group.id) &&
-        (!whatIf.specialtyId || group.specialtyId === whatIf.specialtyId)
+        (!whatIf.specialtyId || group.specialtyId === whatIf.specialtyId) &&
+        (!whatIf.formOfStudy || group.formOfStudy === whatIf.formOfStudy) &&
+        (!whatIf.course || group.course === whatIf.course)
       )
       .map(group => ({
         id: group.id,
         number: group.number,
         specialtyId: group.specialtyId,
+        formOfStudy: group.formOfStudy,
+        course: group.course,
         studentCount: group.studentCount,
       }));
     const plannedScenarioGroups = whatIf.plannedGroups.filter(group =>
-      !whatIf.specialtyId || group.specialtyId === whatIf.specialtyId
+      (!whatIf.specialtyId || group.specialtyId === whatIf.specialtyId) &&
+      (!whatIf.formOfStudy || group.formOfStudy === whatIf.formOfStudy) &&
+      (!whatIf.course || group.course === whatIf.course)
     );
     const scenarioGroups = [...selectedExistingGroups, ...plannedScenarioGroups];
-    const planBySpecialty = new Map<string, EducationalPlan>(educationalPlans.map(plan => [plan.specialtyId, plan]));
+    const findPlanForScenarioGroup = (group: typeof scenarioGroups[number]) =>
+      educationalPlans.find(plan => plan.specialtyId === group.specialtyId && plan.formOfStudy === group.formOfStudy) ||
+      educationalPlans.find(plan => plan.specialtyId === group.specialtyId && !plan.formOfStudy) ||
+      educationalPlans.find(plan => plan.specialtyId === group.specialtyId);
     const subjectById = new Map<string, Subject>(subjects.map(subject => [subject.id, subject]));
     const addedPlanNeeds: WhatIfNeed[] = [];
 
     scenarioGroups.forEach(group => {
-      const plan = planBySpecialty.get(group.specialtyId);
-      plan?.entries.forEach(entry => {
+      const plan = findPlanForScenarioGroup(group);
+      const courseSemesters = new Set([group.course * 2 - 1, group.course * 2]);
+      plan?.entries.filter(entry => courseSemesters.has(entry.semester || 1)).forEach(entry => {
         const subjectName = subjectById.get(entry.subjectId)?.name || 'Дисциплина';
         [
           [ClassType.Lecture, entry.lectureHours],
@@ -790,13 +808,43 @@ const AnalyticsView: React.FC = () => {
       specialtyId,
       groupIds: prev.groupIds.filter(groupId => {
         const group = groups.find(item => item.id === groupId);
-        return !specialtyId || group?.specialtyId === specialtyId;
+        return (!specialtyId || group?.specialtyId === specialtyId) &&
+          (!prev.formOfStudy || group?.formOfStudy === prev.formOfStudy) &&
+          (!prev.course || group?.course === prev.course);
       }),
     }));
     setWhatIfGroupDraft(prev => ({
       ...prev,
       specialtyId: specialtyId || prev.specialtyId,
     }));
+  };
+
+  const updateWhatIfFormOfStudy = (formOfStudy: FormOfStudy | '') => {
+    setWhatIf(prev => ({
+      ...prev,
+      formOfStudy,
+      groupIds: prev.groupIds.filter(groupId => {
+        const group = groups.find(item => item.id === groupId);
+        return (!formOfStudy || group?.formOfStudy === formOfStudy) &&
+          (!prev.specialtyId || group?.specialtyId === prev.specialtyId) &&
+          (!prev.course || group?.course === prev.course);
+      }),
+    }));
+    if (formOfStudy) setWhatIfGroupDraft(prev => ({ ...prev, formOfStudy }));
+  };
+
+  const updateWhatIfCourse = (course: number) => {
+    setWhatIf(prev => ({
+      ...prev,
+      course,
+      groupIds: prev.groupIds.filter(groupId => {
+        const group = groups.find(item => item.id === groupId);
+        return (!course || group?.course === course) &&
+          (!prev.specialtyId || group?.specialtyId === prev.specialtyId) &&
+          (!prev.formOfStudy || group?.formOfStudy === prev.formOfStudy);
+      }),
+    }));
+    setWhatIfGroupDraft(prev => ({ ...prev, course: course || prev.course }));
   };
 
   const toggleWhatIfGroup = (groupId: string) => {
@@ -824,6 +872,8 @@ const AnalyticsView: React.FC = () => {
           id: `whatif-group-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           number,
           specialtyId,
+          formOfStudy: whatIfGroupDraft.formOfStudy || whatIf.formOfStudy || FormOfStudy.FullTime,
+          course: Math.max(1, whatIfGroupDraft.course || whatIf.course || 1),
           studentCount: Math.max(1, whatIfGroupDraft.studentCount),
         },
       ],
@@ -839,7 +889,11 @@ const AnalyticsView: React.FC = () => {
   };
 
   const whatIfGroupOptions = groups
-    .filter(group => !whatIf.specialtyId || group.specialtyId === whatIf.specialtyId)
+    .filter(group =>
+      (!whatIf.specialtyId || group.specialtyId === whatIf.specialtyId) &&
+      (!whatIf.formOfStudy || group.formOfStudy === whatIf.formOfStudy) &&
+      (!whatIf.course || group.course === whatIf.course)
+    )
     .sort((a, b) => a.number.localeCompare(b.number, 'ru'));
 
   const numberInput = (label: string, value: number, onChange: (value: number) => void, min = 0) => (
@@ -1009,6 +1063,20 @@ const AnalyticsView: React.FC = () => {
                     ))}
                   </select>
                 </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="text-xs font-semibold uppercase text-gray-500">Форма обучения</span>
+                    <select
+                      value={whatIf.formOfStudy}
+                      onChange={(event) => updateWhatIfFormOfStudy(event.target.value as FormOfStudy | '')}
+                      className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="">Все формы</option>
+                      {Object.values(FormOfStudy).map(value => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                  </label>
+                  {numberInput('Курс сценария', whatIf.course, value => updateWhatIfCourse(Math.max(1, value)), 1)}
+                </div>
                 <div>
                   <div className="text-xs font-semibold uppercase text-gray-500">Конкретные группы</div>
                   <div className="mt-1 max-h-56 space-y-1 overflow-auto rounded-md border border-gray-200 bg-white p-2">
@@ -1016,7 +1084,7 @@ const AnalyticsView: React.FC = () => {
                       <label key={group.id} className="flex items-center justify-between gap-3 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
                         <span>
                           <span className="font-medium text-gray-900">{group.number}</span>
-                          <span className="ml-2 text-xs text-gray-500">{group.studentCount} студ.</span>
+                          <span className="ml-2 text-xs text-gray-500">{group.course} курс · {group.formOfStudy} · {group.studentCount} студ.</span>
                         </span>
                         <input
                           type="checkbox"
@@ -1051,6 +1119,20 @@ const AnalyticsView: React.FC = () => {
                         <option key={specialty.id} value={specialty.id}>{specialty.code} {specialty.name}</option>
                       ))}
                     </select>
+                    <select
+                      value={whatIfGroupDraft.formOfStudy || whatIf.formOfStudy || FormOfStudy.FullTime}
+                      onChange={(event) => setWhatIfGroupDraft(prev => ({ ...prev, formOfStudy: event.target.value as FormOfStudy }))}
+                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      {Object.values(FormOfStudy).map(value => <option key={value} value={value}>{value}</option>)}
+                    </select>
+                    <input
+                      type="number"
+                      min={1}
+                      value={whatIfGroupDraft.course || whatIf.course || 1}
+                      onChange={(event) => setWhatIfGroupDraft(prev => ({ ...prev, course: Math.max(1, Number(event.target.value) || 1) }))}
+                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
                     <input
                       type="number"
                       min={1}
@@ -1072,7 +1154,7 @@ const AnalyticsView: React.FC = () => {
                         const specialty = specialties.find(item => item.id === group.specialtyId);
                         return (
                           <div key={group.id} className="flex items-center justify-between gap-2 rounded bg-white px-2 py-1.5 text-xs text-gray-700">
-                            <span><span className="font-semibold text-gray-900">{group.number}</span> · {group.studentCount} студ. · {specialty?.code || 'без кода'}</span>
+                            <span><span className="font-semibold text-gray-900">{group.number}</span> · {group.course} курс · {group.formOfStudy} · {group.studentCount} студ. · {specialty?.code || 'без кода'}</span>
                             <button type="button" onClick={() => removePlannedWhatIfGroup(group.id)} className="text-red-600 hover:text-red-800">Убрать</button>
                           </div>
                         );

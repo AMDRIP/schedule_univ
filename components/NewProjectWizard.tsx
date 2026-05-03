@@ -308,7 +308,9 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
     ]);
 
     const getPlanForSpecialty = (specialtyId: string) => {
-        return educationalPlans.find(plan => plan.specialtyId === specialtyId);
+        return educationalPlans.find(plan => plan.specialtyId === specialtyId && plan.formOfStudy === FormOfStudy.FullTime) ||
+            educationalPlans.find(plan => plan.specialtyId === specialtyId && !plan.formOfStudy) ||
+            educationalPlans.find(plan => plan.specialtyId === specialtyId);
     };
 
     const updateSpecialty = (id: string, field: keyof Specialty, value: string) => {
@@ -374,11 +376,12 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
 
     const addPlanEntry = (specialtyId: string) => {
         setEducationalPlans(prev => {
-            const existingPlan = prev.find(plan => plan.specialtyId === specialtyId);
+            const existingPlan = prev.find(plan => plan.specialtyId === specialtyId && plan.formOfStudy === FormOfStudy.FullTime) ||
+                prev.find(plan => plan.specialtyId === specialtyId && !plan.formOfStudy);
             if (existingPlan) {
                 return prev.map(plan =>
-                    plan.specialtyId === specialtyId
-                        ? { ...plan, entries: [...plan.entries, createPlanEntry(subjects[0]?.id || '')] }
+                    plan.id === existingPlan.id
+                        ? { ...plan, formOfStudy: plan.formOfStudy || FormOfStudy.FullTime, entries: [...plan.entries, createPlanEntry(subjects[0]?.id || '')] }
                         : plan,
                 );
             }
@@ -388,6 +391,7 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
                 {
                     id: generateId('plan'),
                     specialtyId,
+                    formOfStudy: FormOfStudy.FullTime,
                     entries: [createPlanEntry(subjects[0]?.id || '')],
                 },
             ];
@@ -397,9 +401,10 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
     const updatePlanEntry = (specialtyId: string, index: number, patch: Partial<PlanEntry>) => {
         setEducationalPlans(prev =>
             prev.map(plan =>
-                plan.specialtyId === specialtyId
+                plan.specialtyId === specialtyId && (plan.formOfStudy === FormOfStudy.FullTime || !plan.formOfStudy)
                     ? {
                         ...plan,
+                        formOfStudy: plan.formOfStudy || FormOfStudy.FullTime,
                         entries: plan.entries.map((entry, entryIndex) => (entryIndex === index ? { ...entry, ...patch } : entry)),
                     }
                     : plan,
@@ -411,8 +416,8 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
         setEducationalPlans(prev =>
             prev
                 .map(plan =>
-                    plan.specialtyId === specialtyId
-                        ? { ...plan, entries: plan.entries.filter((_, entryIndex) => entryIndex !== index) }
+                    plan.specialtyId === specialtyId && (plan.formOfStudy === FormOfStudy.FullTime || !plan.formOfStudy)
+                        ? { ...plan, formOfStudy: plan.formOfStudy || FormOfStudy.FullTime, entries: plan.entries.filter((_, entryIndex) => entryIndex !== index) }
                         : plan,
                 )
                 .filter(plan => plan.entries.length > 0),
