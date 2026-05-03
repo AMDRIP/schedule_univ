@@ -171,23 +171,6 @@ const streamCanScheduleLecture = (stream: Stream, subjectId: string) => {
     return isLectureStream && matchesSubject;
 };
 
-const selectLectureStreamForGroup = (groupId: string, subjectId: string, semester: number, streams: Stream[]) => {
-    const matchingStreams = streams.filter(stream =>
-        stream.groupIds.includes(groupId) &&
-        streamCanScheduleLecture(stream, subjectId)
-    );
-    const semesterMatchedStreams = matchingStreams.filter(stream => !stream.semester || stream.semester === semester);
-    const candidateStreams = semesterMatchedStreams.length > 0 ? semesterMatchedStreams : matchingStreams;
-
-    return candidateStreams.sort((a, b) => {
-        const subjectPriority = Number(!!b.subjectId) - Number(!!a.subjectId);
-        if (subjectPriority !== 0) return subjectPriority;
-        const semesterPriority = Number(b.semester === semester) - Number(a.semester === semester);
-        if (semesterPriority !== 0) return semesterPriority;
-        return b.groupIds.length - a.groupIds.length;
-    })[0];
-};
-
 const groupHasLectureInSemester = (
     group: Group,
     subjectId: string,
@@ -200,6 +183,54 @@ const groupHasLectureInSemester = (
         entry.subjectId === subjectId &&
         entry.lectureHours > 0
     );
+};
+
+const sameGroupSet = (first: string[], second: string[]) =>
+    first.length === second.length && first.every(id => second.includes(id));
+
+const getLectureGroupsForStream = (
+    stream: Stream,
+    subjectId: string,
+    semester: number,
+    groups: Group[],
+    educationalPlans: EducationalPlan[]
+) => groups.filter(candidate =>
+    stream.groupIds.includes(candidate.id) &&
+    groupHasLectureInSemester(candidate, subjectId, semester, educationalPlans)
+);
+
+const selectBestLectureStreamForGroup = (
+    groupId: string,
+    subjectId: string,
+    semester: number,
+    groups: Group[],
+    streams: Stream[],
+    educationalPlans: EducationalPlan[]
+) => {
+    const candidateStreams = streams.filter(stream =>
+        stream.groupIds.includes(groupId) &&
+        streamCanScheduleLecture(stream, subjectId) &&
+        (!stream.semester || stream.semester === semester)
+    );
+
+    return candidateStreams.sort((a, b) => {
+        const aLectureGroups = getLectureGroupsForStream(a, subjectId, semester, groups, educationalPlans);
+        const bLectureGroups = getLectureGroupsForStream(b, subjectId, semester, groups, educationalPlans);
+        const subjectPriority = Number(!!b.subjectId) - Number(!!a.subjectId);
+        if (subjectPriority !== 0) return subjectPriority;
+        const aSemesterExact = a.semester === semester;
+        const bSemesterExact = b.semester === semester;
+        const semesterPriority = Number(bSemesterExact) - Number(aSemesterExact);
+        if (semesterPriority !== 0) return semesterPriority;
+        const aExactCoverage = sameGroupSet(a.groupIds, aLectureGroups.map(g => g.id));
+        const bExactCoverage = sameGroupSet(b.groupIds, bLectureGroups.map(g => g.id));
+        if (aExactCoverage !== bExactCoverage) return Number(bExactCoverage) - Number(aExactCoverage);
+        const eligiblePriority = bLectureGroups.length - aLectureGroups.length;
+        if (eligiblePriority !== 0) return eligiblePriority;
+        const extraGroupPriority = (a.groupIds.length - aLectureGroups.length) - (b.groupIds.length - bLectureGroups.length);
+        if (extraGroupPriority !== 0) return extraGroupPriority;
+        return a.groupIds.length - b.groupIds.length;
+    })[0];
 };
 
 const normalizeLoadedScheduleDates = (schedule: ScheduleEntry[] = []) =>
@@ -253,19 +284,21 @@ const generateUnscheduledEntries = (
             // 1. Handle Lectures
             if (planEntry.lectureHours > 0 && !processedGroupLectures.has(lectureKey)) {
                 const numClasses = Math.ceil(planEntry.lectureHours / 2);
-                const stream = selectLectureStreamForGroup(group.id, planEntry.subjectId, planEntrySemester, streams);
+                const stream = selectBestLectureStreamForGroup(group.id, planEntry.subjectId, planEntrySemester, groups, streams, educationalPlans);
 
                 let lectureGroups: Group[] = [group];
                 
                 // If in a stream, find all other groups in that stream with the same lecture
                 if (stream) {
-                    lectureGroups = groups.filter(candidate =>
-                        stream.groupIds.includes(candidate.id) &&
-                        groupHasLectureInSemester(candidate, planEntry.subjectId, planEntrySemester, educationalPlans)
-                    );
+                    lectureGroups = getLectureGroupsForStream(stream, planEntry.subjectId, planEntrySemester, groups, educationalPlans);
                 }
                 
-                teacherId = stream?.teacherId || links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
+                const streamCoversExactly = stream
+                    ? sameGroupSet(stream.groupIds, lectureGroups.map(g => g.id))
+                    : false;
+                const exactStream = streamCoversExactly ? stream : undefined;
+
+                teacherId = exactStream?.teacherId || links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
                 if (teacherId) {
                     const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
                     const groupIds = lectureGroups.map(g => g.id);
@@ -277,11 +310,11 @@ const generateUnscheduledEntries = (
                             classType: ClassType.Lecture,
                             teacherId,
                             studentCount,
-                            classroomTypeIds: stream?.classroomTypeId ? [stream.classroomTypeId] : undefined,
+                            classroomTypeIds: exactStream?.classroomTypeId ? [exactStream.classroomTypeId] : undefined,
                         };
                         if (lectureGroups.length > 1) {
                             entry.groupIds = groupIds;
-                            if (stream) entry.streamId = stream.id;
+                            if (exactStream) entry.streamId = exactStream.id;
                         } else {
                             entry.groupId = group.id;
                         }
@@ -1012,8 +1045,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
 
       const targetTimeSlot = [...timeSlots, ...timeSlotsShortened].find(slot => slot.id === timeSlotId);
-      const streamGroupIds = item.streamId ? streams.find(stream => stream.id === item.streamId)?.groupIds || [] : [];
-      const itemGroupIds = streamGroupIds.length > 0 ? streamGroupIds : (item.groupIds || (item.groupId ? [item.groupId] : []));
+      const explicitGroupIds = item.groupIds?.length ? item.groupIds : (item.groupId ? [item.groupId] : []);
+      const streamGroupIds = item.streamId && explicitGroupIds.length === 0 ? streams.find(stream => stream.id === item.streamId)?.groupIds || [] : [];
+      const itemGroupIds = explicitGroupIds.length > 0 ? explicitGroupIds : streamGroupIds;
       const involvedGroups = groups.filter(group => itemGroupIds.includes(group.id));
       const placementStudentCount = involvedGroups.length > 1
         ? involvedGroups.reduce((sum, group) => sum + group.studentCount, 0)
@@ -1115,11 +1149,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const getPlacementGroupIds = (item: UnscheduledEntry | ScheduleEntry, targetGroupId: string) => {
     const explicitGroupIds = item.groupIds?.length ? item.groupIds : (item.groupId ? [item.groupId] : []);
+    if (explicitGroupIds.length > 0) return explicitGroupIds;
     if (item.streamId) {
       const streamGroupIds = streams.find(stream => stream.id === item.streamId)?.groupIds || [];
-      return streamGroupIds.length > 0 ? streamGroupIds : (explicitGroupIds.length > 0 ? explicitGroupIds : [targetGroupId]);
+      return streamGroupIds.length > 0 ? streamGroupIds : [targetGroupId];
     }
-    if (explicitGroupIds.length > 1) return explicitGroupIds;
     return [targetGroupId];
   };
 

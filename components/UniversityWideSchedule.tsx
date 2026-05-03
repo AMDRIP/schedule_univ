@@ -56,11 +56,11 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
 
   const getPlacementGroupIds = (item: UnscheduledEntry | ScheduleEntry, targetGroupId: string) => {
     const explicitGroupIds = item.groupIds?.length ? item.groupIds : (item.groupId ? [item.groupId] : []);
+    if (explicitGroupIds.length > 0) return explicitGroupIds;
     if (item.streamId) {
       const streamGroupIds = streams.find(stream => stream.id === item.streamId)?.groupIds || [];
-      return streamGroupIds.length > 0 ? streamGroupIds : (explicitGroupIds.length > 0 ? explicitGroupIds : [targetGroupId]);
+      return streamGroupIds.length > 0 ? streamGroupIds : [targetGroupId];
     }
-    if (explicitGroupIds.length > 1) return explicitGroupIds;
     return [targetGroupId];
   };
 

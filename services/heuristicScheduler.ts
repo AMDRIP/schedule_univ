@@ -236,6 +236,42 @@ const createResourceBookings = (
     return resourceBookings;
 };
 
+const getResourceKeysForEntry = (entry: Pick<ScheduleEntry, 'teacherId' | 'classroomId' | 'groupId' | 'groupIds'>) => [
+    `teacher-${entry.teacherId}`,
+    `classroom-${entry.classroomId}`,
+    ...getEntryGroupIds(entry).map(groupId => `group-${groupId}`),
+];
+
+const countResourceCollisions = (schedule: ScheduleEntry[]) => {
+    const seen = new Map<string, number>();
+    let collisions = 0;
+    schedule.forEach(entry => {
+        if (!entry.date || !entry.timeSlotId) return;
+        const bookingKey = `${entry.date}-${entry.timeSlotId}`;
+        getResourceKeysForEntry(entry).forEach(resourceKey => {
+            const key = `${resourceKey}-${bookingKey}`;
+            const current = seen.get(key) || 0;
+            collisions += current;
+            seen.set(key, current + 1);
+        });
+    });
+    return collisions;
+};
+
+const hasResourceBookingConflict = (
+    bookings: Map<string, Set<string>>,
+    entry: Pick<ScheduleEntry, 'teacherId'> | Pick<UnscheduledEntry, 'teacherId'>,
+    classroomId: string,
+    groupIds: string[],
+    dateStr: string,
+    timeSlotId: string
+) => {
+    const bookingKey = `${dateStr}-${timeSlotId}`;
+    if (bookings.get(`teacher-${entry.teacherId}`)?.has(bookingKey)) return true;
+    if (bookings.get(`classroom-${classroomId}`)?.has(bookingKey)) return true;
+    return groupIds.some(groupId => bookings.get(`group-${groupId}`)?.has(bookingKey));
+};
+
 const getRetainedExistingSchedule = (schedule: ScheduleEntry[], config: HeuristicConfig) => {
     if (!config.clearExisting) return schedule;
     const startDate = new Date(config.timeFrame.start + 'T00:00:00');
@@ -338,7 +374,16 @@ const groupHasLecture = (group: Group, subjectId: string, semester: number, inde
     );
 };
 
-const selectLectureStream = (groupId: string, subjectId: string, semester: number, index: SchedulerIndex) => {
+const sameGroupSet = (first: string[], second: string[]) =>
+    first.length === second.length && first.every(id => second.includes(id));
+
+const getLectureGroupsForStream = (stream: Stream, subjectId: string, semester: number, groups: Group[], index: SchedulerIndex) =>
+    groups.filter(candidate =>
+        stream.groupIds.includes(candidate.id) &&
+        groupHasLecture(candidate, subjectId, semester, index)
+    );
+
+const selectLectureStream = (groupId: string, subjectId: string, semester: number, groups: Group[], index: SchedulerIndex) => {
     const streamIds = index.groupToStreamIds.get(groupId) || [];
     const matchingStreams = streamIds
         .map(streamId => index.streamsById.get(streamId))
@@ -348,13 +393,25 @@ const selectLectureStream = (groupId: string, subjectId: string, semester: numbe
 
     return candidateStreams
         .sort((a, b) => {
+            const aLectureGroups = getLectureGroupsForStream(a, subjectId, semester, groups, index);
+            const bLectureGroups = getLectureGroupsForStream(b, subjectId, semester, groups, index);
+            const aCoversCurrentGroup = aLectureGroups.some(group => group.id === groupId);
+            const bCoversCurrentGroup = bLectureGroups.some(group => group.id === groupId);
+            if (aCoversCurrentGroup !== bCoversCurrentGroup) return Number(bCoversCurrentGroup) - Number(aCoversCurrentGroup);
             const subjectPriority = Number(!!b.subjectId) - Number(!!a.subjectId);
             if (subjectPriority !== 0) return subjectPriority;
             const aSemesterExact = a.semester === semester;
             const bSemesterExact = b.semester === semester;
             const semesterPriority = Number(bSemesterExact) - Number(aSemesterExact);
             if (semesterPriority !== 0) return semesterPriority;
-            return b.groupIds.length - a.groupIds.length;
+            const aExactCoverage = sameGroupSet(a.groupIds, aLectureGroups.map(group => group.id));
+            const bExactCoverage = sameGroupSet(b.groupIds, bLectureGroups.map(group => group.id));
+            if (aExactCoverage !== bExactCoverage) return Number(bExactCoverage) - Number(aExactCoverage);
+            const eligiblePriority = bLectureGroups.length - aLectureGroups.length;
+            if (eligiblePriority !== 0) return eligiblePriority;
+            const extraGroupPriority = (a.groupIds.length - aLectureGroups.length) - (b.groupIds.length - bLectureGroups.length);
+            if (extraGroupPriority !== 0) return extraGroupPriority;
+            return a.groupIds.length - b.groupIds.length;
         })[0];
 };
 
@@ -515,26 +572,28 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
             // 1. Handle Lectures
             if (planEntry.lectureHours > 0 && !processedGroupLectures.has(lectureKey)) {
                 const numClasses = Math.ceil(planEntry.lectureHours / 2);
-                const lectureStream = selectLectureStream(group.id, planEntry.subjectId, planEntrySemester, index);
+                const lectureStream = selectLectureStream(group.id, planEntry.subjectId, planEntrySemester, groups, index);
 
                 let lectureGroups: Group[] = [group];
 
                 // Lecture streams are optional filters: empty subject means any shared lecture,
                 // filled subject means only that discipline.
                 if (lectureStream) {
-                    lectureGroups = groups.filter(candidate =>
-                        lectureStream.groupIds.includes(candidate.id) &&
-                        groupHasLecture(candidate, planEntry.subjectId, planEntrySemester, index)
-                    );
+                    lectureGroups = getLectureGroupsForStream(lectureStream, planEntry.subjectId, planEntrySemester, groups, index);
                 }
 
-                const teacherCandidates = getTeacherCandidates(planEntry.subjectId, ClassType.Lecture, index, lectureStream?.teacherId);
+                const streamCoversExactly = lectureStream
+                    ? sameGroupSet(lectureStream.groupIds, lectureGroups.map(g => g.id))
+                    : false;
+                const exactLectureStream = streamCoversExactly ? lectureStream : undefined;
+
+                const teacherCandidates = getTeacherCandidates(planEntry.subjectId, ClassType.Lecture, index, exactLectureStream?.teacherId);
                 if (teacherCandidates.length > 0) {
                     const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
                     const groupIds = lectureGroups.map(g => g.id);
                     const subjectClassroomTypes = index.subjectsById.get(planEntry.subjectId)?.classroomTypeRequirements?.[ClassType.Lecture] || [];
                     const classroomTypeIds = Array.from(new Set([
-                        ...(lectureStream?.classroomTypeId ? [lectureStream.classroomTypeId] : []),
+                        ...(exactLectureStream?.classroomTypeId ? [exactLectureStream.classroomTypeId] : []),
                         ...subjectClassroomTypes,
                     ]));
 
@@ -550,7 +609,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                         };
                         if (lectureGroups.length > 1) {
                             entry.groupIds = groupIds;
-                            if (lectureStream) entry.streamId = lectureStream.id;
+                            if (exactLectureStream) entry.streamId = exactLectureStream.id;
                         } else {
                             entry.groupId = group.id;
                         }
@@ -668,7 +727,22 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                 return { ...entry, explanation };
             });
 
-            const result = { schedule: nativeSchedule, unschedulable, explanations };
+            const retainedExistingSchedule = getRetainedExistingSchedule(data.schedule, config);
+            const nativeBookings = createResourceBookings(
+                data.teachers,
+                data.groups,
+                data.classrooms,
+                [...retainedExistingSchedule, ...nativeSchedule]
+            );
+            const refinedNativeSchedule = await refineSchedule(
+                nativeSchedule,
+                { ...data, schedule: retainedExistingSchedule },
+                config,
+                nativeBookings,
+                index
+            );
+
+            const result = { schedule: refinedNativeSchedule, unschedulable, explanations };
             return { ...result, score: calculateScheduleScore(data, result, config) };
         } catch (e) {
             console.error("Native scheduler failed, falling back to JS implementation:", e);
@@ -1397,6 +1471,9 @@ const calculateSlotCost = (
     if (!areGroupsCompatibleWithTimeSlot(candidateTimeSlot, involvedGroups)) {
         return Infinity;
     }
+    if (hasResourceBookingConflict(bookings, entry, classroom.id, involvedGroups.map(group => group.id), dateStr, timeSlotId)) {
+        return Infinity;
+    }
 
     const allBookingsTodayForGroups = allScheduleForScoring.filter(e => {
         if (e.date !== dateStr) return false;
@@ -1480,6 +1557,14 @@ const calculateSlotCost = (
             cost += (count - 3) * 100 * penaltyMultiplier;
         }
     });
+
+    const singletonGroupDays = groupClassesOnDay.filter(count => count === 0).length;
+    if (singletonGroupDays > 0) {
+        cost += singletonGroupDays * 360 * penaltyMultiplier;
+    }
+    if (teacherClassesOnDay === 0) {
+        cost += 80 * penaltyMultiplier;
+    }
 
     if (settings.enforceStandardRules) {
         // Penalty for same subject on same day for a group
@@ -1611,21 +1696,13 @@ export const calculateScheduleScore = (
     const retainedExistingSchedule = getRetainedExistingSchedule(data.schedule, config);
     const bookings = createResourceBookings(data.teachers, data.groups, data.classrooms, [...retainedExistingSchedule, ...generatedSchedule]);
     let softPenalty = 0;
-    let hardViolations = 0;
+    let hardViolations = Math.max(
+        0,
+        countResourceCollisions([...retainedExistingSchedule, ...generatedSchedule]) - countResourceCollisions(retainedExistingSchedule)
+    );
 
-    const seenResourceSlots = new Set<string>();
     generatedSchedule.forEach(entry => {
         const bookingKey = `${entry.date}-${entry.timeSlotId}`;
-        const resourceKeys = [
-            `teacher-${entry.teacherId}`,
-            `classroom-${entry.classroomId}`,
-            ...getEntryGroupIds(entry).map(groupId => `group-${groupId}`),
-        ];
-        resourceKeys.forEach(resourceKey => {
-            const key = `${resourceKey}-${bookingKey}`;
-            if (seenResourceSlots.has(key)) hardViolations++;
-            seenResourceSlots.add(key);
-        });
 
         const involvedGroups = getInvolvedGroups(entry, index);
         const subGroup = entry.subgroupId ? index.subgroupsById.get(entry.subgroupId) : undefined;
@@ -1665,7 +1742,7 @@ export const calculateScheduleScore = (
 
     const unscheduled = result.unschedulable.length;
     return {
-        total: unscheduled * 1_000_000 + hardViolations * 250_000 + softPenalty,
+        total: unscheduled * 1_000_000 + hardViolations * 750_000 + softPenalty,
         unscheduled,
         hardViolations,
         softPenalty,
@@ -1780,6 +1857,10 @@ async function refineSchedule(
 
             const entryDate = new Date(entry.date + 'T00:00:00');
             const activeTimeSlots = getActiveTimeSlotsForDate(data, entry.date, index);
+            const bookingKey = `${entry.date}-${entry.timeSlotId}`;
+            removeBooking(resourceBookings, `teacher-${entry.teacherId}`, bookingKey);
+            removeBooking(resourceBookings, `classroom-${entry.classroomId}`, bookingKey);
+            getEntryGroupIds(entry).forEach(gid => removeBooking(resourceBookings, `group-${gid}`, bookingKey));
 
             const cost = calculateSlotCost(
                 { ...entry, studentCount, uid: entry.unscheduledUid! } as unknown as UnscheduledEntry,
@@ -1795,6 +1876,9 @@ async function refineSchedule(
                 activeTimeSlots,
                 index
             );
+            addBooking(resourceBookings, `teacher-${entry.teacherId}`, bookingKey);
+            addBooking(resourceBookings, `classroom-${entry.classroomId}`, bookingKey);
+            getEntryGroupIds(entry).forEach(gid => addBooking(resourceBookings, `group-${gid}`, bookingKey));
             return { entry, cost };
         }).filter(item => item.cost > 0);
 

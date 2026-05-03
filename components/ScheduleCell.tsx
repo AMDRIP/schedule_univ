@@ -4,7 +4,7 @@ import { useStore } from '../hooks/useStore';
 import { ScheduleEntry, UnscheduledEntry, WeekType, DeliveryMode, ClassroomTag, AvailabilityType, TimeSlot, ClassType } from '../types';
 import { CLASS_TYPE_COLORS, ItemTypes, DAYS_OF_WEEK, COLOR_MAP } from '../constants';
 import LessonPlanModal from './LessonPlanModal';
-import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon, BookOpenIcon } from './icons';
+import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon, BookOpenIcon, SparklesIcon } from './icons';
 import { renderIcon } from './IconMap';
 import { getWeekType } from '../utils/dateUtils';
 import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
@@ -26,8 +26,15 @@ const getEntryGroupIds = (entry: Pick<ScheduleEntry, 'groupId' | 'groupIds'>) =>
 const withAlpha = (hex: string, alpha: string) =>
   /^#[0-9a-fA-F]{6}$/.test(hex) ? `${hex}${alpha}` : hex;
 
+const getWeekKey = (dateStr: string) => {
+  const date = new Date(`${dateStr}T00:00:00`);
+  const yearStart = new Date(date.getFullYear(), 0, 1);
+  const dayOffset = Math.floor((date.getTime() - yearStart.getTime()) / 86400000);
+  return `${date.getFullYear()}-${Math.ceil((dayOffset + yearStart.getDay() + 1) / 7)}`;
+};
+
 const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable, colorBy, cellDate }) => {
-  const { subjects, teachers, classrooms, groups, subgroups, streams, electives, schedule, updateScheduleEntry, deleteScheduleEntry, settings, classroomTags } = useStore();
+  const { subjects, teachers, classrooms, groups, subgroups, streams, electives, schedule, teacherSubjectLinks, updateScheduleEntry, deleteScheduleEntry, removeScheduleEntries, settings, classroomTags } = useStore();
   const [isEditingClassroom, setIsEditingClassroom] = useState(false);
   const [isEditingDate, setIsEditingDate] = useState(false);
   const [isEditingDelivery, setIsEditingDelivery] = useState(false);
@@ -133,6 +140,14 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     return teacherAvailability === AvailabilityType.Undesirable || groupAvailabilities.some(a => a === AvailabilityType.Undesirable);
   }, [entry, teacher, getInvolvedGroups]);
 
+  const getResourceGroupIds = (scheduleEntry: ScheduleEntry) => {
+    const explicitIds = getEntryGroupIds(scheduleEntry);
+    if (explicitIds.length > 0) return explicitIds;
+    return scheduleEntry.streamId
+      ? streams.find(s => s.id === scheduleEntry.streamId)?.groupIds || []
+      : [];
+  };
+
   const conflictReasons = useMemo(() => {
     if (!entry.timeSlotId) return [];
 
@@ -140,15 +155,8 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     if (!entryDate) return [];
 
     const reasons = new Set<string>();
-    const getConflictGroupIds = (scheduleEntry: ScheduleEntry) => {
-      const ids = new Set(getEntryGroupIds(scheduleEntry));
-      if (scheduleEntry.streamId) {
-        streams.find(s => s.id === scheduleEntry.streamId)?.groupIds.forEach(groupId => ids.add(groupId));
-      }
-      return Array.from(ids);
-    };
 
-    const entryGroupIds = getConflictGroupIds(entry);
+    const entryGroupIds = getResourceGroupIds(entry);
     const entryGroupIdSet = new Set(entryGroupIds);
 
     const matchesSameConcreteTime = (otherEntry: ScheduleEntry) => {
@@ -177,12 +185,11 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
         reasons.add(`Коллизия преподавателя: ${teacher?.name || entry.teacherId}`);
       }
 
-      if (entry.streamId && otherEntry.streamId === entry.streamId) {
+      const overlappingGroupIds = getResourceGroupIds(otherEntry).filter(groupId => entryGroupIdSet.has(groupId));
+      if (entry.streamId && otherEntry.streamId === entry.streamId && overlappingGroupIds.length > 0) {
         const streamName = streams.find(s => s.id === entry.streamId)?.name || 'поток';
         reasons.add(`Коллизия потока: ${streamName}`);
       }
-
-      const overlappingGroupIds = getConflictGroupIds(otherEntry).filter(groupId => entryGroupIdSet.has(groupId));
       if (overlappingGroupIds.length > 0) {
         const groupNames = overlappingGroupIds
           .map(groupId => groups.find(g => g.id === groupId)?.number || groupId)
@@ -195,6 +202,127 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   }, [entry, cellDate, schedule, settings, teacher, streams, groups]);
 
   const isConflicting = conflictReasons.length > 0;
+
+  const matchesSameConcreteTime = (target: ScheduleEntry, otherEntry: ScheduleEntry) => {
+    if (otherEntry.id === target.id || otherEntry.timeSlotId !== target.timeSlotId) return false;
+
+    const targetDate = target.date || cellDate;
+    if (!targetDate) return false;
+
+    if (otherEntry.date) {
+      return otherEntry.date === targetDate;
+    }
+
+    const d = new Date(`${targetDate}T00:00:00`);
+    const dayName = DAYS_OF_WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1];
+    if (otherEntry.day !== dayName) return false;
+
+    const semesterStart = new Date(settings.semesterStart);
+    const week = getWeekType(d, semesterStart);
+    const effectiveWeek = settings.useEvenOddWeekSeparation ? week : 'every';
+    return otherEntry.weekType === 'every' || otherEntry.weekType === effectiveWeek;
+  };
+
+  const getBlockingEntries = (target: ScheduleEntry) => {
+    const targetGroupIds = new Set(getResourceGroupIds(target));
+    return schedule.filter(otherEntry => {
+      if (!matchesSameConcreteTime(target, otherEntry)) return false;
+      if (otherEntry.teacherId === target.teacherId) return true;
+      if (otherEntry.classroomId === target.classroomId) return true;
+      return getResourceGroupIds(otherEntry).some(groupId => targetGroupIds.has(groupId));
+    });
+  };
+
+  const getTeacherLoadAfterReplacement = (teacherId: string) => {
+    const targetDate = entry.date || cellDate;
+    const targetWeekKey = getWeekKey(targetDate);
+    const semesterStart = settings.semesterStart || targetDate;
+    const semesterEnd = settings.semesterEnd || targetDate;
+    const teacherEntries = schedule.filter(item =>
+      item.id !== entry.id &&
+      item.teacherId === teacherId &&
+      item.date &&
+      item.date >= semesterStart &&
+      item.date <= semesterEnd
+    );
+    const weeklyPairs = teacherEntries.filter(item => getWeekKey(item.date!) === targetWeekKey).length + 1;
+    const semesterPairs = teacherEntries.length + 1;
+    return { weeklyPairs, semesterPairs };
+  };
+
+  const getEntryDateDayName = () => {
+    const targetDate = entry.date || cellDate;
+    if (!targetDate) return entry.day;
+    const d = new Date(`${targetDate}T00:00:00`);
+    return DAYS_OF_WEEK[d.getDay() === 0 ? 6 : d.getDay() - 1];
+  };
+
+  const findReplacementTeacher = () => {
+    const targetDay = getEntryDateDayName();
+    const candidateIds = Array.from(new Set(
+      teacherSubjectLinks
+        .filter(link => link.subjectId === entry.subjectId && link.classTypes.includes(entry.classType))
+        .map(link => link.teacherId)
+        .filter(teacherId => teacherId !== entry.teacherId)
+    ));
+
+    return candidateIds
+      .map(teacherId => teachers.find(candidate => candidate.id === teacherId))
+      .filter((candidate): candidate is NonNullable<typeof candidate> => !!candidate)
+      .filter(candidate => {
+        if (candidate.availabilityGrid?.[targetDay]?.[entry.timeSlotId] === AvailabilityType.Forbidden) return false;
+        return !schedule.some(otherEntry =>
+          otherEntry.id !== entry.id &&
+          otherEntry.teacherId === candidate.id &&
+          matchesSameConcreteTime({ ...entry, teacherId: candidate.id }, otherEntry)
+        );
+      })
+      .sort((a, b) => {
+        const aLoad = getTeacherLoadAfterReplacement(a.id);
+        const bLoad = getTeacherLoadAfterReplacement(b.id);
+        return aLoad.weeklyPairs - bLoad.weeklyPairs || aLoad.semesterPairs - bLoad.semesterPairs || a.name.localeCompare(b.name, 'ru');
+      })[0];
+  };
+
+  const handleResolveCollision = (event: React.MouseEvent) => {
+    event.stopPropagation();
+
+    let targetEntry = entry;
+    let blockers = getBlockingEntries(targetEntry);
+    if (blockers.length === 0) {
+      alert('Для этого занятия уже не найдено активных коллизий.');
+      return;
+    }
+
+    const hasTeacherConflict = blockers.some(otherEntry => otherEntry.teacherId === targetEntry.teacherId);
+    if (hasTeacherConflict) {
+      const replacementTeacher = findReplacementTeacher();
+      if (replacementTeacher) {
+        const replacementLoad = getTeacherLoadAfterReplacement(replacementTeacher.id);
+        const weeklyNormPairs = settings.analyticsThresholds?.targetWeeklyTeacherLoad || 20;
+        const semesterNormPairs = 540;
+        const overloaded = replacementLoad.weeklyPairs > weeklyNormPairs || replacementLoad.semesterPairs > semesterNormPairs;
+
+        if (overloaded) {
+          const confirmed = window.confirm(
+            `Нежелательная замена: ${replacementTeacher.name} получит ${replacementLoad.weeklyPairs} пар в этой неделе и ${replacementLoad.semesterPairs} пар за семестр. Выполнить замену?`
+          );
+          if (!confirmed) return;
+        }
+
+        targetEntry = { ...entry, teacherId: replacementTeacher.id };
+        updateScheduleEntry(targetEntry);
+        blockers = getBlockingEntries(targetEntry);
+      }
+    }
+
+    const blockerIds = blockers.map(item => item.id);
+    if (blockerIds.length > 0) {
+      const confirmed = window.confirm(`Убрать в нераспределённые мешающие занятия: ${blockerIds.length}?`);
+      if (!confirmed) return;
+      removeScheduleEntries(blockerIds);
+    }
+  };
 
 
   if (!subject || !teacher || !classroom) {
@@ -270,17 +398,23 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     : teacher.name;
 
   const getGroupName = () => {
-    if (entry.streamId) {
-      return streams.find(s => s.id === entry.streamId)?.name || 'Поток';
-    }
     if (subgroup) {
       const parentGroup = groups.find(g => g.id === entry.groupId);
       return `${parentGroup?.number} (${subgroup.name})`;
     }
     if (entry.groupIds) {
+      const stream = entry.streamId ? streams.find(s => s.id === entry.streamId) : undefined;
+      const entryGroupSet = new Set(entry.groupIds);
+      const isFullStream = !!stream &&
+        stream.groupIds.length === entry.groupIds.length &&
+        stream.groupIds.every(groupId => entryGroupSet.has(groupId));
+      if (isFullStream) return stream.name;
       const groupNumbers = entry.groupIds.map(gid => groups.find(g => g.id === gid)?.number).filter(Boolean);
       if (groupNumbers.length > 2) return `${groupNumbers.slice(0, 2).join(', ')} и еще ${groupNumbers.length - 2}`;
       return groupNumbers.join(', ');
+    }
+    if (entry.streamId) {
+      return streams.find(s => s.id === entry.streamId)?.name || 'Поток';
     }
     if (entry.groupId) {
       return groups.find(g => g.id === entry.groupId)?.number;
@@ -369,6 +503,15 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
             </div>
           </div>
         </div>
+        {isEditable && isConflicting && (
+          <button
+            onClick={handleResolveCollision}
+            className="absolute top-1 right-6 text-emerald-700 hover:text-emerald-900 p-0.5 rounded-full bg-white/80 hover:bg-white shadow-sm"
+            title="Устранить коллизию"
+          >
+            <SparklesIcon className="w-3.5 h-3.5" />
+          </button>
+        )}
         {isEditable && <button onClick={handleDelete} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 p-0.5 rounded-full bg-white/50 hover:bg-white"><TrashIcon className="w-3.5 h-3.5" /></button>}
       </div>
       {isLessonPlanOpen && (
@@ -404,7 +547,7 @@ const getShiftCellClass = (shift?: TimeSlot['shift']) => {
 };
 
 const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlotId, timeSlotShift, weekType, isEditable, colorBy }) => {
-  const { placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups, timeSlots, timeSlotsShortened } = useStore();
+  const { placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups, streams, subjects, classrooms, schedule, timeSlots, timeSlotsShortened } = useStore();
 
   const [{ isOver, canDrop }, drop] = useDrop(() => ({
     accept: [ItemTypes.SCHEDULE_ENTRY, ItemTypes.UNSCHEDULED_ENTRY],
@@ -418,7 +561,9 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
       }
 
       const targetTimeSlot = [...timeSlots, ...timeSlotsShortened].find(slot => slot.id === timeSlotId);
-      const involvedGroupIds = item.groupIds || (item.groupId ? [item.groupId] : []);
+      const explicitGroupIds = item.groupIds?.length ? item.groupIds : (item.groupId ? [item.groupId] : []);
+      const streamGroupIds = item.streamId && explicitGroupIds.length === 0 ? streams.find(s => s.id === item.streamId)?.groupIds || [] : [];
+      const involvedGroupIds = explicitGroupIds.length > 0 ? explicitGroupIds : streamGroupIds;
       const involvedGroups = groups.filter(g => involvedGroupIds.includes(g.id));
       if (!areGroupsCompatibleWithTimeSlot(targetTimeSlot, involvedGroups)) return false;
 
@@ -434,12 +579,46 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
       }
 
       const itemType = monitor.getItemType();
+      const movingEntryId = itemType === ItemTypes.SCHEDULE_ENTRY ? item.id : undefined;
       if (itemType === ItemTypes.SCHEDULE_ENTRY) {
         if (entries.some(e => e.id === item.id)) return false;
       }
 
       const maxEntries = settings.allowOverbooking ? 2 : 1;
-      return entries.length < maxEntries;
+      if (entries.filter(entry => entry.id !== movingEntryId).length >= maxEntries) return false;
+
+      const conflictsWithTargetTime = (entry: ScheduleEntry) => {
+        if (entry.id === movingEntryId || entry.timeSlotId !== timeSlotId) return false;
+        if (entry.date) return entry.date === date;
+        return entry.day === day && (entry.weekType === 'every' || weekType === 'every' || entry.weekType === weekType);
+      };
+
+      const hasResourceConflict = schedule.some(entry => {
+        if (!conflictsWithTargetTime(entry)) return false;
+        if (entry.teacherId === item.teacherId) return true;
+        if (item.classroomId && entry.classroomId === item.classroomId) return true;
+        const entryGroupIds = entry.groupIds?.length ? entry.groupIds : (entry.groupId ? [entry.groupId] : []);
+        return entryGroupIds.some(groupId => involvedGroupIds.includes(groupId));
+      });
+      if (hasResourceConflict) return false;
+
+      if (itemType === ItemTypes.UNSCHEDULED_ENTRY) {
+        const subject = subjects.find(s => s.id === item.subjectId);
+        const requiredTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : subject?.classroomTypeRequirements?.[item.classType];
+        if (!requiredTypes || requiredTypes.length === 0) return false;
+        const studentCount = involvedGroups.length > 0
+          ? involvedGroups.reduce((sum, group) => sum + group.studentCount, 0)
+          : item.studentCount || 0;
+        const requiredTags = item.requiredClassroomTagIds?.length ? item.requiredClassroomTagIds : subject?.requiredClassroomTagIds || [];
+        const hasFreeClassroom = classrooms.some(classroom => {
+          if (!requiredTypes.includes(classroom.typeId) || classroom.capacity < studentCount) return false;
+          if (requiredTags.length > 0 && !requiredTags.every(tagId => (classroom.tagIds || []).includes(tagId))) return false;
+          return !schedule.some(entry => conflictsWithTargetTime(entry) && entry.classroomId === classroom.id);
+        });
+        if (!hasFreeClassroom) return false;
+      }
+
+      return true;
     },
     drop: (item: any, monitor) => {
       const itemType = monitor.getItemType();
@@ -454,7 +633,7 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
       isOver: !!monitor.isOver(),
       canDrop: !!monitor.canDrop(),
     }),
-  }), [entries, day, timeSlotId, weekType, date, placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups, timeSlots, timeSlotsShortened]);
+  }), [entries, day, timeSlotId, weekType, date, placeUnscheduledItem, updateScheduleEntry, settings, productionCalendar, teachers, groups, streams, subjects, classrooms, schedule, timeSlots, timeSlotsShortened]);
 
   let cellBgClass = getShiftCellClass(timeSlotShift);
   const cellStyle: React.CSSProperties = {};
@@ -467,8 +646,8 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
     cellStyle.backgroundColor = withAlpha(shiftColor, '66');
     cellStyle.borderLeftColor = shiftColor;
   }
-  if (canDrop && isOver) cellBgClass = 'bg-green-200';
-  else if (canDrop) cellBgClass = 'bg-green-50';
+  if (canDrop && isOver) cellBgClass = 'bg-green-200 ring-2 ring-green-400';
+  else if (canDrop) cellBgClass = 'bg-emerald-50 ring-1 ring-emerald-200';
 
   if (entries.length > 1) {
     cellBgClass = 'bg-red-200 border-red-400';

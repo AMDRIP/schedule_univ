@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
-import { ClassType, ScheduleEntry } from '../types';
+import { ClassType, Classroom, Department, EducationalPlan, Group, ScheduleEntry, Specialty, Subject, Teacher } from '../types';
 
 type ResourceStat = {
   id: string;
@@ -21,7 +21,64 @@ type Insight = {
   severity: 'critical' | 'warning' | 'info' | 'success';
 };
 
+type WhatIfNeed = {
+  groupId: string;
+  subjectId: string;
+  subjectName: string;
+  classType: ClassType;
+  weeklyPairs: number;
+  source: string;
+};
+
+type ScenarioTeacherRow = {
+  teacher: Teacher;
+  currentWeeklyLoad: number;
+  addedWeeklyLoad: number;
+  capacity: number;
+};
+
+type WhatIfTeacherProjection = {
+  id: string;
+  name: string;
+  currentWeeklyLoad: number;
+  addedWeeklyLoad: number;
+  projectedWeeklyLoad: number;
+  usage: number;
+  capacity: number;
+};
+
+type MissingTeacherLinkItem = {
+  specialtyName: string;
+  subjectName: string;
+  classType: ClassType;
+  semester: number;
+  hours: number;
+};
+
+type PlanCoverageIssue = {
+  groupName: string;
+  subjectName: string;
+  classType: ClassType;
+  expected: number;
+  actual: number;
+};
+
+type LoadLimitIssue = {
+  resourceType: 'teacher' | 'group';
+  name: string;
+  weeklyHours: number;
+  semesterHours: number;
+};
+
 type WhatIfScenario = {
+  specialtyId: string;
+  groupIds: string[];
+  plannedGroups: Array<{
+    id: string;
+    number: string;
+    specialtyId: string;
+    studentCount: number;
+  }>;
   extraGroups: number;
   lessonsPerGroupPerWeek: number;
   studentsPerGroup: number;
@@ -57,6 +114,13 @@ const countGaps = (indices: number[], minGapSlots = 1) => {
   return gaps;
 };
 
+const getWeekKey = (dateStr: string) => {
+  const date = new Date(`${dateStr}T00:00:00`);
+  const yearStart = new Date(date.getFullYear(), 0, 1);
+  const dayOffset = Math.floor((date.getTime() - yearStart.getTime()) / 86400000);
+  return `${date.getFullYear()}-${Math.ceil((dayOffset + yearStart.getDay() + 1) / 7)}`;
+};
+
 const severityClass = {
   critical: 'border-red-200 bg-red-50 text-red-800',
   warning: 'border-amber-200 bg-amber-50 text-amber-800',
@@ -72,6 +136,7 @@ const AnalyticsView: React.FC = () => {
     streams,
     classrooms,
     subjects,
+    specialties,
     schedule,
     timeSlots,
     timeSlotsShortened,
@@ -81,6 +146,9 @@ const AnalyticsView: React.FC = () => {
   } = useStore();
   const [activeTab, setActiveTab] = useState<'overview' | 'departments' | 'teachers' | 'groups' | 'classrooms' | 'whatif' | 'advice'>('overview');
   const [whatIf, setWhatIf] = useState<WhatIfScenario>({
+    specialtyId: '',
+    groupIds: [],
+    plannedGroups: [],
     extraGroups: settings.whatIfDefaults.extraGroups,
     lessonsPerGroupPerWeek: settings.whatIfDefaults.lessonsPerGroupPerWeek,
     studentsPerGroup: settings.whatIfDefaults.studentsPerGroup,
@@ -92,6 +160,11 @@ const AnalyticsView: React.FC = () => {
     classroomSlotsPerWeek: settings.whatIfDefaults.classroomSlotsPerWeek,
     newClassroomCapacity: settings.whatIfDefaults.newClassroomCapacity,
   });
+  const [whatIfGroupDraft, setWhatIfGroupDraft] = useState({
+    number: '',
+    specialtyId: '',
+    studentCount: settings.whatIfDefaults.studentsPerGroup,
+  });
 
   const analytics = useMemo(() => {
     const scheduled = schedule.filter(entry => entry.date);
@@ -101,11 +174,11 @@ const AnalyticsView: React.FC = () => {
     const weekCount = Math.max(1, Math.ceil(dates.length / 6));
     const teacherCapacityBase = Math.max(1, weekCount * settings.analyticsThresholds.targetWeeklyTeacherLoad);
 
-    const teacherById = new Map(teachers.map(item => [item.id, item]));
-    const groupById = new Map(groups.map(item => [item.id, item]));
-    const classroomById = new Map(classrooms.map(item => [item.id, item]));
-    const subjectById = new Map(subjects.map(item => [item.id, item]));
-    const departmentById = new Map(departments.map(item => [item.id, item]));
+    const teacherById = new Map<string, Teacher>(teachers.map(item => [item.id, item]));
+    const groupById = new Map<string, Group>(groups.map(item => [item.id, item]));
+    const classroomById = new Map<string, Classroom>(classrooms.map(item => [item.id, item]));
+    const subjectById = new Map<string, Subject>(subjects.map(item => [item.id, item]));
+    const departmentById = new Map<string, Department>(departments.map(item => [item.id, item]));
 
     const resourceEntries = <T extends { id: string; name: string }>(
       resources: T[],
@@ -153,21 +226,23 @@ const AnalyticsView: React.FC = () => {
       };
     });
 
-    const teacherStats = resourceEntries(
+    const teacherStats = resourceEntries<Teacher>(
       teachers,
       teacher => scheduled.filter(entry => entry.teacherId === teacher.id),
       teacher => departmentById.get(teacher.departmentId)?.name,
       teacherCapacityBase
     ).sort((a, b) => b.total - a.total);
 
-    const groupStats = resourceEntries(
-      groups.map(group => ({ ...group, name: group.number })),
+    const groupResources: Array<Group & { name: string }> = groups.map(group => ({ ...group, name: group.number }));
+    const groupStats = resourceEntries<Group & { name: string }>(
+      groupResources,
       group => scheduled.filter(entry => getEntryGroupIds(entry).includes(group.id)),
       group => departmentById.get(group.departmentId)?.name
     ).sort((a, b) => b.total - a.total);
 
-    const classroomStats = resourceEntries(
-      classrooms.map(room => ({ ...room, name: `Ауд. ${room.number}` })),
+    const classroomResources: Array<Classroom & { name: string }> = classrooms.map(room => ({ ...room, name: `Ауд. ${room.number}` }));
+    const classroomStats = resourceEntries<Classroom & { name: string }>(
+      classroomResources,
       room => scheduled.filter(entry => entry.classroomId === room.id),
       room => room.status === 'repair' ? 'ремонт' : room.status === 'closed' ? 'закрыта' : undefined
     ).sort((a, b) => b.total - a.total);
@@ -240,18 +315,104 @@ const AnalyticsView: React.FC = () => {
     });
     const driftingSeries = Array.from(weekPatterns.values()).filter(patterns => patterns.size > 1).length;
 
-    const uncoveredPlanItems = educationalPlans.flatMap(plan =>
-      plan.entries.filter(entry => {
-        const requiredTypes = [
-          entry.lectureHours > 0 ? ClassType.Lecture : null,
-          entry.practiceHours > 0 ? ClassType.Practical : null,
-          entry.labHours > 0 ? ClassType.Lab : null,
-        ].filter(Boolean) as ClassType[];
-        return requiredTypes.some(classType =>
-          !teacherSubjectLinks.some(link => link.subjectId === entry.subjectId && link.classTypes.includes(classType))
-        );
+    const specialtyById = new Map<string, Specialty>(specialties.map(item => [item.id, item]));
+    const missingTeacherLinks: MissingTeacherLinkItem[] = [];
+    const expectedPlanPairs = new Map<string, { groupId: string; subjectId: string; classType: ClassType; expected: number }>();
+    const actualSchedulePairs = new Map<string, number>();
+    const makeCoverageKey = (groupId: string, subjectId: string, classType: ClassType) => `${groupId}::${subjectId}::${classType}`;
+    const addExpectedPairs = (groupId: string, subjectId: string, classType: ClassType, expected: number) => {
+      const key = makeCoverageKey(groupId, subjectId, classType);
+      const current = expectedPlanPairs.get(key);
+      expectedPlanPairs.set(key, { groupId, subjectId, classType, expected: (current?.expected || 0) + expected });
+    };
+
+    educationalPlans.forEach(plan => {
+      const specialtyName = specialtyById.get(plan.specialtyId)?.name || plan.specialtyId;
+      const planGroups = groups.filter(group => group.specialtyId === plan.specialtyId);
+      plan.entries.forEach(entry => {
+        const classHours: Array<[ClassType, number]> = [
+          [ClassType.Lecture, entry.lectureHours],
+          [ClassType.Practical, entry.practiceHours],
+          [ClassType.Lab, entry.labHours],
+        ];
+        classHours.forEach(([classType, hours]) => {
+          if (hours <= 0) return;
+          if (!teacherSubjectLinks.some(link => link.subjectId === entry.subjectId && link.classTypes.includes(classType))) {
+            missingTeacherLinks.push({
+              specialtyName,
+              subjectName: subjectById.get(entry.subjectId)?.name || entry.subjectId,
+              classType,
+              semester: entry.semester,
+              hours,
+            });
+          }
+          planGroups.forEach(group => addExpectedPairs(group.id, entry.subjectId, classType, Math.ceil(hours / 2)));
+        });
+      });
+    });
+
+    scheduled.forEach(entry => {
+      getEntryGroupIds(entry).forEach(groupId => {
+        const key = makeCoverageKey(groupId, entry.subjectId, entry.classType);
+        actualSchedulePairs.set(key, (actualSchedulePairs.get(key) || 0) + 1);
+      });
+    });
+
+    const planCoverageIssues: PlanCoverageIssue[] = [];
+    expectedPlanPairs.forEach(expectedItem => {
+      const actual = actualSchedulePairs.get(makeCoverageKey(expectedItem.groupId, expectedItem.subjectId, expectedItem.classType)) || 0;
+      if (actual !== expectedItem.expected) {
+        planCoverageIssues.push({
+          groupName: groupById.get(expectedItem.groupId)?.number || expectedItem.groupId,
+          subjectName: subjectById.get(expectedItem.subjectId)?.name || expectedItem.subjectId,
+          classType: expectedItem.classType,
+          expected: expectedItem.expected,
+          actual,
+        });
+      }
+    });
+    actualSchedulePairs.forEach((actual, key) => {
+      if (expectedPlanPairs.has(key)) return;
+      const [groupId, subjectId, classType] = key.split('::') as [string, string, ClassType];
+      planCoverageIssues.push({
+        groupName: groupById.get(groupId)?.number || groupId,
+        subjectName: subjectById.get(subjectId)?.name || subjectId,
+        classType,
+        expected: 0,
+        actual,
+      });
+    });
+
+    const teacherWeeklyPairs = new Map<string, Map<string, number>>();
+    const groupWeeklyPairs = new Map<string, Map<string, number>>();
+    const addWeeklyPair = (target: Map<string, Map<string, number>>, resourceId: string, weekKey: string) => {
+      const resourceWeeks = target.get(resourceId) || new Map<string, number>();
+      resourceWeeks.set(weekKey, (resourceWeeks.get(weekKey) || 0) + 1);
+      target.set(resourceId, resourceWeeks);
+    };
+    scheduled.forEach(entry => {
+      const weekKey = getWeekKey(entry.date!);
+      addWeeklyPair(teacherWeeklyPairs, entry.teacherId, weekKey);
+      getEntryGroupIds(entry).forEach(groupId => addWeeklyPair(groupWeeklyPairs, groupId, weekKey));
+    });
+    const buildLoadLimitIssues = (
+      items: Array<{ id: string; name: string }>,
+      weeklyPairs: Map<string, Map<string, number>>,
+      resourceType: LoadLimitIssue['resourceType']
+    ): LoadLimitIssue[] => items
+      .map(item => {
+        const weeks = weeklyPairs.get(item.id) || new Map<string, number>();
+        const totalPairs = Array.from(weeks.values()).reduce((sum, count) => sum + count, 0);
+        const maxWeeklyPairs = Math.max(0, ...Array.from(weeks.values()));
+        return { resourceType, name: item.name, weeklyHours: maxWeeklyPairs * 2, semesterHours: totalPairs * 2 };
       })
-    );
+      .filter(item => item.weeklyHours > 40 || item.semesterHours > 1080)
+      .sort((a, b) => Math.max(b.weeklyHours - 40, b.semesterHours - 1080) - Math.max(a.weeklyHours - 40, a.semesterHours - 1080));
+
+    const loadLimitIssues = [
+      ...buildLoadLimitIssues(teachers.map(teacher => ({ id: teacher.id, name: teacher.name })), teacherWeeklyPairs, 'teacher'),
+      ...buildLoadLimitIssues(groups.map(group => ({ id: group.id, name: group.number })), groupWeeklyPairs, 'group'),
+    ];
 
     const insights: Insight[] = [];
     if (collisions.length > 0) {
@@ -296,11 +457,25 @@ const AnalyticsView: React.FC = () => {
         severity: 'info',
       });
     }
-    if (uncoveredPlanItems.length > 0) {
+    if (missingTeacherLinks.length > 0) {
       insights.push({
         title: 'Не хватает привязок преподавателей',
-        text: `${uncoveredPlanItems.length} позиций учебных планов имеют часы без преподавательских привязок по нужному типу занятия.`,
+        text: `${missingTeacherLinks.length} позиций учебных планов имеют часы без преподавательских привязок по нужному типу занятия. Ниже показаны конкретные дисциплины.`,
         severity: 'warning',
+      });
+    }
+    if (planCoverageIssues.length > 0) {
+      insights.push({
+        title: 'Расписание не сходится с учебными планами',
+        text: `${planCoverageIssues.length} позиций имеют другое количество занятий, чем требуется по сумме часов учебных планов.`,
+        severity: 'warning',
+      });
+    }
+    if (loadLimitIssues.length > 0) {
+      insights.push({
+        title: 'Превышены пределы нагрузки',
+        text: `${loadLimitIssues.length} преподавателей или групп превысили 40 часов в неделю или 1080 часов за семестр.`,
+        severity: 'critical',
       });
     }
     if (insights.length === 0) {
@@ -322,7 +497,9 @@ const AnalyticsView: React.FC = () => {
       capacityIssues,
       lectureOrderIssues,
       driftingSeries,
-      uncoveredPlanItems,
+      missingTeacherLinks,
+      planCoverageIssues,
+      loadLimitIssues,
       insights,
       totalSlots: capacityBase,
       subjectById,
@@ -330,17 +507,124 @@ const AnalyticsView: React.FC = () => {
       groupById,
       classroomById,
     };
-  }, [classrooms, departments, educationalPlans, groups, schedule, settings.analyticsThresholds, subjects, teacherSubjectLinks, teachers, timeSlots, timeSlotsShortened]);
+  }, [classrooms, departments, educationalPlans, groups, schedule, settings.analyticsThresholds, specialties, subjects, teacherSubjectLinks, teachers, timeSlots, timeSlotsShortened]);
 
   const whatIfAnalysis = useMemo(() => {
     const weekCount = Math.max(1, Math.ceil(analytics.dates.length / 6));
     const baselineWeeklyLessons = analytics.scheduled.length / weekCount;
-    const addedWeeklyLessons = whatIf.extraGroups * whatIf.lessonsPerGroupPerWeek;
+    const selectedSpecialty = specialties.find(specialty => specialty.id === whatIf.specialtyId);
+    const selectedExistingGroups = groups
+      .filter(group =>
+        whatIf.groupIds.includes(group.id) &&
+        (!whatIf.specialtyId || group.specialtyId === whatIf.specialtyId)
+      )
+      .map(group => ({
+        id: group.id,
+        number: group.number,
+        specialtyId: group.specialtyId,
+        studentCount: group.studentCount,
+      }));
+    const plannedScenarioGroups = whatIf.plannedGroups.filter(group =>
+      !whatIf.specialtyId || group.specialtyId === whatIf.specialtyId
+    );
+    const scenarioGroups = [...selectedExistingGroups, ...plannedScenarioGroups];
+    const planBySpecialty = new Map<string, EducationalPlan>(educationalPlans.map(plan => [plan.specialtyId, plan]));
+    const subjectById = new Map<string, Subject>(subjects.map(subject => [subject.id, subject]));
+    const addedPlanNeeds: WhatIfNeed[] = [];
+
+    scenarioGroups.forEach(group => {
+      const plan = planBySpecialty.get(group.specialtyId);
+      plan?.entries.forEach(entry => {
+        const subjectName = subjectById.get(entry.subjectId)?.name || 'Дисциплина';
+        [
+          [ClassType.Lecture, entry.lectureHours],
+          [ClassType.Practical, entry.practiceHours],
+          [ClassType.Lab, entry.labHours],
+        ].forEach(([classType, hours]) => {
+          const weeklyPairs = Number(hours) > 0 ? Number(hours) / 2 / weekCount : 0;
+          if (weeklyPairs > 0) {
+            addedPlanNeeds.push({
+              groupId: group.id,
+              subjectId: entry.subjectId,
+              subjectName,
+              classType: classType as ClassType,
+              weeklyPairs,
+              source: group.number,
+            });
+          }
+        });
+      });
+    });
+
+    const addedWeeklyLessons = addedPlanNeeds.reduce((sum, item) => sum + item.weeklyPairs, 0);
     const removedTeacher = teachers.find(teacher => teacher.id === whatIf.removedTeacherId);
     const removedTeacherWeeklyLoad = removedTeacher
       ? analytics.teacherStats.find(item => item.id === removedTeacher.id)?.total || 0
       : 0;
     const removedTeacherWeeklyPressure = removedTeacherWeeklyLoad / weekCount;
+    const teacherCurrentWeeklyLoad = new Map(analytics.teacherStats.map(item => [item.id, item.total / weekCount]));
+    const scenarioTeacherRows: ScenarioTeacherRow[] = teachers
+      .filter(teacher => teacher.id !== whatIf.removedTeacherId)
+      .map(teacher => ({
+        teacher,
+        currentWeeklyLoad: teacherCurrentWeeklyLoad.get(teacher.id) || 0,
+        addedWeeklyLoad: 0,
+        capacity: whatIf.teacherCapacityPerWeek,
+      }));
+    const scenarioTeacherById = new Map<string, ScenarioTeacherRow>(scenarioTeacherRows.map(row => [row.teacher.id, row]));
+    const uncoveredNeeds: WhatIfNeed[] = [];
+
+    const removedTeacherNeeds = removedTeacher
+      ? analytics.scheduled
+        .filter(entry => entry.teacherId === removedTeacher.id)
+        .map(entry => ({
+          groupId: getEntryGroupIds(entry)[0] || '',
+          subjectId: entry.subjectId,
+          subjectName: subjectById.get(entry.subjectId)?.name || 'Дисциплина',
+          classType: entry.classType,
+          weeklyPairs: 1 / weekCount,
+          source: `замена ${removedTeacher.name}`,
+        }))
+      : [];
+
+    const allocateNeed = (need: typeof addedPlanNeeds[number]) => {
+      const candidateIds = teacherSubjectLinks
+        .filter(link =>
+          link.subjectId === need.subjectId &&
+          link.classTypes.includes(need.classType) &&
+          link.teacherId !== whatIf.removedTeacherId &&
+          scenarioTeacherById.has(link.teacherId)
+        )
+        .map(link => link.teacherId);
+      const uniqueCandidateIds: string[] = Array.from(new Set(candidateIds));
+
+      if (uniqueCandidateIds.length === 0) {
+        uncoveredNeeds.push({
+          groupId: need.groupId,
+          subjectId: need.subjectId,
+          subjectName: need.subjectName,
+          classType: need.classType,
+          weeklyPairs: need.weeklyPairs,
+          source: need.source,
+        });
+        return;
+      }
+
+      let remaining = need.weeklyPairs;
+      while (remaining > 0.0001) {
+        const chunk = Math.min(1, remaining);
+        const bestTeacher = uniqueCandidateIds
+          .map(id => scenarioTeacherById.get(id)!)
+          .sort((a, b) =>
+            ((a.currentWeeklyLoad + a.addedWeeklyLoad) / Math.max(1, a.capacity)) -
+            ((b.currentWeeklyLoad + b.addedWeeklyLoad) / Math.max(1, b.capacity))
+          )[0];
+        bestTeacher.addedWeeklyLoad += chunk;
+        remaining -= chunk;
+      }
+    };
+
+    [...addedPlanNeeds, ...removedTeacherNeeds].forEach(allocateNeed);
 
     const effectiveTeachers = Math.max(0, teachers.length - (removedTeacher ? 1 : 0) + whatIf.extraTeachers);
     const teacherCapacity = effectiveTeachers * whatIf.teacherCapacityPerWeek;
@@ -358,7 +642,8 @@ const AnalyticsView: React.FC = () => {
     const classroomReserve = classroomCapacity - classroomDemand;
 
     const largestCurrentGroup = Math.max(0, ...groups.map(group => group.studentCount));
-    const expectedLargestGroup = Math.max(largestCurrentGroup, whatIf.studentsPerGroup);
+    const largestScenarioGroup = Math.max(0, ...scenarioGroups.map(group => group.studentCount));
+    const expectedLargestGroup = Math.max(largestCurrentGroup, largestScenarioGroup);
     const suitableRooms = classrooms.filter(room =>
       room.status !== 'closed' &&
       room.status !== 'repair' &&
@@ -418,6 +703,39 @@ const AnalyticsView: React.FC = () => {
       });
     }
 
+    if (scenarioGroups.length > 0 && addedWeeklyLessons === 0) {
+      bottlenecks.push({
+        title: 'Нет учебного плана для сценария',
+        text: 'Для выбранных групп не найдены часы лекций, практик и лабораторных в учебном плане. Проверьте привязку группы к специальности и наличие плана.',
+        severity: 'warning',
+      });
+    }
+
+    if (uncoveredNeeds.length > 0) {
+      const totalUncovered = uncoveredNeeds.reduce((sum, item) => sum + item.weeklyPairs, 0);
+      bottlenecks.push({
+        title: 'Есть дисциплины без привязанных преподавателей',
+        text: `Не на кого разложить около ${totalUncovered.toFixed(1)} пар в неделю: нет привязок к дисциплинам и типам занятий.`,
+        severity: 'critical',
+      });
+    }
+
+    const teacherProjections: WhatIfTeacherProjection[] = scenarioTeacherRows
+      .filter(row => row.currentWeeklyLoad > 0 || row.addedWeeklyLoad > 0)
+      .map(row => {
+        const projectedWeeklyLoad = row.currentWeeklyLoad + row.addedWeeklyLoad;
+        return {
+          id: row.teacher.id,
+          name: row.teacher.name,
+          currentWeeklyLoad: row.currentWeeklyLoad,
+          addedWeeklyLoad: row.addedWeeklyLoad,
+          projectedWeeklyLoad,
+          usage: row.capacity > 0 ? projectedWeeklyLoad / row.capacity * 100 : 100,
+          capacity: row.capacity,
+        };
+      })
+      .sort((a, b) => b.usage - a.usage);
+
     if (bottlenecks.length === 0) {
       bottlenecks.push({
         title: 'Сценарий выглядит подъёмным',
@@ -430,6 +748,10 @@ const AnalyticsView: React.FC = () => {
       weekCount,
       baselineWeeklyLessons,
       addedWeeklyLessons,
+      selectedSpecialty,
+      scenarioGroups,
+      teacherProjections,
+      uncoveredNeeds,
       removedTeacher,
       closedClassroom,
       effectiveTeachers,
@@ -446,7 +768,7 @@ const AnalyticsView: React.FC = () => {
       suitableRooms,
       bottlenecks,
     };
-  }, [analytics.dates.length, analytics.scheduled.length, analytics.teacherStats, classrooms, groups, settings.analyticsThresholds, teachers, whatIf]);
+  }, [analytics.dates.length, analytics.scheduled, analytics.teacherStats, classrooms, educationalPlans, groups, settings.analyticsThresholds, specialties, subjects, teacherSubjectLinks, teachers, whatIf]);
 
   const tabs = [
     ['overview', 'Обзор'],
@@ -461,6 +783,64 @@ const AnalyticsView: React.FC = () => {
   const updateWhatIf = <K extends keyof WhatIfScenario>(key: K, value: WhatIfScenario[K]) => {
     setWhatIf(prev => ({ ...prev, [key]: value }));
   };
+
+  const updateWhatIfSpecialty = (specialtyId: string) => {
+    setWhatIf(prev => ({
+      ...prev,
+      specialtyId,
+      groupIds: prev.groupIds.filter(groupId => {
+        const group = groups.find(item => item.id === groupId);
+        return !specialtyId || group?.specialtyId === specialtyId;
+      }),
+    }));
+    setWhatIfGroupDraft(prev => ({
+      ...prev,
+      specialtyId: specialtyId || prev.specialtyId,
+    }));
+  };
+
+  const toggleWhatIfGroup = (groupId: string) => {
+    setWhatIf(prev => ({
+      ...prev,
+      groupIds: prev.groupIds.includes(groupId)
+        ? prev.groupIds.filter(id => id !== groupId)
+        : [...prev.groupIds, groupId],
+    }));
+  };
+
+  const addPlannedWhatIfGroup = () => {
+    const specialtyId = whatIfGroupDraft.specialtyId || whatIf.specialtyId;
+    const specialty = specialties.find(item => item.id === specialtyId);
+    if (!specialty) {
+      alert('Выберите специальность для планируемой группы.');
+      return;
+    }
+    const number = whatIfGroupDraft.number.trim() || `Новая группа ${whatIf.plannedGroups.length + 1}`;
+    setWhatIf(prev => ({
+      ...prev,
+      plannedGroups: [
+        ...prev.plannedGroups,
+        {
+          id: `whatif-group-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          number,
+          specialtyId,
+          studentCount: Math.max(1, whatIfGroupDraft.studentCount),
+        },
+      ],
+    }));
+    setWhatIfGroupDraft(prev => ({ ...prev, number: '' }));
+  };
+
+  const removePlannedWhatIfGroup = (groupId: string) => {
+    setWhatIf(prev => ({
+      ...prev,
+      plannedGroups: prev.plannedGroups.filter(group => group.id !== groupId),
+    }));
+  };
+
+  const whatIfGroupOptions = groups
+    .filter(group => !whatIf.specialtyId || group.specialtyId === whatIf.specialtyId)
+    .sort((a, b) => a.number.localeCompare(b.number, 'ru'));
 
   const numberInput = (label: string, value: number, onChange: (value: number) => void, min = 0) => (
     <label className="block">
@@ -616,9 +996,90 @@ const AnalyticsView: React.FC = () => {
               <h2 className="text-base font-semibold text-gray-900">Сценарий</h2>
               <p className="mt-1 text-sm text-gray-600">Эти параметры используются только для расчёта и не меняют расписание.</p>
               <div className="mt-4 grid gap-4">
-                {numberInput('Добавить групп', whatIf.extraGroups, value => updateWhatIf('extraGroups', value))}
-                {numberInput('Пар в неделю на группу', whatIf.lessonsPerGroupPerWeek, value => updateWhatIf('lessonsPerGroupPerWeek', value))}
-                {numberInput('Студентов в новой группе', whatIf.studentsPerGroup, value => updateWhatIf('studentsPerGroup', value), 1)}
+                <label className="block">
+                  <span className="text-xs font-semibold uppercase text-gray-500">Специальность для сценария</span>
+                  <select
+                    value={whatIf.specialtyId}
+                    onChange={(event) => updateWhatIfSpecialty(event.target.value)}
+                    className="mt-1 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    <option value="">Все специальности</option>
+                    {specialties.map(specialty => (
+                      <option key={specialty.id} value={specialty.id}>{specialty.code} {specialty.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <div>
+                  <div className="text-xs font-semibold uppercase text-gray-500">Конкретные группы</div>
+                  <div className="mt-1 max-h-56 space-y-1 overflow-auto rounded-md border border-gray-200 bg-white p-2">
+                    {whatIfGroupOptions.map(group => (
+                      <label key={group.id} className="flex items-center justify-between gap-3 rounded px-2 py-1.5 text-sm hover:bg-gray-50">
+                        <span>
+                          <span className="font-medium text-gray-900">{group.number}</span>
+                          <span className="ml-2 text-xs text-gray-500">{group.studentCount} студ.</span>
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={whatIf.groupIds.includes(group.id)}
+                          onChange={() => toggleWhatIfGroup(group.id)}
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                      </label>
+                    ))}
+                    {whatIfGroupOptions.length === 0 && (
+                      <div className="px-2 py-4 text-center text-sm text-gray-500">Для выбранной специальности нет групп</div>
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-md border border-gray-200 bg-gray-50 p-3">
+                  <div className="text-xs font-semibold uppercase text-gray-500">Планируемая группа</div>
+                  <div className="mt-3 grid gap-2">
+                    <input
+                      type="text"
+                      value={whatIfGroupDraft.number}
+                      onChange={(event) => setWhatIfGroupDraft(prev => ({ ...prev, number: event.target.value }))}
+                      placeholder="Номер группы"
+                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <select
+                      value={whatIfGroupDraft.specialtyId || whatIf.specialtyId}
+                      onChange={(event) => setWhatIfGroupDraft(prev => ({ ...prev, specialtyId: event.target.value }))}
+                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    >
+                      <option value="">Выберите специальность</option>
+                      {specialties.map(specialty => (
+                        <option key={specialty.id} value={specialty.id}>{specialty.code} {specialty.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={1}
+                      value={whatIfGroupDraft.studentCount}
+                      onChange={(event) => setWhatIfGroupDraft(prev => ({ ...prev, studentCount: Math.max(1, Number(event.target.value) || 1) }))}
+                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={addPlannedWhatIfGroup}
+                      className="rounded-md bg-gray-900 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800"
+                    >
+                      Добавить в сценарий
+                    </button>
+                  </div>
+                  {whatIf.plannedGroups.length > 0 && (
+                    <div className="mt-3 space-y-1">
+                      {whatIf.plannedGroups.map(group => {
+                        const specialty = specialties.find(item => item.id === group.specialtyId);
+                        return (
+                          <div key={group.id} className="flex items-center justify-between gap-2 rounded bg-white px-2 py-1.5 text-xs text-gray-700">
+                            <span><span className="font-semibold text-gray-900">{group.number}</span> · {group.studentCount} студ. · {specialty?.code || 'без кода'}</span>
+                            <button type="button" onClick={() => removePlannedWhatIfGroup(group.id)} className="text-red-600 hover:text-red-800">Убрать</button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
                 <label className="block">
                   <span className="text-xs font-semibold uppercase text-gray-500">Временно убрать преподавателя</span>
                   <select
@@ -694,6 +1155,49 @@ const AnalyticsView: React.FC = () => {
               </div>
             </div>
 
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <div className="border-b border-gray-200 px-5 py-4">
+                <h2 className="text-base font-semibold text-gray-900">Нагрузка преподавателей по привязкам</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  Добавочная нагрузка распределяется только между преподавателями, привязанными к нужной дисциплине и типу занятия.
+                </p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Преподаватель</th>
+                      <th className="px-4 py-3 text-right">Сейчас</th>
+                      <th className="px-4 py-3 text-right">Добавится</th>
+                      <th className="px-4 py-3 text-right">Итого</th>
+                      <th className="px-4 py-3 text-right">Загрузка</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {top<WhatIfTeacherProjection>(whatIfAnalysis.teacherProjections, 12).map(row => (
+                      <tr key={row.id} className={row.usage >= settings.analyticsThresholds.teacherOverloadCriticalPercent ? 'bg-red-50/70' : row.usage >= settings.analyticsThresholds.teacherOverloadWarningPercent ? 'bg-amber-50/70' : ''}>
+                        <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
+                        <td className="px-4 py-3 text-right">{row.currentWeeklyLoad.toFixed(1)}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-blue-700">+{row.addedWeeklyLoad.toFixed(1)}</td>
+                        <td className="px-4 py-3 text-right">{row.projectedWeeklyLoad.toFixed(1)} / {row.capacity.toFixed(1)}</td>
+                        <td className="px-4 py-3 text-right font-semibold">{percent(row.usage)}</td>
+                      </tr>
+                    ))}
+                    {whatIfAnalysis.teacherProjections.length === 0 && (
+                      <tr>
+                        <td className="px-4 py-8 text-center text-gray-500" colSpan={5}>Выберите группы, чтобы увидеть расчёт по преподавателям</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {whatIfAnalysis.uncoveredNeeds.length > 0 && (
+                <div className="border-t border-red-100 bg-red-50 px-5 py-4 text-sm text-red-800">
+                  Без преподавателя по привязкам: {top<WhatIfNeed>(whatIfAnalysis.uncoveredNeeds, 4).map(item => `${item.subjectName} (${item.classType}, ${item.source})`).join('; ')}
+                </div>
+              )}
+            </div>
+
             <div className="grid gap-4 lg:grid-cols-2">
               {whatIfAnalysis.bottlenecks.map(item => (
                 <div key={item.title} className={`rounded-lg border p-5 ${severityClass[item.severity]}`}>
@@ -720,6 +1224,77 @@ const AnalyticsView: React.FC = () => {
               <p className="mt-2 text-sm leading-6">{insight.text}</p>
             </div>
           ))}
+          {analytics.missingTeacherLinks.length > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-white p-5 lg:col-span-2">
+              <h3 className="font-semibold text-gray-900">Каких привязок преподавателей не хватает</h3>
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-amber-50 text-xs uppercase text-amber-700">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Специальность</th>
+                      <th className="px-3 py-2 text-left">Дисциплина</th>
+                      <th className="px-3 py-2 text-left">Тип</th>
+                      <th className="px-3 py-2 text-right">Семестр</th>
+                      <th className="px-3 py-2 text-right">Часы</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {top<MissingTeacherLinkItem>(analytics.missingTeacherLinks, 12).map((item, index) => (
+                      <tr key={`${item.specialtyName}-${item.subjectName}-${item.classType}-${item.semester}-${index}`}>
+                        <td className="px-3 py-2 text-gray-700">{item.specialtyName}</td>
+                        <td className="px-3 py-2 font-medium text-gray-900">{item.subjectName}</td>
+                        <td className="px-3 py-2 text-gray-700">{item.classType}</td>
+                        <td className="px-3 py-2 text-right">{item.semester}</td>
+                        <td className="px-3 py-2 text-right">{item.hours}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {analytics.planCoverageIssues.length > 0 && (
+            <div className="rounded-lg border border-blue-200 bg-white p-5 lg:col-span-2">
+              <h3 className="font-semibold text-gray-900">Где количество занятий не совпадает с учебным планом</h3>
+              <div className="mt-3 overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-blue-50 text-xs uppercase text-blue-700">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Группа</th>
+                      <th className="px-3 py-2 text-left">Дисциплина</th>
+                      <th className="px-3 py-2 text-left">Тип</th>
+                      <th className="px-3 py-2 text-right">По плану</th>
+                      <th className="px-3 py-2 text-right">В расписании</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {top<PlanCoverageIssue>(analytics.planCoverageIssues, 12).map((item, index) => (
+                      <tr key={`${item.groupName}-${item.subjectName}-${item.classType}-${index}`}>
+                        <td className="px-3 py-2 font-medium text-gray-900">{item.groupName}</td>
+                        <td className="px-3 py-2 text-gray-700">{item.subjectName}</td>
+                        <td className="px-3 py-2 text-gray-700">{item.classType}</td>
+                        <td className="px-3 py-2 text-right">{item.expected}</td>
+                        <td className={`px-3 py-2 text-right font-semibold ${item.actual !== item.expected ? 'text-red-700' : 'text-gray-900'}`}>{item.actual}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {analytics.loadLimitIssues.length > 0 && (
+            <div className="rounded-lg border border-red-200 bg-white p-5 lg:col-span-2">
+              <h3 className="font-semibold text-gray-900">Кто превысил пределы нагрузки</h3>
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {top<LoadLimitIssue>(analytics.loadLimitIssues, 12).map(item => (
+                  <div key={`${item.resourceType}-${item.name}`} className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-800">
+                    <div className="font-semibold">{item.resourceType === 'teacher' ? 'Преподаватель' : 'Группа'}: {item.name}</div>
+                    <div className="mt-1 text-xs">Пик недели: {item.weeklyHours} ч.; семестр: {item.semesterHours} ч.</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="rounded-lg border border-gray-200 bg-white p-5">
             <h3 className="font-semibold text-gray-900">Что сделать вручную в первую очередь</h3>
             <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-gray-700">
