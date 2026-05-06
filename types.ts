@@ -511,6 +511,49 @@ export interface HeuristicConfig {
   useNative?: boolean;
 }
 
+export type SchedulingRunPhase = 'idle' | 'preparing' | 'placing' | 'refining' | 'annealing' | 'completed' | 'stopping' | 'cancelled' | 'failed';
+
+export interface SchedulingProgressPoint {
+  timeMs: number;
+  penalty: number;
+  readiness: number;
+  placed: number;
+  processed: number;
+  total: number;
+  unscheduled: number;
+  hardViolations: number;
+  softPenalty: number;
+  label: string;
+}
+
+export interface SchedulingTriageItem {
+  id: string;
+  title: string;
+  detail: string;
+  resource: string;
+  severity: 'critical' | 'warning' | 'info';
+  count: number;
+  entryUid?: string;
+  actionHint?: string;
+}
+
+export interface SchedulingShowcaseState {
+  isOpen: boolean;
+  phase: SchedulingRunPhase;
+  startedAt: string;
+  finishedAt?: string;
+  canTakeCurrentResult: boolean;
+  stopRequested: boolean;
+  current?: SchedulingProgressPoint;
+  history: SchedulingProgressPoint[];
+  best?: SchedulingProgressPoint;
+  partialSchedule: ScheduleEntry[];
+  failedEntries: UnscheduledEntry[];
+  explanations: Record<string, SchedulingExplanation>;
+  triage: SchedulingTriageItem[];
+  humanSummary: string;
+}
+
 export interface SessionSchedulerConfig {
   consultationOffset: number; // 0 for no consultation, 1 for 1 day before, etc.
   restDays: number; // Min days between exams for the same group

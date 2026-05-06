@@ -1,7 +1,7 @@
 import { 
     ScheduleEntry, UnscheduledEntry, HeuristicConfig 
 } from '../types';
-import { calculateScheduleScore, generateScheduleWithHeuristics, SchedulerResult } from './heuristicScheduler';
+import { calculateScheduleScore, generateScheduleWithHeuristics, SchedulerResult, SchedulerRunOptions } from './heuristicScheduler';
 
 // The full GenerationData type is complex, so we'll just accept 'any' for simplicity in this new file
 // as it's just passing it through. A better approach would be to define GenerationData in types.ts.
@@ -18,9 +18,10 @@ type GenerationData = any;
 export const runIterativeScheduler = async (
     data: GenerationData,
     config: HeuristicConfig,
-    onProgress: (progress: { current: number, total: number }) => void
+    onProgress: (progress: { current: number, total: number }) => void,
+    options: SchedulerRunOptions = {}
 ): Promise<SchedulerResult> => {
-    if (typeof window !== 'undefined' && window.electronAPI?.runParallelScheduler && config.iterations > 1) {
+    if (!options.onProgress && !options.shouldStop && typeof window !== 'undefined' && window.electronAPI?.runParallelScheduler && config.iterations > 1) {
         try {
             onProgress({ current: 0, total: config.iterations });
             const parallelResult = await window.electronAPI.runParallelScheduler(data, config);
@@ -38,6 +39,7 @@ export const runIterativeScheduler = async (
     const baseSeed = config.seed ?? Date.now();
 
     for (let i = 1; i <= config.iterations; i++) {
+        if (options.shouldStop?.() && bestResult) return { ...bestResult, interrupted: true };
         // Use a slight delay to allow UI to update if needed, and to avoid blocking the main thread too hard
         await new Promise(resolve => setTimeout(resolve, 50)); 
         
@@ -48,7 +50,7 @@ export const runIterativeScheduler = async (
             seed: `${baseSeed}-${i}`,
             stochasticity: config.stochasticity ?? 0.35,
         };
-        const currentResult = await generateScheduleWithHeuristics(data, currentConfig);
+        const currentResult = await generateScheduleWithHeuristics(data, currentConfig, options);
         const currentScore = currentResult.score ?? calculateScheduleScore(data, currentResult, currentConfig);
         
         if (currentScore.total < lowestScore) {
@@ -56,6 +58,7 @@ export const runIterativeScheduler = async (
             bestResult = { ...currentResult, score: currentScore };
             console.log(`New best result found at iteration ${i}: score=${currentScore.total.toFixed(2)}, unscheduled=${currentScore.unscheduled}, hard=${currentScore.hardViolations}.`);
         }
+        if (currentResult.interrupted) return { ...currentResult, score: currentScore };
     }
 
     // Fallback in case no iterations produced a valid result (highly unlikely)

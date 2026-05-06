@@ -85,6 +85,7 @@ export const useAppLogic = () => {
         setIsScheduling(true);
         try {
             const result = await runScheduler(method, config);
+            if (method === 'heuristic') return;
             if (result.scheduled === 0 && result.unscheduled === 0 && result.failedEntries.length === 0) {
                 // User likely cancelled the confirmation dialog
                 alert("Генерация расписания отменена.");

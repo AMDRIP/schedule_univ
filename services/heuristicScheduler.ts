@@ -2,7 +2,7 @@ import {
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, BellScheduleProfile,
     SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS,
     Specialty, EducationalPlan, UnscheduledEntry, AvailabilityType, WeekType, DeliveryMode, ClassroomType, Subgroup, Elective, HeuristicConfig,
-    RuleSeverity, RuleAction, RuleCondition, ProductionCalendarEventType, SchedulingExplanation, SchedulingBottleneck
+    RuleSeverity, RuleAction, RuleCondition, ProductionCalendarEventType, SchedulingExplanation, SchedulingBottleneck, SchedulingProgressPoint
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { getWeekNumber, toYYYYMMDD } from '../utils/dateUtils';
@@ -36,6 +36,12 @@ export interface SchedulerResult {
     unschedulable: UnscheduledEntry[];
     explanations: Record<string, SchedulingExplanation>;
     score?: ScheduleScore;
+    interrupted?: boolean;
+}
+
+export interface SchedulerRunOptions {
+    onProgress?: (progress: SchedulingProgressPoint & { phase: string; partialSchedule: ScheduleEntry[]; failedEntries: UnscheduledEntry[]; explanations: Record<string, SchedulingExplanation> }) => void;
+    shouldStop?: () => boolean;
 }
 
 export interface ScheduleScore {
@@ -1070,10 +1076,42 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
 };
 
 
-export const generateScheduleWithHeuristics = async (data: GenerationData, config: HeuristicConfig): Promise<SchedulerResult> => {
+export const generateScheduleWithHeuristics = async (data: GenerationData, config: HeuristicConfig, options: SchedulerRunOptions = {}): Promise<SchedulerResult> => {
     const explanations: Record<string, SchedulingExplanation> = {};
     const index = createSchedulerIndex(data);
     const rng = createSeededRandom(config.seed);
+    const runStartedAt = Date.now();
+    const reportProgress = (
+        phase: string,
+        processed: number,
+        total: number,
+        scheduleSnapshot: ScheduleEntry[],
+        failedSnapshot: UnscheduledEntry[],
+        label: string
+    ) => {
+        if (!options.onProgress) return;
+        const remaining = Math.max(0, total - processed);
+        const hardViolations = failedSnapshot.length + remaining;
+        const softPenalty = Math.max(0, Math.round((remaining * 38_000) + (failedSnapshot.length * 120_000) + Math.max(0, total - scheduleSnapshot.length) * 3_000));
+        const penalty = hardViolations * 1_000_000 + softPenalty;
+        const readiness = total > 0 ? Math.max(0, Math.min(99.9, (scheduleSnapshot.length / total) * 100)) : 100;
+        options.onProgress({
+            phase,
+            timeMs: Date.now() - runStartedAt,
+            penalty,
+            readiness,
+            placed: scheduleSnapshot.length,
+            processed,
+            total,
+            unscheduled: failedSnapshot.length,
+            hardViolations,
+            softPenalty,
+            label,
+            partialSchedule: scheduleSnapshot.slice(),
+            failedEntries: failedSnapshot.slice(),
+            explanations: { ...explanations },
+        });
+    };
 
     // Check for native scheduler availability
     // We import dynamically to avoid issues if the module is not built
@@ -1205,10 +1243,23 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         getConstraintScore(b, data, index, workDays, domainSizes.get(b.uid) ?? 0) -
         getConstraintScore(a, data, index, workDays, domainSizes.get(a.uid) ?? 0)
     );
+    reportProgress('preparing', 0, classPool.length, newSchedule, unschedulable, 'Домен занятий рассчитан. Начинаю расстановку самых трудных пар.');
 
     // --- 3. PLACEMENT LOOP ---
     let processedEntries = 0;
     for (const entryToPlace of classPool) {
+        if (options.shouldStop?.()) {
+            classPool.slice(processedEntries).forEach(remainingEntry => markUnscheduled(remainingEntry, unschedulable, explanations, explainEntry(
+                remainingEntry,
+                { ...createEmptyRejectionStats(), data: 1 },
+                ['Генерация остановлена пользователем: текущий лучший частичный результат забран без полного перезапуска.'],
+                'Остановка',
+                'Пара не распределялась, потому что пользователь забрал текущий результат.'
+            )));
+            const interruptedResult = { schedule: newSchedule, unschedulable, explanations, interrupted: true };
+            reportProgress('stopping', classPool.length, classPool.length, newSchedule, unschedulable, 'Останавливаю генерацию и сохраняю текущий результат.');
+            return { ...interruptedResult, score: calculateScheduleScore(data, interruptedResult, config, index) };
+        }
         let bestSlots: { date: Date, timeSlotId: string, classroom: Classroom, teacherId: string, cost: number }[] = [];
         const TOP_N_CANDIDATES = 5;
 
@@ -1434,19 +1485,25 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         }
 
         processedEntries++;
+        if (processedEntries % 10 === 0 || processedEntries === classPool.length) {
+            reportProgress('placing', processedEntries, classPool.length, newSchedule, unschedulable, `Размещено ${newSchedule.length} из ${classPool.length}. Проверяю ограничения и узкие места.`);
+        }
         if (processedEntries % SCHEDULER_YIELD_INTERVAL === 0) await yieldToEventLoop();
     }
 
     // --- 4. REFINEMENT PHASE ---
     if (newSchedule.length > 0) {
         console.log(`Initial placement finished. ${newSchedule.length} entries placed. Starting refinement.`);
+        reportProgress('refining', classPool.length, classPool.length, newSchedule, unschedulable, 'Первичная сетка собрана. Снижаю штрафы локальными перестановками.');
         const refinedSchedule = await refineSchedule(newSchedule, schedulingData, config, resourceBookings, index);
         const result = { schedule: refinedSchedule, unschedulable, explanations };
+        reportProgress('completed', classPool.length, classPool.length, refinedSchedule, unschedulable, 'Генерация завершена. Готовлю триаж оставшихся проблем.');
         return { ...result, score: calculateScheduleScore(data, result, config, index) };
     }
 
 
     const result = { schedule: newSchedule, unschedulable, explanations };
+    reportProgress('completed', classPool.length, classPool.length, newSchedule, unschedulable, 'Генерация завершена без размещённых занятий.');
     return { ...result, score: calculateScheduleScore(data, result, config, index) };
 };
 

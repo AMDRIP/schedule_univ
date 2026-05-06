@@ -34,11 +34,12 @@ const getWeekKey = (dateStr: string) => {
 };
 
 const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable, colorBy, cellDate }) => {
-  const { subjects, teachers, classrooms, groups, subgroups, streams, electives, schedule, teacherSubjectLinks, updateScheduleEntry, deleteScheduleEntry, removeScheduleEntries, settings, classroomTags } = useStore();
+  const { subjects, teachers, classrooms, groups, subgroups, streams, electives, schedule, teacherSubjectLinks, updateScheduleEntry, deleteScheduleEntry, removeScheduleEntries, quickRepairScheduleEntry, settings, classroomTags } = useStore();
   const [isEditingClassroom, setIsEditingClassroom] = useState(false);
   const [isEditingDate, setIsEditingDate] = useState(false);
   const [isEditingDelivery, setIsEditingDelivery] = useState(false);
   const [isLessonPlanOpen, setIsLessonPlanOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const [{ isDragging }, drag] = useDrag(() => ({
     type: ItemTypes.SCHEDULE_ENTRY,
@@ -324,6 +325,19 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     }
   };
 
+  const handleContextMenu = (event: React.MouseEvent) => {
+    if (!isEditable) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ x: event.clientX, y: event.clientY });
+  };
+
+  const handleQuickRepair = async () => {
+    setContextMenu(null);
+    const result = await quickRepairScheduleEntry(entry.id);
+    alert(result.message);
+  };
+
 
   if (!subject || !teacher || !classroom) {
     return (
@@ -431,6 +445,7 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
         className={`shadow-sm p-1.5 rounded-lg text-xs cursor-grab relative group transition-all duration-200 hover:shadow-lg hover:-translate-y-1 ${colorClass} ${borderClass} ${warningClass} ${conflictClass} ${isDragging ? 'opacity-50' : 'opacity-100'}`}
         style={cardStyle}
         title={isConflicting ? conflictReasons.join('\n') : undefined}
+        onContextMenu={handleContextMenu}
       >
         <div>
           <p className="truncate" title={elective ? `${subject.name} (${elective.name})` : subject.name}>
@@ -524,6 +539,27 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
           groupName={groupName || 'Группа'}
           dateStr={entry.date ? new Date(entry.date).toLocaleDateString() : `${entry.day}, ${entry.timeSlotId}`}
         />
+      )}
+      {contextMenu && (
+        <div
+          className="fixed z-[100] w-56 rounded-md border border-slate-200 bg-white py-1 text-sm shadow-xl"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onMouseLeave={() => setContextMenu(null)}
+        >
+          <button
+            onClick={handleQuickRepair}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-slate-700 hover:bg-emerald-50 hover:text-emerald-700"
+          >
+            <SparklesIcon className="h-4 w-4" />
+            Исправить локально
+          </button>
+          <button
+            onClick={() => setContextMenu(null)}
+            className="block w-full px-3 py-2 text-left text-slate-500 hover:bg-slate-50"
+          >
+            Отмена
+          </button>
+        </div>
       )}
     </>
   );

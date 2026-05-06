@@ -5,11 +5,11 @@ import {
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
     EducationalPlan, EducationalPlanTemplate, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective,
     AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag, HeuristicConfig, SessionSchedulerConfig, SchedulingExplanation,
-    BuildingPlan, BellScheduleProfile
+    BuildingPlan, BellScheduleProfile, SchedulingShowcaseState, SchedulingProgressPoint, SchedulingTriageItem
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
-import { generateScheduleWithHeuristics, optimizeScheduleLocally, SchedulerResult } from '../services/heuristicScheduler';
+import { generateScheduleWithHeuristics, optimizeScheduleLocally, SchedulerResult, SchedulerRunOptions } from '../services/heuristicScheduler';
 import { generateScheduleWithGemini } from '../services/geminiService';
 import { generateScheduleWithOpenRouter } from '../services/openRouterService';
 import { runIterativeScheduler } from '../services/iterativeScheduler';
@@ -418,6 +418,7 @@ interface StoreState {
   schedulingProgress: { current: number; total: number } | null;
   schedulingExplanations: Record<string, SchedulingExplanation>;
   lastSchedulingRunSummary: string | null;
+  schedulingShowcase: SchedulingShowcaseState | null;
   viewDate: string;
   
   addItem: (dataType: DataType, item: Omit<DataItem, 'id'>) => DataItem;
@@ -440,6 +441,9 @@ interface StoreState {
   setViewDate: (date: string) => void;
   runScheduler: (method: 'heuristic' | 'gemini' | 'openrouter', config?: HeuristicConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }>;
   runLocalOptimizer: (config: HeuristicConfig) => Promise<{ improved: number; considered: number; before: number; after: number }>;
+  requestSchedulingStop: () => void;
+  dismissSchedulingShowcase: () => void;
+  quickRepairScheduleEntry: (entryId: string) => Promise<{ changed: boolean; message: string }>;
   runSessionScheduler: (config: SessionSchedulerConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }>;
   clearSchedule: () => void;
   resetSchedule: () => void;
@@ -555,6 +559,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [schedulingProgress, setSchedulingProgress] = useState<{ current: number; total: number } | null>(null);
   const [schedulingExplanations, setSchedulingExplanations] = useState<Record<string, SchedulingExplanation>>({});
   const [lastSchedulingRunSummary, setLastSchedulingRunSummary] = useState<string | null>(null);
+  const [schedulingShowcase, setSchedulingShowcase] = useState<SchedulingShowcaseState | null>(null);
+  const schedulingStopRequestedRef = useRef(false);
   const [viewDate, setViewDate] = useState(toYYYYMMDD(new Date()));
 
   useEffect(() => {
@@ -1555,9 +1561,134 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  const buildHumanSchedulingSummary = (point: SchedulingProgressPoint | undefined, failedEntries: UnscheduledEntry[], explanations: Record<string, SchedulingExplanation>) => {
+    const readiness = point ? Math.round(point.readiness) : 0;
+    const penalty = point ? Math.round(point.penalty).toLocaleString('ru-RU') : '0';
+    const windowCount = Object.values(explanations).filter(explanation =>
+      explanation.conflicts.some(conflict => conflict.toLowerCase().includes('окн'))
+    ).length;
+    const failedCount = failedEntries.length;
+    const teacherWindow = Object.values(explanations).find(explanation =>
+      explanation.resource.toLowerCase().includes('преподав') && explanation.conflicts.some(conflict => conflict.toLowerCase().includes('окн'))
+    );
+    const humanProblems = [
+      failedCount > 0 ? `я не смогла поставить ${failedCount} ${failedCount === 1 ? 'пару' : failedCount < 5 ? 'пары' : 'пар'}` : '',
+      windowCount > 0 ? `допустила ${windowCount} ${windowCount === 1 ? 'окно' : windowCount < 5 ? 'окна' : 'окон'}${teacherWindow ? ` у ресурса "${teacherWindow.resource}"` : ''}` : '',
+    ].filter(Boolean).join(' и ');
+    return `Я сделала ${readiness}% работы. Осталось ${penalty} штрафных баллов. На человеческом это значит, что ${humanProblems || 'жёстких нерешённых проблем почти не осталось, смотрите мягкие штрафы качества.'}`;
+  };
+
+  const buildSchedulingTriage = (failedEntries: UnscheduledEntry[], explanations: Record<string, SchedulingExplanation>): SchedulingTriageItem[] => {
+    const byResource = new Map<string, SchedulingTriageItem>();
+    failedEntries.forEach(entry => {
+      const explanation = entry.explanation || explanations[entry.uid];
+      if (!explanation) return;
+      const subjectName = subjects.find(subject => subject.id === entry.subjectId)?.name || entry.subjectId;
+      const teacherName = teachers.find(teacher => teacher.id === entry.teacherId)?.name;
+      const resource = explanation.resource || explanation.bottleneck;
+      const key = `${resource}-${explanation.bottleneck}-${explanation.summary}`;
+      const existing = byResource.get(key);
+      const detail = explanation.conflicts[0] || explanation.summary;
+      if (existing) {
+        existing.count += 1;
+        return;
+      }
+      byResource.set(key, {
+        id: key,
+        title: `${resource}: ${subjectName}`,
+        detail: teacherName ? `${teacherName}: ${detail}` : detail,
+        resource,
+        severity: explanation.bottleneck === 'rules' || explanation.bottleneck === 'teacher' || explanation.bottleneck === 'classroom' ? 'critical' : 'warning',
+        count: 1,
+        entryUid: entry.uid,
+        actionHint: explanation.bottleneck === 'teacher'
+          ? 'Снимите часть ограничений преподавателя, добавьте альтернативную привязку или разрешите другой слот.'
+          : explanation.bottleneck === 'classroom'
+            ? 'Добавьте аудиторию нужного типа, расширьте теги или ослабьте требование к аудитории.'
+            : explanation.bottleneck === 'group'
+              ? 'Проверьте смену группы, потоковые лекции и запрещённые слоты.'
+              : 'Откройте правило и проверьте, не конфликтует ли оно с ресурсами.',
+      });
+    });
+
+    return Array.from(byResource.values())
+      .sort((a, b) => b.count - a.count || a.title.localeCompare(b.title, 'ru'))
+      .slice(0, 12);
+  };
+
+  const updateSchedulingShowcaseFromProgress = (
+    progress: SchedulingProgressPoint & {
+      phase: string;
+      partialSchedule: ScheduleEntry[];
+      failedEntries: UnscheduledEntry[];
+      explanations: Record<string, SchedulingExplanation>;
+    }
+  ) => {
+    setSchedulingShowcase(prev => {
+      const startedAt = prev?.startedAt || new Date().toISOString();
+      const point: SchedulingProgressPoint = {
+        timeMs: progress.timeMs,
+        penalty: progress.penalty,
+        readiness: progress.readiness,
+        placed: progress.placed,
+        processed: progress.processed,
+        total: progress.total,
+        unscheduled: progress.unscheduled,
+        hardViolations: progress.hardViolations,
+        softPenalty: progress.softPenalty,
+        label: progress.label,
+      };
+      const history = [...(prev?.history || []), point].slice(-180);
+      const best = !prev?.best || point.penalty < prev.best.penalty ? point : prev.best;
+      const stopRequested = schedulingStopRequestedRef.current || prev?.stopRequested || false;
+      const phase = stopRequested && progress.phase !== 'completed' ? 'stopping' : progress.phase as SchedulingShowcaseState['phase'];
+      return {
+        isOpen: true,
+        phase,
+        startedAt,
+        finishedAt: progress.phase === 'completed' ? new Date().toISOString() : prev?.finishedAt,
+        canTakeCurrentResult: progress.partialSchedule.length > 0 && progress.phase !== 'completed',
+        stopRequested,
+        current: point,
+        history,
+        best,
+        partialSchedule: progress.partialSchedule,
+        failedEntries: progress.failedEntries,
+        explanations: progress.explanations,
+        triage: buildSchedulingTriage(progress.failedEntries, progress.explanations),
+        humanSummary: buildHumanSchedulingSummary(point, progress.failedEntries, progress.explanations),
+      };
+    });
+  };
+
+  const requestSchedulingStop = () => {
+    schedulingStopRequestedRef.current = true;
+    setSchedulingShowcase(prev => prev ? { ...prev, phase: 'stopping', stopRequested: true, humanSummary: `${prev.humanSummary} Забираю текущий лучший результат после ближайшего безопасного шага.` } : prev);
+  };
+
+  const dismissSchedulingShowcase = () => {
+    setSchedulingShowcase(prev => prev ? { ...prev, isOpen: false } : null);
+  };
+
   // FIX: Corrected the return type annotation of `runScheduler` to match the `StoreState` interface. This fixes multiple errors.
   const runScheduler = async (method: 'heuristic' | 'gemini' | 'openrouter', config?: HeuristicConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: UnscheduledEntry[] }> => {
     setSchedulingProgress(null);
+    schedulingStopRequestedRef.current = false;
+    if (method === 'heuristic') {
+      setSchedulingShowcase({
+        isOpen: true,
+        phase: 'preparing',
+        startedAt: new Date().toISOString(),
+        canTakeCurrentResult: false,
+        stopRequested: false,
+        history: [],
+        partialSchedule: [],
+        failedEntries: [],
+        explanations: {},
+        triage: [],
+        humanSummary: 'Готовлю данные, считаю ограничения и строю домены размещения.',
+      });
+    }
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
@@ -1570,13 +1701,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (method === 'heuristic') {
         if (!config) throw new Error("Конфигурация для эвристического планировщика не предоставлена.");
         
+        const schedulerRunOptions: SchedulerRunOptions = {
+            onProgress: updateSchedulingShowcaseFromProgress,
+            shouldStop: () => schedulingStopRequestedRef.current,
+        };
+
         if (config.iterations > 1) {
             const handleProgress = (progress: { current: number, total: number }) => {
                 setSchedulingProgress(progress);
             };
-            result = await runIterativeScheduler(generationData, config, handleProgress);
+            result = await runIterativeScheduler(generationData, config, handleProgress, schedulerRunOptions);
         } else {
-            result = await generateScheduleWithHeuristics(generationData, config);
+            result = await generateScheduleWithHeuristics(generationData, config, schedulerRunOptions);
         }
 
         setSchedulingProgress(null);
@@ -1611,7 +1747,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                  return { scheduled: 0, unscheduled: 0, failedEntries: [] };
              }
         }
-        const previousByUid = new Map(schedule.filter(e => e.unscheduledUid).map(e => [e.unscheduledUid!, e]));
+        const previousByUid = new Map<string, ScheduleEntry>(schedule.filter(e => e.unscheduledUid).map(e => [e.unscheduledUid!, e]));
         const added = result.schedule.filter(entry => !previousByUid.has(entry.unscheduledUid || '')).length;
         const changed = result.schedule.filter(entry => {
             const previous = entry.unscheduledUid ? previousByUid.get(entry.unscheduledUid) : undefined;
@@ -1626,6 +1762,37 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setSchedulingExplanations(result.explanations || {});
         setLastSchedulingRunSummary(`Последний прогон: добавлено ${added}, изменено ${changed}, очищено перед генерацией ${removed}, осталось нераспределенных ${result.unschedulable.length}.`);
         setSchedule(nextSchedule);
+        const finalPoint: SchedulingProgressPoint = {
+            timeMs: schedulingShowcase?.current?.timeMs || 0,
+            penalty: result.score?.total || result.unschedulable.length * 1_000_000,
+            readiness: result.schedule.length + result.unschedulable.length > 0
+                ? (result.schedule.length / (result.schedule.length + result.unschedulable.length)) * 100
+                : 100,
+            placed: result.schedule.length,
+            processed: result.schedule.length + result.unschedulable.length,
+            total: result.schedule.length + result.unschedulable.length,
+            unscheduled: result.unschedulable.length,
+            hardViolations: result.score?.hardViolations || 0,
+            softPenalty: result.score?.softPenalty || 0,
+            label: result.interrupted ? 'Пользователь забрал текущий результат.' : 'Генерация завершена.',
+        };
+        setSchedulingShowcase(prev => ({
+            isOpen: true,
+            phase: result.interrupted ? 'cancelled' : 'completed',
+            startedAt: prev?.startedAt || new Date().toISOString(),
+            finishedAt: new Date().toISOString(),
+            canTakeCurrentResult: false,
+            stopRequested: schedulingStopRequestedRef.current,
+            current: finalPoint,
+            history: [...(prev?.history || []), finalPoint].slice(-180),
+            best: prev?.best && prev.best.penalty < finalPoint.penalty ? prev.best : finalPoint,
+            partialSchedule: result.schedule,
+            failedEntries: result.unschedulable,
+            explanations: result.explanations || {},
+            triage: buildSchedulingTriage(result.unschedulable, result.explanations || {}),
+            humanSummary: buildHumanSchedulingSummary(finalPoint, result.unschedulable, result.explanations || {}),
+        }));
+        schedulingStopRequestedRef.current = false;
         return { scheduled: result.schedule.length, unscheduled: result.unschedulable.length, failedEntries: result.unschedulable };
     
     } else if (method === 'gemini') {
@@ -1691,6 +1858,90 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         before: result.beforeScore.total,
         after: result.afterScore.total,
     };
+  };
+
+  const quickRepairScheduleEntry = async (entryId: string): Promise<{ changed: boolean; message: string }> => {
+    const entry = schedule.find(item => item.id === entryId);
+    if (!entry || !entry.date) return { changed: false, message: 'Не нашла занятие для быстрого исправления.' };
+
+    const getEntryGroups = (item: Pick<ScheduleEntry, 'groupId' | 'groupIds' | 'streamId'>) => {
+      const ids = item.groupIds?.length ? item.groupIds : item.groupId ? [item.groupId] : item.streamId ? streams.find(stream => stream.id === item.streamId)?.groupIds || [] : [];
+      return groups.filter(group => ids.includes(group.id));
+    };
+    const involvedGroups = getEntryGroups(entry);
+    const subject = subjects.find(item => item.id === entry.subjectId);
+    const requiredTypes = subject?.classroomTypeRequirements?.[entry.classType] || [];
+    const studentCount = involvedGroups.reduce((sum, group) => sum + group.studentCount, 0);
+    const suitableClassrooms = classrooms.filter(classroom =>
+      (requiredTypes.length === 0 || requiredTypes.includes(classroom.typeId)) &&
+      classroom.capacity >= Math.max(1, studentCount)
+    );
+    const slots = Array.from(new Map([...timeSlots, ...timeSlotsShortened].map(slot => [slot.id, slot])).values());
+
+    const conflictsAt = (candidate: ScheduleEntry, currentSchedule: ScheduleEntry[]) => {
+      const candidateGroups = new Set(getEntryGroups(candidate).map(group => group.id));
+      return currentSchedule.filter(other => {
+        if (other.id === candidate.id) return false;
+        if (other.date !== candidate.date || other.timeSlotId !== candidate.timeSlotId) return false;
+        if (other.teacherId === candidate.teacherId) return true;
+        if (other.classroomId === candidate.classroomId) return true;
+        return getEntryGroups(other).some(group => candidateGroups.has(group.id));
+      });
+    };
+
+    const isAllowed = (candidate: ScheduleEntry) => {
+      const dayName = new Date(candidate.date + 'T00:00:00').getDay();
+      const day = DAYS_OF_WEEK[dayName === 0 ? 6 : dayName - 1];
+      const teacher = teachers.find(item => item.id === candidate.teacherId);
+      if (teacher?.availabilityGrid?.[day]?.[candidate.timeSlotId] === AvailabilityType.Forbidden) return false;
+      if (getEntryGroups(candidate).some(group => group.availabilityGrid?.[day]?.[candidate.timeSlotId] === AvailabilityType.Forbidden)) return false;
+      const targetSlot = slots.find(slot => slot.id === candidate.timeSlotId);
+      if (!areGroupsCompatibleWithTimeSlot(targetSlot, getEntryGroups(candidate))) return false;
+      return true;
+    };
+
+    const findFreePlacement = (target: ScheduleEntry, currentSchedule: ScheduleEntry[]) => {
+      const baseDate = new Date(target.date + 'T00:00:00');
+      const offsets = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7];
+      for (const offset of offsets) {
+        const date = new Date(baseDate);
+        date.setDate(baseDate.getDate() + offset);
+        if (date.getDay() === 0) continue;
+        const dateStr = toYYYYMMDD(date);
+        const day = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
+        for (const slot of slots) {
+          for (const classroom of suitableClassrooms.length ? suitableClassrooms : classrooms) {
+            const candidate = { ...target, date: dateStr, day, timeSlotId: slot.id, classroomId: classroom.id };
+            if (!isAllowed(candidate)) continue;
+            if (conflictsAt(candidate, currentSchedule).length === 0) return candidate;
+          }
+        }
+      }
+      return null;
+    };
+
+    const currentConflicts = conflictsAt(entry, schedule);
+    const movedTarget = findFreePlacement(entry, schedule);
+    if (movedTarget) {
+      const classroom = classrooms.find(item => item.id === movedTarget.classroomId)?.number || movedTarget.classroomId;
+      const confirmed = window.confirm(`Я могу исправить коллизию без полного перезапуска: перенести эту пару на ${movedTarget.date}, слот ${movedTarget.timeSlotId}, ауд. ${classroom}. Согласны?`);
+      if (!confirmed) return { changed: false, message: 'Исправление отменено пользователем.' };
+      setSchedule(prev => prev.map(item => item.id === entry.id ? movedTarget : item));
+      return { changed: true, message: `Я перенесла эту пару на ${movedTarget.date}, слот ${movedTarget.timeSlotId}.` };
+    }
+
+    for (const blocker of currentConflicts) {
+      const scheduleWithoutBlocker = schedule.filter(item => item.id !== blocker.id);
+      const movedBlocker = findFreePlacement(blocker, scheduleWithoutBlocker);
+      if (movedBlocker && conflictsAt(entry, scheduleWithoutBlocker).length === 0) {
+        const confirmed = window.confirm(`Быстрое исправление: оставляю выбранную пару на месте, а мешающее занятие сдвигаю на ${movedBlocker.date}, слот ${movedBlocker.timeSlotId}. Согласны?`);
+        if (!confirmed) return { changed: false, message: 'Исправление отменено пользователем.' };
+        setSchedule(prev => prev.map(item => item.id === movedBlocker.id ? movedBlocker : item));
+        return { changed: true, message: `Я оставила выбранную пару на месте, а мешающее занятие перенесла на ${movedBlocker.date}.` };
+      }
+    }
+
+    return { changed: false, message: 'Быстрый ремонт не нашёл безопасный ход за локальные 3 секунды. Нужен локальный оптимизатор по группе/преподавателю.' };
   };
 
   const runSessionScheduler = async (config: SessionSchedulerConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }> => {
@@ -1803,10 +2054,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, bellScheduleProfiles, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, educationalPlanTemplates, scheduleTemplates,
     classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, buildingPlans, currentFilePath, lastAutosave, apiKey, openRouterApiKey, unscheduledTimeHorizon,
-    schedulingProgress, schedulingExplanations, lastSchedulingRunSummary, viewDate,
+    schedulingProgress, schedulingExplanations, lastSchedulingRunSummary, schedulingShowcase, viewDate,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, placeItemInGrid, updateScheduleEntry, updateSettings, updateApiKey, updateOpenRouterApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
-    runScheduler, runLocalOptimizer, runSessionScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,
+    runScheduler, runLocalOptimizer, requestSchedulingStop, dismissSchedulingShowcase, quickRepairScheduleEntry, runSessionScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,
     startNewProject, handleOpen, openRecentProject, handleSave, handleSaveAs,
     getFullState, loadFullState, clearAllData, mergeFullState, setBuildingPlans, syncBuildingPlanRooms
   };

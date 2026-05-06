@@ -11,6 +11,7 @@ import UpdateNotification from './components/UpdateNotification';
 import SchedulerConfigModal from './components/SchedulerConfigModal';
 import SessionSchedulerModal from './components/SessionSchedulerModal';
 import SplashScreen from './components/SplashScreen';
+import GenerationShowcaseModal from './components/GenerationShowcaseModal';
 
 const AppContent: React.FC<{ initialAction: 'new' | 'open' | null }> = ({ initialAction }) => {
   const {
@@ -108,6 +109,7 @@ const AppContent: React.FC<{ initialAction: 'new' | 'open' | null }> = ({ initia
       {updateDownloaded && (
         <UpdateNotification onRestart={handleRestartForUpdate} />
       )}
+      <GenerationShowcaseModal />
     </>
   );
 }
