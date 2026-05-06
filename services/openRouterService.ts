@@ -87,6 +87,12 @@ export const generateScheduleWithOpenRouter = async (data: GenerationData, model
       - '${RuleAction.Order}': Сущности из первого условия должны быть раньше, чем из второго, в пределах одного дня.
       - '${RuleAction.MaxPerDay}': Для сущности из первого условия не должно быть больше 'param' занятий в день.
       - '${RuleAction.Consecutive}': Занятия для указанных сущностей должны идти подряд, без окон.
+      - '${RuleAction.AvoidTimeRange}', '${RuleAction.RequireTimeRange}', '${RuleAction.PreferTimeRange}': Используй 'startTimeSlotId' и 'endTimeSlotId' как границы диапазона.
+      - '${RuleAction.MaxPerWeek}', '${RuleAction.MinPerWeek}': Используй 'param' как недельную цель или лимит.
+      - '${RuleAction.RequireClassroomType}', '${RuleAction.PreferClassroomType}', '${RuleAction.AvoidClassroomType}': Используй 'targetIds' как список типов аудиторий.
+      - '${RuleAction.RequireClassroomTag}', '${RuleAction.PreferClassroomTag}', '${RuleAction.AvoidClassroomTag}': Используй 'targetIds' как список тегов аудиторий.
+      - '${RuleAction.AvoidSingleLessonDay}', '${RuleAction.PreferCompactDay}', '${RuleAction.SpreadAcrossWeek}': Это правила качества сетки; выполняй их после строгих ресурсных ограничений.
+    - 'scope': Дополнительная область действия правила: даты, weekType, course, semester, formOfStudy, shift, кафедры, специальности, типы аудиторий, теги и потоки.
     
     ОСНОВНЫЕ ПРАВИЛА СОСТАВЛЕНИЯ РАСПИСАНИЯ (помимо указанных в JSON):
     1.  ИСТОЧНИК ДАННЫХ: Все обязательные занятия, их количество и тип (лекция, практика, лаб.) должны браться ИСКЛЮЧИТЕЛЬНО из Учебных планов. Дополнительные занятия берутся из списка Факультативов.

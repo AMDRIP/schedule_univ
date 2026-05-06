@@ -313,6 +313,18 @@ export interface TeacherSubjectLink extends BaseItem {
   teacherId: string;
   subjectId: string;
   classTypes: ClassType[];
+  role?: 'primary' | 'reserve' | 'overloadOnly' | 'examiner' | 'assistant' | 'undesirable';
+  priority?: number;
+  isActive?: boolean;
+  maxWeeklyLessons?: number;
+  maxSemesterLessons?: number;
+  allowStreams?: boolean;
+  allowedFormOfStudy?: FormOfStudy[];
+  allowedGroupIds?: string[];
+  excludedGroupIds?: string[];
+  allowedClassroomIds?: string[];
+  allowedClassroomTypeIds?: string[];
+  notes?: string;
 }
 
 export enum RuleSeverity {
@@ -326,20 +338,50 @@ export enum RuleAction {
   AvoidTime = 'Избегать времени/дня',
   RequireTime = 'Требовать время/день',
   PreferTime = 'Предпочитать время/день',
+  AvoidDay = 'Избегать дня недели',
+  RequireDay = 'Требовать день недели',
+  PreferDay = 'Предпочитать день недели',
+  AvoidTimeRange = 'Избегать диапазона времени',
+  RequireTimeRange = 'Требовать диапазон времени',
+  PreferTimeRange = 'Предпочитать диапазон времени',
   SameDay = 'Размещать в один день',
   DifferentDay = 'Размещать в разные дни',
   Consecutive = 'Размещать пары подряд',
   MaxPerDay = 'Максимум пар в день',
   MinPerDay = 'Минимум пар в день',
+  MaxPerWeek = 'Максимум пар в неделю',
+  MinPerWeek = 'Минимум пар в неделю',
   MaxConsecutive = 'Максимум пар подряд',
   AtMostNGaps = 'Не более N "окон" в день',
   Order = 'Определенный порядок (A перед B)',
   NoOverlap = 'Не пересекать с (по времени)',
   StartAfter = 'Начинать не ранее',
   EndBefore = 'Заканчивать не позднее',
+  RequireClassroomType = 'Требовать тип аудитории',
+  PreferClassroomType = 'Предпочитать тип аудитории',
+  AvoidClassroomType = 'Избегать тип аудитории',
+  RequireClassroomTag = 'Требовать тег аудитории',
+  PreferClassroomTag = 'Предпочитать тег аудитории',
+  AvoidClassroomTag = 'Избегать тег аудитории',
+  AvoidSingleLessonDay = 'Избегать одиночной пары в день',
+  PreferCompactDay = 'Предпочитать компактный день',
+  SpreadAcrossWeek = 'Распределять по неделе',
 }
 
-export type RuleEntityType = 'teacher' | 'group' | 'subject' | 'classroom' | 'classType' | 'department';
+export type RuleEntityType =
+  | 'teacher'
+  | 'group'
+  | 'stream'
+  | 'subgroup'
+  | 'subject'
+  | 'classroom'
+  | 'classroomType'
+  | 'classroomTag'
+  | 'classType'
+  | 'department'
+  | 'specialty'
+  | 'formOfStudy'
+  | 'shift';
 
 export interface RuleCondition {
   entityType: RuleEntityType;
@@ -349,15 +391,39 @@ export interface RuleCondition {
 
 export type RuleLogicalOperator = 'AND' | 'OR';
 
+export type RuleCategory = 'resource' | 'time' | 'pedagogy' | 'load' | 'sequence' | 'quality' | 'custom';
+
+export interface RuleScope {
+  startDate?: string;
+  endDate?: string;
+  weekType?: WeekType | 'any';
+  course?: number;
+  semester?: number;
+  formOfStudy?: FormOfStudy | 'any';
+  shift?: StudyShift | 'any';
+  departmentIds?: string[];
+  specialtyIds?: string[];
+  classroomTypeIds?: string[];
+  classroomTagIds?: string[];
+  streamIds?: string[];
+}
+
 export interface SchedulingRule extends BaseItem {
   description: string;
   severity: RuleSeverity;
   action: RuleAction;
   conditions: RuleCondition[];
   logicalOperators?: RuleLogicalOperator[];
+  enabled?: boolean;
+  category?: RuleCategory;
+  scope?: RuleScope;
   day?: string;
   timeSlotId?: string;
+  startTimeSlotId?: string;
+  endTimeSlotId?: string;
   param?: number;
+  targetIds?: string[];
+  notes?: string;
 }
 
 

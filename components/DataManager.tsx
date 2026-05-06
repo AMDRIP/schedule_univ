@@ -262,8 +262,8 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
             case 'ugs': return ['id', 'code', 'name'];
             case 'specialties': return ['id', 'code', 'name', 'ugsId', 'oksoCode'];
             case 'classroomTypes': return ['id', 'name'];
-            case 'teacherSubjectLinks': return ['teacherId', 'subjectId', 'classTypes'];
-            case 'schedulingRules': return ['description', 'type', 'target', 'targetId'];
+            case 'teacherSubjectLinks': return ['teacherId', 'subjectId', 'classTypes', 'role', 'priority', 'isActive', 'maxWeeklyLessons', 'maxSemesterLessons', 'allowStreams'];
+            case 'schedulingRules': return ['description', 'enabled', 'category', 'severity', 'action', 'conditions', 'scope', 'day', 'timeSlotId', 'startTimeSlotId', 'endTimeSlotId', 'param', 'targetIds'];
             case 'educationalPlans': return ['specialtyId', 'entries'];
             default: return [];
         }
