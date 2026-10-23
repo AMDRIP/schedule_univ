@@ -16,7 +16,7 @@ import { migrateStudents, groupsShareParticipants } from '../utils/participants'
 import { generateScheduleWithGemini } from '../services/geminiService';
 import { generateScheduleWithOpenRouter } from '../services/openRouterService';
 import { runIterativeScheduler } from '../services/iterativeScheduler';
-import { generateSessionSchedule, getSessionClassTypesToClear } from '../services/sessionScheduler';
+import { generateSessionSchedule, getRetainedSessionSchedule } from '../services/sessionScheduler';
 import { areGroupsCompatibleWithTimeSlot, getGroupsShiftMismatchText, getTimeSlotShiftLabel } from '../utils/shiftUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
 import { getPlanContactActivities, getPlanContactHours, getRequiredClassroomTypes, getPlanForGroup } from '../utils/educationUtils';
@@ -458,7 +458,7 @@ interface StoreState {
   selectRepairAlternative: (id: string) => void;
   undoScheduleRepair: () => void;
   canUndoRepair: boolean;
-  runSessionScheduler: (config: SessionSchedulerConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }>;
+  runSessionScheduler: (config: SessionSchedulerConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: any[]; report: string; validationIssues: { entryId: string; issues: string[] }[] }>;
   clearSchedule: () => void;
   resetSchedule: () => void;
   startNewProject: () => void;
@@ -552,6 +552,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [repairPreview, setRepairPreview] = useState<RepairPreview | null>(null);
   const [repairUndo, setRepairUndo] = useState<{ before: ScheduleEntry[]; afterSignature: string } | null>(null);
   const repairRunning = useRef(false);
+  const sessionRunning = useRef(false);
   const [unscheduledEntries, setUnscheduledEntries] = useState<UnscheduledEntry[]>([]);
   const [ugs, setUgs] = useState(initialUGS);
   const [specialties, setSpecialties] = useState(initialSpecialties);
@@ -1921,36 +1922,38 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setRepairPreview(null); setRepairUndo(null);
   };
 
-  const runSessionScheduler = async (config: SessionSchedulerConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }> => {
-    const generationData = {
+  const runSessionScheduler = async (config: SessionSchedulerConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: any[]; report: string; validationIssues: { entryId: string; issues: string[] }[] }> => {
+    if (sessionRunning.current) throw new Error('Расчёт сессии уже выполняется.');
+    sessionRunning.current = true;
+    try {
+      const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
         subgroups, schedule, electives, academicWorks, students, resourceAbsences
-    };
+      };
 
-    const result = await generateSessionSchedule(generationData, config);
-
-    let finalSchedule = [...schedule];
-    if (config.clearExisting) {
-        const sessionStart = new Date(config.timeFrame.start + 'T00:00:00').getTime();
-        const sessionEnd = new Date(config.timeFrame.end + 'T23:59:59').getTime();
-        const mode = config.generationMode || 'full';
-        const classTypesToClear = getSessionClassTypesToClear(config);
-        finalSchedule = schedule.filter(entry => {
-            if (!entry.date) return true;
-            if (!classTypesToClear.includes(entry.classType)) return true;
-            
-            const entryTime = new Date(entry.date).getTime();
-            return entryTime < sessionStart || entryTime > sessionEnd;
-        });
-    }
-
-    setSchedule([...finalSchedule, ...result.schedule]);
-    return { 
+      const signature = planningSignature(generationData);
+      const result = await generateSessionSchedule(generationData, config);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      if (signature !== planningSignature(stateRef.current)) throw new Error('Исходные данные изменились во время расчёта сессии. Повторите запуск; текущие изменения сохранены.');
+      const finalSchedule = [...getRetainedSessionSchedule(schedule, config), ...result.schedule];
+      const failures = result.unschedulable.map(event => `${subjects.find(subject => subject.id === event.subjectId)?.name || event.subjectId} (${event.classType}; ${event.groupIds.map(id => groups.find(group => group.id === id)?.number || id).join(', ')}): ${event.issues?.join(' ') || 'Нет допустимого размещения.'}`);
+      const warnings = result.validationIssues.map(item => {
+        const entry = finalSchedule.find(entry => entry.id === item.entryId);
+        return `${entry?.date || ''} ${subjects.find(subject => subject.id === entry?.subjectId)?.name || entry?.subjectId || item.entryId}: ${item.issues.join(' ')}`;
+      });
+      const report = [`Сессия: добавлено ${result.schedule.length}; не распределено ${result.unschedulable.length}; замечаний итоговой проверки ${warnings.length}.`,
+        ...failures.slice(0, 10), ...warnings.slice(0, 5), ...(failures.length > 10 || warnings.length > 5 ? ['Остальные причины доступны в результате расчёта и консоли.'] : [])].join('\n');
+      setSchedule(finalSchedule);
+      setLastSchedulingRunSummary(report);
+      return {
         scheduled: result.schedule.length, 
         unscheduled: result.unschedulable.length, 
-        failedEntries: result.unschedulable 
-    };
+        failedEntries: result.unschedulable,
+        report,
+        validationIssues: result.validationIssues,
+      };
+    } finally { sessionRunning.current = false; }
   };
 
   const resetSchedule = () => {

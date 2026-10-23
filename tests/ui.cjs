@@ -115,6 +115,36 @@ async function run() {
         const withLog = await page.evaluate(() => window.__store.getFullState());
         await page.evaluate(data => window.__store.loadFullState(data), withLog);
         await page.waitForFunction(() => window.__store.substitutionLog[0]?.absence?.reason === 'Больничный для автотеста');
+        const sessionData = makeFixture();
+        sessionData.schedule = [{ ...lesson, id: 'locked-session', subjectId: 'retained-subject', classType: 'Экзамен', locked: true }];
+        await page.evaluate(data => window.__store.loadFullState(data), sessionData);
+        await page.waitForFunction(() => window.__store.schedule[0]?.id === 'locked-session');
+        const sessionConfig = { timeFrame: config.timeFrame, clearExisting: true, consultationOffset: 0, restDays: 0, scheduleTests: 'none', includeCoursework: false, semesterParity: 'odd' };
+        const session = await page.evaluate(configuration => window.__store.runSessionScheduler(configuration), sessionConfig);
+        assert.equal(session.scheduled, 1);
+        await page.waitForFunction(() => window.__store.schedule.length === 2);
+        assert.equal(await page.evaluate(() => window.__store.schedule.some(entry => entry.id === 'locked-session' && entry.locked)), true);
+        assert.equal((await page.evaluate(configuration => window.__store.runSessionScheduler(configuration), { ...sessionConfig, clearExisting: false })).scheduled, 0);
+        const missingSession = makeFixture(); missingSession.teacherSubjectLinks = [];
+        await page.evaluate(data => window.__store.loadFullState(data), missingSession);
+        await page.waitForFunction(() => window.__store.teacherSubjectLinks.length === 0);
+        const missingResult = await page.evaluate(configuration => window.__store.runSessionScheduler(configuration), sessionConfig);
+        assert.equal(missingResult.unscheduled, 1); assert.ok(missingResult.report.includes('привязки'));
+        const sessionSnapshot = await page.evaluate(() => window.__store.getFullState());
+        await page.evaluate(data => window.__store.loadFullState(data), sessionSnapshot);
+        await page.waitForFunction(() => window.__store.lastSchedulingRunSummary?.includes('привязки'));
+        const changingSession = makeFixture();
+        changingSession.groups = Array.from({ length: 12 }, (_, i) => ({ ...changingSession.groups[0], id: `session-group-${i}` }));
+        changingSession.classrooms = Array.from({ length: 24 }, (_, i) => ({ ...changingSession.classrooms[0], id: `session-room-${i}` }));
+        await page.evaluate(data => window.__store.loadFullState(data), changingSession);
+        await page.waitForFunction(() => window.__store.groups.length === 12);
+        const staleSession = await page.evaluate(async configuration => {
+            const job = window.__store.runSessionScheduler(configuration);
+            setTimeout(() => window.__store.updateSettings({ ...window.__store.settings, allowWindows: !window.__store.settings.allowWindows }), 0);
+            try { await job; return false; } catch (error) { return error.message.includes('изменились'); }
+        }, sessionConfig);
+        assert.equal(staleSession, true);
+        assert.equal(await page.evaluate(() => window.__store.schedule.length), 0);
         await page.evaluate(data => window.__store.loadFullState(data), makeFixture());
         await page.waitForFunction(() => window.__store.schedule.length === 0);
         await page.getByRole('link', { name: 'Статистика', exact: true }).click();
@@ -146,7 +176,7 @@ async function run() {
         await page.getByText('Генерация завершена.', { exact: true }).waitFor();
         await page.screenshot({ path: '.test-output/generation-desktop.png', fullPage: true });
         assert.deepEqual(errors, []);
-        console.log('Electron UI: version, coursework/student CRUD, migration, individual defense, plan versions, balance, ranked repair/apply/undo/stale rejection, substitutions and persisted journal, isolated what-if trial, 2 concurrent workers for 4 iterations, 3 real nested candidate workers for one iteration, automatic worker cleanup passed.');
+        console.log('Electron UI: version, coursework/student CRUD, migration, individual defense, plan versions, balance, ranked repair/apply/undo/stale rejection, substitutions and persisted journal, session locked preservation/completion/report persistence/stale rejection, isolated what-if trial, 2 concurrent workers for 4 iterations, 3 real nested candidate workers for one iteration, automatic worker cleanup passed.');
     } finally {
         if (app) await app.close();
         await new Promise(resolve => server.close(resolve));

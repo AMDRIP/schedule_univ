@@ -54,10 +54,9 @@ export const useAppLogic = () => {
 
         try {
             const result = await runSessionScheduler(config);
-            alert(`Генерация расписания сессии завершена!\n\nРазмещено экзаменов/консультаций: ${result.scheduled}\nНе удалось разместить: ${result.unscheduled}`);
-            if (result.failedEntries.length > 0) {
-                console.log("Не удалось разместить следующие события сессии:", result.failedEntries);
-                alert("Подробности о неразмещенных событиях смотрите в консоли разработчика (Ctrl+Shift+I).");
+            alert(`Расчёт сессии завершён.\n\n${result.report}`);
+            if (result.failedEntries.length > 0 || result.validationIssues.length > 0) {
+                console.log("Отчёт планировщика сессии:", result);
             }
         } catch (err: any) {
             alert(`Ошибка при генерации расписания сессии: ${err.message}`);

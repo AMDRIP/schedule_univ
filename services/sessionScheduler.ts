@@ -1,16 +1,19 @@
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
     SchedulingSettings, TeacherSubjectLink, ProductionCalendarEvent, Specialty, EducationalPlan, 
-    AvailabilityType, DeliveryMode, ClassroomType, Subgroup, SessionSchedulerConfig, AttestationType, SchedulingRule, BellScheduleProfile, Elective
+    DeliveryMode, ClassroomType, Subgroup, SessionSchedulerConfig, AttestationType, SchedulingRule, BellScheduleProfile, Elective, Student, AcademicWork, ResourceAbsence
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { toYYYYMMDD } from '../utils/dateUtils';
-import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
 import { getPlanForGroup, matchesSemesterParity, getRequiredClassroomTypes } from '../utils/educationUtils';
-import { createScheduleValidator, getActiveTimeSlotsForDate, GenerationData } from './heuristicScheduler';
+import { createScheduleValidator, getActiveTimeSlotsForDate, expandScheduleOccurrences, GenerationData } from './heuristicScheduler';
+import { groupIdsOf, isIndividualEntry } from '../utils/participants';
 
 interface SessionGenerationData {
+  students?: Student[];
+  academicWorks?: AcademicWork[];
+  resourceAbsences?: ResourceAbsence[];
   timeSlotsShortened?: TimeSlot[];
   bellScheduleProfiles?: BellScheduleProfile[];
   schedulingRules?: SchedulingRule[];
@@ -31,12 +34,15 @@ interface SessionGenerationData {
   schedule: ScheduleEntry[];
 }
 
-interface SessionEvent {
+export interface SessionEvent {
     uid: string;
     type: 'exam' | 'consultation' | 'test' | 'practiceConsultation' | 'practiceDefense';
     classType: ClassType;
     subjectId: string;
     teacherId: string;
+    teacherCandidates: string[];
+    semester: number;
+    issues?: string[];
     studentCount: number;
     groupIds: string[];
     streamId?: string;
@@ -46,34 +52,52 @@ interface SessionEvent {
 export interface SchedulerResult {
     schedule: ScheduleEntry[];
     unschedulable: SessionEvent[];
+    validationIssues: { entryId: string; issues: string[] }[];
 }
 
 export const getSessionClassTypesToClear = (config: SessionSchedulerConfig): ClassType[] => {
     const mode = config.generationMode || 'full';
     if (mode === 'consultations_only') return [ClassType.Consultation];
-    if (mode === 'practice_only') return [ClassType.PracticeConsultation, ClassType.PracticeDefense];
-    const base = [ClassType.Exam, ClassType.Consultation, ClassType.Test, ClassType.CandidateExam, ClassType.ResearchAttestation, ClassType.ThesisDefense];
+    const practice = [
+        ...(config.includePracticeConsultations !== false ? [ClassType.PracticeConsultation] : []),
+        ...(config.includePracticeDefenses !== false ? [ClassType.PracticeDefense] : []),
+    ];
+    if (mode === 'practice_only') return practice;
+    const base = [ClassType.Exam, ClassType.CandidateExam];
+    if (config.consultationOffset > 0) base.push(ClassType.Consultation);
+    if (config.scheduleTests !== 'none') base.push(ClassType.Test, ClassType.ResearchAttestation, ClassType.ThesisDefense);
     if (config.includeCoursework !== false) base.push(ClassType.CourseworkDefense);
-    if (mode === 'full_with_practice') base.push(ClassType.PracticeConsultation, ClassType.PracticeDefense);
+    if (mode === 'full_with_practice') base.push(...practice);
     return base;
 };
 
+const semesterOf = (entry: ScheduleEntry) => Number((entry.unscheduledUid || entry.id).match(/-sem(\d+)-/)?.[1]) || undefined;
+export const getRetainedSessionSchedule = (schedule: ScheduleEntry[], config: SessionSchedulerConfig) => {
+    const types = new Set(getSessionClassTypesToClear(config));
+    return schedule.filter(entry => !config.clearExisting || entry.locked || isIndividualEntry(entry) || !entry.date ||
+        entry.date < config.timeFrame.start || entry.date > config.timeFrame.end || !types.has(entry.classType) ||
+        (semesterOf(entry) && !matchesSemesterParity(semesterOf(entry)!, config.semesterParity || 'all')));
+};
+
+const teacherCandidatesFor = (data: SessionGenerationData, group: Group, subjectId: string, type: ClassType) => {
+    const teachers = new Set(data.teachers.map(teacher => teacher.id));
+    return [...new Set(data.teacherSubjectLinks.filter(link => link.subjectId === subjectId && link.classTypes.includes(type) && link.isActive !== false &&
+        (!link.allowedGroupIds?.length || link.allowedGroupIds.includes(group.id)) && !link.excludedGroupIds?.includes(group.id) &&
+        (!link.allowedFormOfStudy?.length || link.allowedFormOfStudy.includes(group.formOfStudy)))
+        .sort((a, b) => (b.priority || 0) - (a.priority || 0)).map(link => link.teacherId).filter(id => teachers.has(id)))];
+};
+
 export const generateSessionEventPool = (data: SessionGenerationData, config: SessionSchedulerConfig): SessionEvent[] => {
-    const { groups, educationalPlans, teacherSubjectLinks, streams } = data;
+    const { groups, educationalPlans } = data;
     const events: SessionEvent[] = [];
     const generationMode = config.generationMode || 'full';
     const includeAttestations = generationMode === 'full' || generationMode === 'full_with_practice';
     const onlyConsultations = generationMode === 'consultations_only';
     const includePractice = generationMode === 'practice_only' || generationMode === 'full_with_practice';
 
-    const processedAttestations = new Set<string>(); // key: `${subjectId}-${groupIds.join(',')}`
-    const processedPractice = new Set<string>();
+    const processed = new Set<string>();
 
     groups.forEach(group => {
-        const teacherSubjectLinks = data.teacherSubjectLinks.filter(link => link.isActive !== false &&
-            (!link.allowedGroupIds?.length || link.allowedGroupIds.includes(group.id)) &&
-            !link.excludedGroupIds?.includes(group.id) &&
-            (!link.allowedFormOfStudy?.length || link.allowedFormOfStudy.includes(group.formOfStudy)));
         const plan = getPlanForGroup(group, educationalPlans);
         if (!plan) return;
 
@@ -91,124 +115,44 @@ export const generateSessionEventPool = (data: SessionGenerationData, config: Se
             if (!shouldScheduleAttestation && !shouldScheduleConsultationOnly && !shouldSchedulePractice && !shouldScheduleCoursework) return;
 
             // A lecture stream does not imply a shared exam or defense.
-            const stream: Stream | undefined = undefined;
             const eventGroups = [group];
             const groupIds = eventGroups.map(g => g.id).sort();
             const studentCount = eventGroups.reduce((sum, g) => sum + g.studentCount, 0);
 
             const attestationKey = `${planEntry.subjectId}-sem${planEntry.semester}-${groupIds.join(',')}`;
-            if (shouldScheduleAttestation && processedAttestations.has(attestationKey)) return;
-            
-            let teacherId: string | undefined;
-            teacherId = teacherSubjectLinks.find(link => link.subjectId === planEntry.subjectId && link.classTypes.includes(attestationClassType))?.teacherId;
-            if (isExam) {
-                // Priority: Lecturer -> Anyone linked to Exam -> Any teacher for subject
-                teacherId ||= teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Lecture))?.teacherId;
-                if (!teacherId) {
-                     teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Exam))?.teacherId;
-                }
-            } else { // isTest
-                // Priority: Anyone linked to Test -> Anyone linked to Practical -> Any teacher for subject
-                teacherId ||= teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && (l.classTypes.includes(ClassType.Test) || l.classTypes.includes(ClassType.Practical)))?.teacherId;
-            }
-    
-            // General fallback for both
-            if (!teacherId) {
-                 teacherId = teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId)?.teacherId;
-            }
-            
-            if (teacherId && shouldScheduleAttestation) {
+            const addEvent = (uid: string, type: SessionEvent['type'], classType: ClassType, consultationFor?: string) => {
+                if (processed.has(uid)) return;
+                processed.add(uid);
+                const teacherCandidates = teacherCandidatesFor(data, group, planEntry.subjectId, classType);
+                events.push({ uid, type, classType, subjectId: planEntry.subjectId, semester: planEntry.semester,
+                    teacherId: teacherCandidates[0] || '', teacherCandidates, studentCount, groupIds, consultationFor });
+            };
+            if (shouldScheduleAttestation) {
                 const eventType = isExam ? 'exam' : 'test';
                 const eventUid = `${eventType}-${attestationKey}`;
-                const sessionEvent: SessionEvent = {
-                    uid: eventUid,
-                    type: eventType,
-                    classType: attestationClassType,
-                    subjectId: planEntry.subjectId,
-                    teacherId,
-                    studentCount,
-                    groupIds,
-                    streamId: stream?.id,
-                };
-                events.push(sessionEvent);
-
+                addEvent(eventUid, eventType, attestationClassType);
                 if (isExam && config.consultationOffset > 0) {
-                     events.push({
-                        uid: `consult-${attestationKey}`,
-                        type: 'consultation',
-                        classType: ClassType.Consultation,
-                        subjectId: planEntry.subjectId,
-                        teacherId,
-                        studentCount,
-                        groupIds,
-                        streamId: stream?.id,
-                        consultationFor: eventUid
-                    });
+                    addEvent(`consult-${attestationKey}`, 'consultation', ClassType.Consultation, eventUid);
                 }
-                processedAttestations.add(attestationKey);
             }
 
-            if (teacherId && shouldScheduleConsultationOnly && !processedAttestations.has(`consult-only-${attestationKey}`)) {
-                events.push({
-                    uid: `consult-only-${attestationKey}`,
-                    type: 'consultation',
-                    classType: ClassType.Consultation,
-                    subjectId: planEntry.subjectId,
-                    teacherId,
-                    studentCount,
-                    groupIds,
-                    streamId: stream?.id,
-                });
-                processedAttestations.add(`consult-only-${attestationKey}`);
+            if (shouldScheduleConsultationOnly) {
+                addEvent(`consult-${attestationKey}`, 'consultation', ClassType.Consultation, `exam-${attestationKey}`);
             }
 
             if (shouldScheduleCoursework) {
-                const supervisorId = teacherSubjectLinks.find(link => link.subjectId === planEntry.subjectId && link.classTypes.includes(ClassType.CourseworkDefense))?.teacherId || teacherId || '';
-                for (let i = 0; i < Math.ceil((planEntry.coursework?.defenseHours || 0) / 2); i++) events.push({
-                    uid: `coursework-defense-${attestationKey}-${i}`, type: 'practiceDefense', classType: ClassType.CourseworkDefense,
-                    subjectId: planEntry.subjectId, teacherId: supervisorId, studentCount, groupIds,
-                });
+                for (let i = 0; i < Math.ceil((planEntry.coursework?.defenseHours || 0) / 2); i++)
+                    addEvent(`coursework-defense-${attestationKey}-${i}`, 'practiceDefense', ClassType.CourseworkDefense);
             }
             if (shouldSchedulePractice) {
-                const practiceTeacherId =
-                    teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && (l.classTypes.includes(ClassType.Practical) || l.classTypes.includes(ClassType.Lab)))?.teacherId ||
-                    teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(ClassType.Consultation))?.teacherId ||
-                    teacherSubjectLinks.find(l => l.subjectId === planEntry.subjectId)?.teacherId;
-
-                if (!practiceTeacherId) return;
-
                 if (config.includePracticeConsultations !== false) {
                     const key = `practice-consult-${attestationKey}`;
-                    if (!processedPractice.has(key)) {
-                        events.push({
-                            uid: key,
-                            type: 'practiceConsultation',
-                            classType: ClassType.PracticeConsultation,
-                            subjectId: planEntry.subjectId,
-                            teacherId: practiceTeacherId,
-                            studentCount,
-                            groupIds,
-                            streamId: stream?.id,
-                        });
-                        processedPractice.add(key);
-                    }
+                    addEvent(key, 'practiceConsultation', ClassType.PracticeConsultation);
                 }
 
                 if (config.includePracticeDefenses !== false) {
                     const key = `practice-defense-${attestationKey}`;
-                    if (!processedPractice.has(key)) {
-                        events.push({
-                            uid: key,
-                            type: 'practiceDefense',
-                            classType: ClassType.PracticeDefense,
-                            subjectId: planEntry.subjectId,
-                            teacherId: practiceTeacherId,
-                            studentCount,
-                            groupIds,
-                            streamId: stream?.id,
-                        });
-                        processedPractice.add(key);
-                    }
+                    addEvent(key, 'practiceDefense', ClassType.PracticeDefense);
                 }
             }
         });
@@ -218,299 +162,175 @@ export const generateSessionEventPool = (data: SessionGenerationData, config: Se
 };
 
 export const generateSessionSchedule = async (data: SessionGenerationData, config: SessionSchedulerConfig): Promise<SchedulerResult> => {
-    
-    // --- 1. INITIALIZATION ---
-    const { timeFrame, clearExisting } = config;
-    const { teachers, groups, classrooms, subjects, timeSlots, settings, schedule } = data;
-
+    assertSessionConfig(config);
+    const { timeFrame, restDays } = config;
+    const validationData: GenerationData = { ...data, timeSlotsShortened: data.timeSlotsShortened || data.timeSlots,
+        bellScheduleProfiles: data.bellScheduleProfiles || [], schedulingRules: data.schedulingRules || [], electives: data.electives || [],
+        ugs: (data as Partial<GenerationData>).ugs || [] };
+    const ruleConfig = { timeFrame, clearExisting: false, iterations: 1, strictness: 5, enforceLectureOrder: true, distributeEvenly: true };
+    const validate = createScheduleValidator(validationData, ruleConfig, { finalValidation: false });
+    const validateFinal = createScheduleValidator(validationData, ruleConfig);
+    const retained = getRetainedSessionSchedule(data.schedule, config);
+    const halo = { start: offsetDate(timeFrame.start, -restDays), end: offsetDate(timeFrame.end, restDays) };
+    const existing = expandScheduleOccurrences(validationData, retained, halo);
+    const pool = generateSessionEventPool(data, config);
     const newSchedule: ScheduleEntry[] = [];
-    const unschedulable: SessionEvent[] = [];
-    
-    const resourceBookings = new Map<string, Set<string>>();
-    const initializeBookings = (items: (Teacher | Group | Classroom)[], type: string) => {
-        items.forEach(item => resourceBookings.set(`${type}-${item.id}`, new Set()));
-    };
-    initializeBookings(teachers, 'teacher');
-    initializeBookings(groups, 'group');
-    initializeBookings(classrooms, 'classroom');
-    
-    let existingSchedule = schedule;
-    if (clearExisting) {
-        const sessionStart = new Date(timeFrame.start + 'T00:00:00').getTime();
-        const sessionEnd = new Date(timeFrame.end + 'T23:59:59').getTime();
-        existingSchedule = schedule.filter(entry => {
-            if (!entry.date) return true;
-            if (!getSessionClassTypesToClear(config).includes(entry.classType)) return true;
-            
-            const entryTime = new Date(entry.date).getTime();
-            return entryTime < sessionStart || entryTime > sessionEnd;
-        });
-    }
-
-    existingSchedule.forEach(entry => {
-        if (!entry.date) return;
-        const bookingKey = `${entry.date}-${entry.timeSlotId}`;
-        
-        if (!resourceBookings.has(bookingKey)) {
-            resourceBookings.set(bookingKey, new Set());
-        }
-        const bookingSet = resourceBookings.get(bookingKey)!;
-
-        bookingSet.add(`classroom-${entry.classroomId}`);
-        bookingSet.add(`teacher-${entry.teacherId}`);
-        entry.additionalTeacherIds?.forEach(id => bookingSet.add(`teacher-${id}`));
-        (entry.groupIds || [entry.groupId]).forEach(gid => gid && bookingSet.add(`group-${gid}`));
-    });
-
-    const validationData: GenerationData = { ...data, timeSlotsShortened: data.timeSlotsShortened || data.timeSlots, bellScheduleProfiles: data.bellScheduleProfiles || [], schedulingRules: data.schedulingRules || [], electives: data.electives || [], ugs: [] };
-    const validate = createScheduleValidator(validationData, { timeFrame, clearExisting: false, iterations: 1, strictness: 5, enforceLectureOrder: true, distributeEvenly: true }, { finalValidation: false });
-    const allows = (event: SessionEvent, date: Date, timeSlotId: string, room: Classroom) => validate(placeEvent(event, date, timeSlotId, room, new Map()), [...existingSchedule, ...newSchedule]).valid;
-    const slotsForDate = (date: Date) => getActiveTimeSlotsForDate(validationData, date);
-    const workDays: Date[] = [];
-    let currentDate = new Date(timeFrame.start + 'T00:00:00');
-    const lastDate = new Date(timeFrame.end + 'T00:00:00');
-    while(currentDate <= lastDate) {
-        const dateStr = toYYYYMMDD(currentDate);
-        const dayInfo = data.productionCalendar.find(e => e.date === dateStr);
-        if (!settings.respectProductionCalendar || !dayInfo || dayInfo.isWorkDay) {
-            workDays.push(new Date(currentDate));
-        }
-        currentDate.setDate(currentDate.getDate() + 1);
-    }
-
-    const eventPool = generateSessionEventPool(data, config);
-    const exams = eventPool.filter(e => e.type === 'exam').sort((a,b) => b.studentCount - a.studentCount);
-    const tests = eventPool.filter(e => e.type === 'test').sort((a,b) => b.studentCount - a.studentCount);
-    const consultations = eventPool.filter(e => e.type === 'consultation');
-    const practiceEvents = eventPool.filter(e => e.type === 'practiceConsultation' || e.type === 'practiceDefense')
-        .sort((a, b) => b.studentCount - a.studentCount);
-
+    let current = [...existing];
     const placements = new Map<string, ScheduleEntry>();
-
-    // --- 2. PLACE EXAMS & TESTS ---
-    const attestationsToPlace = [...exams, ...tests];
-    for (const event of attestationsToPlace) {
-        let bestSlot: { date: Date, timeSlotId: string, classroom: Classroom } | null = null;
-        
-        const subject = subjects.find(s => s.id === event.subjectId);
-
-        const findSlotInClassrooms = (roomList: Classroom[]) => {
-            for (const date of workDays) {
-                for (const timeSlot of slotsForDate(date)) {
-                    const involvedGroups = groups.filter(group => event.groupIds.includes(group.id));
-                    if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroups)) continue;
-                    if (!isSlotFreeForAttestation(date, timeSlot.id, event, resourceBookings, placements, config, validationData)) continue;
-
-                    for (const classroom of roomList) {
-                        const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
-                        if (resourceBookings.get(bookingKey)?.has(`classroom-${classroom.id}`)) continue;
-                        if (!allows(event, date, timeSlot.id, classroom)) continue;
-                        
-                        return { date, timeSlotId: timeSlot.id, classroom };
-                    }
-                }
-            }
-            return null;
-        };
-        
-        // Pass 1: Ideal classrooms
-        const idealClassrooms = classrooms.filter(c => {
-            if (c.status === 'repair' || c.status === 'closed') return false;
-            if (c.allowedClassTypes?.length && !c.allowedClassTypes.includes(event.classType)) return false;
-            if (c.capacity < event.studentCount) return false;
-            
-            const requiredTypes = getRequiredClassroomTypes(subject, event.classType);
-
-            if (requiredTypes && requiredTypes.length > 0) {
-                return requiredTypes.includes(c.typeId);
-            }
-            
-            // Fallback logic
-            if (event.type === 'exam') {
-                return data.classroomTypes.find(ct => ct.id === c.typeId)?.name === 'Лекционная';
-            }
-            const classroomType = data.classroomTypes.find(ct => ct.id === c.typeId);
-            return classroomType?.name !== 'Лекционная';
-        }).sort((a,b) => a.capacity - b.capacity);
-
-        bestSlot = findSlotInClassrooms(idealClassrooms);
-
-        // Pass 2: Fallback for exams if ideal failed
-        if (!bestSlot && event.type === 'exam') {
-            const fallbackClassrooms = classrooms.filter(c => c.capacity >= event.studentCount && c.status !== 'closed' && c.status !== 'repair' && !(getRequiredClassroomTypes(subject, event.classType)?.length))
-                .sort((a, b) => a.capacity - b.capacity);
-            bestSlot = findSlotInClassrooms(fallbackClassrooms);
-        }
-
-        if (bestSlot) {
-            const newEntry = placeEvent(event, bestSlot.date, bestSlot.timeSlotId, bestSlot.classroom, resourceBookings);
-            newSchedule.push(newEntry);
-            placements.set(event.uid, newEntry);
-        } else {
-            unschedulable.push(event);
-        }
+    const credited = new Set<string>();
+    const reasons = new Map(pool.map(event => [event.uid, new Set<string>()]));
+    const identifiers = new Set(retained.map(entry => entry.id));
+    const ids = new Map(pool.map(event => {
+        let id = `session-${event.uid}-${timeFrame.start}`;
+        while (identifiers.has(id)) id += '-new';
+        identifiers.add(id); return [event.uid, id];
+    }));
+    const calendar = new Map(data.productionCalendar.map(day => [day.date, day]));
+    const isWorkDay = (dateStr: string) => !data.settings.respectProductionCalendar ||
+        (calendar.get(dateStr)?.isWorkDay ?? new Date(dateStr + 'T00:00:00').getDay() !== 0);
+    const workDays: string[] = [];
+    const endTime = new Date(timeFrame.end + 'T00:00:00').getTime();
+    for (const date = new Date(timeFrame.start + 'T00:00:00'); date.getTime() <= endTime; date.setDate(date.getDate() + 1)) {
+        const day = toYYYYMMDD(date); if (isWorkDay(day)) workDays.push(day);
     }
-    
-     // --- 3. PLACE CONSULTATIONS ---
-    const placeFlexibleEvent = (event: SessionEvent, candidateDates: Date[]) => {
-        for (const date of candidateDates) {
-            for (const timeSlot of slotsForDate(date)) {
-                const involvedGroups = groups.filter(group => event.groupIds.includes(group.id));
-                if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroups)) continue;
-                if (!isSlotFreeForAttestation(date, timeSlot.id, event, resourceBookings, placements, config, validationData)) continue;
-
-                const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
-                const subject = subjects.find(s => s.id === event.subjectId);
-                const requiredTypes = getRequiredClassroomTypes(subject, event.classType);
-
-                const suitableClassroom = classrooms.find(c => {
-                    if (!allows(event, date, timeSlot.id, c)) return false;
-                    if (c.status === 'repair' || c.status === 'closed') return false;
-                    if (c.allowedClassTypes?.length && !c.allowedClassTypes.includes(event.classType)) return false;
-                    const day = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
-                    if (c.availabilityGrid?.[day]?.[timeSlot.id] === AvailabilityType.Forbidden) return false;
-                    if ((subject?.requiredClassroomTagIds || []).some(tag => !c.tagIds?.includes(tag))) return false;
-                    if (c.capacity < event.studentCount) return false;
-                    if (requiredTypes && requiredTypes.length > 0 && !requiredTypes.includes(c.typeId)) return false;
-                    if (resourceBookings.get(bookingKey)?.has(`classroom-${c.id}`)) return false;
-                    return true;
-                });
-
-                if (suitableClassroom) {
-                    const newEntry = placeEvent(event, date, timeSlot.id, suitableClassroom, resourceBookings);
-                    newSchedule.push(newEntry);
-                    placements.set(event.uid, newEntry);
-                    return true;
-                }
-            }
-        }
-        return false;
+    const slots = new Map<string, TimeSlot[]>();
+    const slotsFor = (date: string) => {
+        if (!slots.has(date)) slots.set(date, getActiveTimeSlotsForDate(validationData, date));
+        return slots.get(date)!;
     };
-
-    for(const consult of consultations) {
-        const examEntry = consult.consultationFor ? placements.get(consult.consultationFor) : undefined;
-        if (consult.consultationFor && (!examEntry || !examEntry.date)) {
-            unschedulable.push(consult);
-            continue;
-        }
-
-        if (!consult.consultationFor) {
-            if (!placeFlexibleEvent(consult, workDays)) {
-                unschedulable.push(consult);
+    const period = data.settings.sessionStart <= timeFrame.end && data.settings.sessionEnd >= timeFrame.start
+        ? { start: data.settings.sessionStart, end: data.settings.sessionEnd } : timeFrame;
+    const matches = (event: SessionEvent, entry: ScheduleEntry) => !isIndividualEntry(entry) && entry.date && entry.date >= period.start && entry.date <= period.end &&
+        entry.subjectId === event.subjectId && entry.classType === event.classType && event.groupIds.every(id => groupIdsOf(entry).includes(id)) &&
+        (!semesterOf(entry) || semesterOf(entry) === event.semester);
+    const remaining = pool.filter(event => {
+        const entry = existing.find(entry => matches(event, entry) && !credited.has(`${entry.id}:${event.groupIds.join(',')}`));
+        if (!entry) return true;
+        credited.add(`${entry.id}:${event.groupIds.join(',')}`); placements.set(event.uid, entry); return false;
+    });
+    const remember = (event: SessionEvent, issue: string) => {
+        const issues = reasons.get(event.uid)!; if (issues.size < 8) issues.add(issue);
+    };
+    const rooms = new Map(remaining.map(event => {
+        const subject = data.subjects.find(subject => subject.id === event.subjectId);
+        const required = getRequiredClassroomTypes(subject, event.classType);
+        if (!subject) remember(event, 'Дисциплина не найдена.');
+        if (!event.teacherCandidates.length) remember(event, `Нет допустимой привязки преподавателя: ${subject?.name || event.subjectId}, ${event.classType}.`);
+        if (!required?.length) remember(event, `Не заданы типы аудиторий для занятия «${event.classType}».`);
+        const suitable = data.classrooms.filter(room => required?.includes(room.typeId) && room.capacity >= event.studentCount &&
+            room.status !== 'closed' && room.status !== 'repair' && (!room.allowedClassTypes?.length || room.allowedClassTypes.includes(event.classType)) &&
+            (subject?.requiredClassroomTagIds || []).every(tag => room.tagIds?.includes(tag))).sort((a, b) => a.capacity - b.capacity || a.id.localeCompare(b.id));
+        if (required?.length && !suitable.length) remember(event, 'Нет открытой аудитории нужного типа, вместимости и оборудования.');
+        return [event.uid, suitable];
+    }));
+    let probes = 0;
+    let nextYield = Date.now() + 12;
+    const pause = async () => { if (Date.now() >= nextYield) { await new Promise(resolve => setTimeout(resolve, 0)); nextYield = Date.now() + 12; } };
+    type Placement = { entry: ScheduleEntry; cost: number; consultation?: ScheduleEntry };
+    const find = async (event: SessionEvent, dates: string[], extra: ScheduleEntry[] = [], parent?: ScheduleEntry, pair?: SessionEvent, after?: ScheduleEntry): Promise<Placement | undefined> => {
+        if (!event.teacherCandidates.length || !rooms.get(event.uid)?.length) return undefined;
+        for (const date of dates) {
+            if (date < timeFrame.start || date > timeFrame.end || !isWorkDay(date)) {
+                remember(event, 'Нужная дата выходит за рамки сессии или является нерабочей.'); continue;
             }
-            continue;
+            if (after?.date && date < after.date) { remember(event, 'Защита или экзамен должны следовать после консультации.'); continue; }
+            const others = [...current, ...extra];
+            if (isAttestation(event.classType)) {
+                const conflict = others.find(entry => entry.date && !isIndividualEntry(entry) && isAttestation(entry.classType) &&
+                    event.groupIds.some(id => groupIdsOf(entry).includes(id)) &&
+                    (entry.date === date || (requiresRest(event.classType, config) && requiresRest(entry.classType, config) && Math.abs(dayNumber(entry.date) - dayNumber(date)) <= restDays)));
+                if (conflict) { remember(event, `Другая аттестация группы ${conflict.date}: нарушается правило одного экзамена/зачёта в день или интервал отдыха.`); continue; }
+            }
+            let best: Placement | undefined;
+            for (const slot of slotsFor(date)) for (const teacherId of event.teacherCandidates) for (const room of rooms.get(event.uid)!) {
+                if (++probes % 64 === 0) await pause();
+                if (parent?.date === date && !isEarlierSlot(slot, slotsFor(date).find(slot => slot.id === parent.timeSlotId), slotsFor(date))) continue;
+                if (after?.date === date && !isEarlierSlot(slotsFor(date).find(slot => slot.id === after.timeSlotId), slot, slotsFor(date))) continue;
+                const entry: ScheduleEntry = { id: ids.get(event.uid)!, unscheduledUid: event.uid, subjectId: event.subjectId, classType: event.classType,
+                    groupIds: event.groupIds, streamId: event.streamId, teacherId, classroomId: room.id, timeSlotId: slot.id, date,
+                    day: DAYS_OF_WEEK[(new Date(date + 'T00:00:00').getDay() + 6) % 7], deliveryMode: DeliveryMode.Offline, weekType: 'every' };
+                const check = validate(entry, others);
+                if (!check.valid) { check.issues.forEach(issue => remember(event, issue)); continue; }
+                let consultation: ScheduleEntry | undefined;
+                let cost = check.softPenalty;
+                if (pair) {
+                    const found = await find(pair, [offsetDate(date, -config.consultationOffset)], [entry], entry);
+                    if (!found || !validate(entry, [...others, found.entry]).valid) continue;
+                    consultation = found.entry; cost += found.cost;
+                }
+                if (!best || cost < best.cost) best = { entry, cost, consultation };
+                if (pair) return best;
+            }
+            if (best) return best;
         }
-
-        const examDate = new Date(examEntry.date + 'T00:00:00');
-        const consultDate = new Date(examDate);
-        consultDate.setDate(examDate.getDate() - config.consultationOffset);
-        
-        const placed = placeFlexibleEvent(consult, [consultDate]);
-        if(!placed) {
-            unschedulable.push(consult);
+        if (!dates.length) remember(event, 'В выбранном периоде нет рабочих дат.');
+        return undefined;
+    };
+    const commit = (event: SessionEvent, entry: ScheduleEntry) => { newSchedule.push(entry); current = [...current, entry]; placements.set(event.uid, entry); };
+    const attestations = remaining.filter(event => event.type === 'exam' || event.type === 'test')
+        .sort((a, b) => a.teacherCandidates.length - b.teacherCandidates.length || b.studentCount - a.studentCount);
+    for (const event of attestations) {
+        const consult = remaining.find(consult => consult.consultationFor === event.uid);
+        const coveredConsult = pool.find(consult => consult.consultationFor === event.uid && placements.has(consult.uid));
+        const anchor = coveredConsult && placements.get(coveredConsult.uid);
+        // Reserve both events before committing the exam; otherwise the first day loses its consultation.
+        const found = anchor?.date ? await find(event, [offsetDate(anchor.date, config.consultationOffset)], [], undefined, undefined, anchor) :
+            consult ? await find(event, workDays, [], undefined, consult) || await find(event, workDays) : await find(event, workDays);
+        if (found) {
+            commit(event, found.entry);
+            if (consult && found.consultation) commit(consult, found.consultation);
         }
     }
-
-    // --- 4. PLACE PRACTICE CONSULTATIONS & DEFENSES ---
-    for (const event of practiceEvents) {
-        if (!placeFlexibleEvent(event, workDays)) {
-            unschedulable.push(event);
+    for (const event of remaining.filter(event => event.type === 'consultation')) {
+        if (placements.has(event.uid)) continue;
+        let parent = event.consultationFor ? placements.get(event.consultationFor) : undefined;
+        if (!parent && config.generationMode === 'consultations_only') {
+            parent = existing.find(entry => matches({ ...event, classType: ClassType.Exam }, entry) || matches({ ...event, classType: ClassType.CandidateExam }, entry));
         }
+        if (!parent) { remember(event, 'Связанный экзамен не размещён: сначала назначьте экзамен, затем рассчитайте консультацию.'); continue; }
+        const found = await find(event, parent?.date ? [offsetDate(parent.date, -config.consultationOffset)] : workDays, [], parent);
+        if (found) commit(event, found.entry);
     }
-
-    return { schedule: newSchedule, unschedulable };
+    for (const event of remaining.filter(event => event.type === 'practiceConsultation' || event.type === 'practiceDefense')) {
+        const preceding = event.classType === ClassType.PracticeDefense ? placements.get(event.uid.replace(/^practice-defense-/, 'practice-consult-')) : undefined;
+        const found = await find(event, workDays, [], undefined, undefined, preceding); if (found) commit(event, found.entry);
+    }
+    const unschedulable = remaining.filter(event => !placements.has(event.uid)).map(event => ({ ...event,
+        issues: [...reasons.get(event.uid)!, ...(!reasons.get(event.uid)!.size ? ['Не найдено допустимое сочетание даты, слота, преподавателя и аудитории.'] : [])] }));
+    const attestationsInGrid = current.filter(entry => entry.date && !isIndividualEntry(entry) && isAttestation(entry.classType));
+    const idCounts = new Map<string, number>();
+    current.forEach(entry => idCounts.set(entry.id, (idCounts.get(entry.id) || 0) + 1));
+    const validationIssues = current.filter(entry => entry.date && entry.date >= timeFrame.start && entry.date <= timeFrame.end &&
+        (newSchedule.includes(entry) || isAttestation(entry.classType))).flatMap(entry => {
+        const issues = [...validateFinal(entry, current).issues];
+        if (idCounts.get(entry.id)! > 1) issues.push('Идентификатор занятия повторяется в проекте.');
+        if (!isIndividualEntry(entry) && isAttestation(entry.classType)) {
+            const conflict = attestationsInGrid.find(other => other !== entry && groupIdsOf(entry).some(id => groupIdsOf(other).includes(id)) &&
+                (other.date === entry.date || (requiresRest(entry.classType, config) && requiresRest(other.classType, config) && Math.abs(dayNumber(other.date!) - dayNumber(entry.date!)) <= restDays)));
+            if (conflict) issues.push(`Нарушено правило одной аттестации в день или интервал отдыха: другая аттестация ${conflict.date}.`);
+        }
+        return issues.length ? [{ entryId: entry.id, issues }] : [];
+    });
+    return { schedule: newSchedule, unschedulable, validationIssues };
 };
 
-const isSlotFreeForAttestation = (
-    date: Date,
-    timeSlotId: string,
-    event: SessionEvent,
-    bookings: Map<string, Set<string>>,
-    placements: Map<string, ScheduleEntry>,
-    config: SessionSchedulerConfig,
-    data: SessionGenerationData,
-): boolean => {
-    const dateStr = toYYYYMMDD(date);
-    const bookingKey = `${dateStr}-${timeSlotId}`;
-    const dayBookingSet = bookings.get(bookingKey);
-    const timeSlot = getActiveTimeSlotsForDate(data as GenerationData, date).find(slot => slot.id === timeSlotId);
-    const involvedGroupsForShift = data.groups.filter(group => event.groupIds.includes(group.id));
-    if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroupsForShift)) return false;
-
-    if(dayBookingSet?.has(`teacher-${event.teacherId}`)) return false;
-    if(event.groupIds.some(gid => dayBookingSet?.has(`group-${gid}`))) return false;
-
-    for(const gid of event.groupIds) {
-        for(const placement of placements.values()) {
-            if (placement.date === dateStr && (placement.groupIds || []).includes(gid)) {
-                return false;
-            }
-        }
+const isAttestation = (type: ClassType) => [ClassType.Exam, ClassType.CandidateExam, ClassType.Test, ClassType.ResearchAttestation, ClassType.ThesisDefense].includes(type);
+const requiresRest = (type: ClassType, config: SessionSchedulerConfig) => [ClassType.Exam, ClassType.CandidateExam].includes(type) || (isAttestation(type) && config.scheduleTests === 'like_exams');
+const dayNumber = (date: string) => { const [year, month, day] = date.split('-').map(Number); return Date.UTC(year, month - 1, day) / 86400000; };
+const offsetDate = (value: string, offset: number) => { const date = new Date(value + 'T00:00:00'); date.setDate(date.getDate() + offset); return toYYYYMMDD(date); };
+const isEarlierSlot = (candidate: TimeSlot | undefined, parent: TimeSlot | undefined, slots: TimeSlot[]) => {
+    const range = (slot?: TimeSlot) => slot?.time.match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/);
+    const first = range(candidate), second = range(parent);
+    return first && second ? Number(first[3]) * 60 + Number(first[4]) <= Number(second[1]) * 60 + Number(second[2]) :
+        !!candidate && !!parent && slots.indexOf(candidate) < slots.indexOf(parent);
+};
+const assertSessionConfig = (config: SessionSchedulerConfig) => {
+    if (!['full', 'consultations_only', 'practice_only', 'full_with_practice'].includes(config.generationMode || 'full') ||
+        !['like_exams', 'no_rest_days', 'none'].includes(config.scheduleTests) || !['odd', 'even', 'all'].includes(config.semesterParity || 'all')) throw new Error('Некорректный режим планирования сессии.');
+    for (const value of [config.timeFrame.start, config.timeFrame.end]) {
+        const date = new Date(value + 'T00:00:00');
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(date.getTime()) || toYYYYMMDD(date) !== value) throw new Error('Некорректные даты сессии.');
     }
-
-    let checkRestDays = false;
-    if (event.type === 'exam') {
-        checkRestDays = config.restDays > 0;
-    } else if (event.type === 'test' && config.scheduleTests === 'like_exams') {
-        checkRestDays = config.restDays > 0;
-    }
-
-    if (checkRestDays) {
-        for (let i = 1; i <= config.restDays; i++) {
-            const prevDate = new Date(date);
-            prevDate.setDate(date.getDate() - i);
-            const prevDateStr = toYYYYMMDD(prevDate);
-            
-            for (const placement of placements.values()) {
-                if(placement.date === prevDateStr && placement.groupIds?.some(gid => event.groupIds.includes(gid))) {
-                    return false;
-                }
-            }
-        }
-    }
-    
-    const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
-    const teacher = data.teachers.find(t => t.id === event.teacherId);
-    if (!teacher || teacher.availabilityGrid?.[dayName]?.[timeSlotId] === AvailabilityType.Forbidden) return false;
-    
-    const groups = data.groups.filter(g => event.groupIds.includes(g.id));
-    if (groups.some(g => g.availabilityGrid?.[dayName]?.[timeSlotId] === AvailabilityType.Forbidden)) return false;
-
-
-    return true;
-}
-
-const placeEvent = (
-    event: SessionEvent,
-    date: Date,
-    timeSlotId: string,
-    classroom: Classroom,
-    bookings: Map<string, Set<string>>
-): ScheduleEntry => {
-    const dateStr = toYYYYMMDD(date);
-    const bookingKey = `${dateStr}-${timeSlotId}`;
-    
-    if(!bookings.has(bookingKey)) bookings.set(bookingKey, new Set());
-    
-    const bookingSet = bookings.get(bookingKey)!;
-    bookingSet.add(`teacher-${event.teacherId}`);
-    bookingSet.add(`classroom-${classroom.id}`);
-    event.groupIds.forEach(gid => bookingSet.add(`group-${gid}`));
-    
-    const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
-
-    return {
-        id: `session-${event.uid}`,
-        day: dayName,
-        date: dateStr,
-        timeSlotId: timeSlotId,
-        classroomId: classroom.id,
-        groupIds: event.groupIds,
-        streamId: event.streamId,
-        subjectId: event.subjectId,
-        teacherId: event.teacherId,
-        classType: event.classType,
-        deliveryMode: DeliveryMode.Offline,
-        weekType: 'every'
-    };
-}
+    if (config.timeFrame.start > config.timeFrame.end) throw new Error('Начало сессии должно быть не позже её окончания.');
+    if ([config.restDays, config.consultationOffset].some(value => !Number.isInteger(value) || value < 0 || value > 365)) throw new Error('Интервалы сессии должны быть целыми числами от 0 до 365 дней.');
+};

@@ -87,7 +87,7 @@ const SessionSchedulerModal: React.FC<SessionSchedulerModalProps> = ({ isOpen, o
                     <div>
                         <label htmlFor="consultationOffset" className="block text-sm font-medium text-gray-700">Размещение консультаций (к экзаменам)</label>
                         <select id="consultationOffset" value={consultationOffset} onChange={e => setConsultationOffset(Number(e.target.value))} className={defaultInputClass}>
-                            <option value="0">Не размещать консультации</option>
+                            <option value="0">{generationMode === 'consultations_only' ? 'В день экзамена, до него' : 'Не размещать консультации'}</option>
                             <option value="1">За 1 день до экзамена</option>
                             <option value="2">За 2 дня до экзамена</option>
                         </select>
