@@ -20,6 +20,7 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
     const [iterations, setIterations] = useState(1);
     const [enforceLectureOrder, setEnforceLectureOrder] = useState(true);
     const [distributeEvenly, setDistributeEvenly] = useState(true);
+    const [semesterParity, setSemesterParity] = useState<'odd' | 'even' | 'all'>(new Date(settings.semesterStart + 'T00:00:00').getMonth() >= 6 ? 'odd' : 'even');
 
 
     const targetOptions = {
@@ -44,6 +45,7 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
             iterations,
             enforceLectureOrder,
             distributeEvenly,
+            semesterParity,
         };
         if (targetType !== 'all' && targetId) {
             config.target = { type: targetType as 'group' | 'teacher' | 'classroom', id: targetId };
@@ -63,6 +65,7 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
                     <h2 className="text-xl font-bold text-gray-800">Настройки эвристического планировщика</h2>
                 </div>
                 <div className="space-y-4">
+                    <label className="block text-sm font-medium text-gray-700">Учебный семестр<select value={semesterParity} onChange={event => setSemesterParity(event.target.value as 'odd' | 'even' | 'all')} className={defaultInputClass}><option value="odd">Осенний: нечётные семестры курса</option><option value="even">Весенний: чётные семестры курса</option><option value="all">Оба семестра курса</option></select></label>
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Строгость соблюдения правил ({strictness})</label>
                         <p className="text-xs text-gray-500 mb-2">Чем выше значение, тем сильнее планировщик старается избегать "нежелательных" слотов и "окон".</p>

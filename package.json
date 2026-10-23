@@ -1,10 +1,13 @@
 {
   "name": "schedule-system-app",
-  "version": "4441.605.2026",
+  "version": "5000.2310.2026",
   "releaseType": "функциональный релиз",
   "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
   "main": "main.js",
   "scripts": {
+    "test": "node tests/run.cjs",
+    "test:ui": "node tests/ui.cjs",
+    "typecheck": "tsc --noEmit --pretty false",
     "start": "electron .",
     "prestart": "npm run build:js && npm run build:css",
     "build": "npm run build:js && npm run build:css",
@@ -22,6 +25,7 @@
     "electron": "^28.2.3",
     "electron-builder": "^24.9.1",
     "esbuild": "^0.21.4",
+    "playwright": "^1.64.1",
     "tailwindcss": "^3.4.3"
   },
   "dependencies": {
@@ -54,7 +58,8 @@
       "main.js",
       "preload.js",
       "index.html",
-      "dist/",
+      "dist/*.js",
+      "dist/*.js.map",
       "TWD/output.css",
       "icon.svg",
       "1631285.ico",

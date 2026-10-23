@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { ClassType, Classroom, Department, EducationalPlan, FormOfStudy, Group, ScheduleEntry, Specialty, Subject, Teacher } from '../types';
 import { isSemesterInCourse } from '../utils/semesterUtils';
+import { getPlanContactActivities } from '../utils/educationUtils';
 
 type ResourceStat = {
   id: string;
@@ -340,9 +341,7 @@ const AnalyticsView: React.FC = () => {
       const planGroups = groups.filter(group => group.specialtyId === plan.specialtyId && (!plan.formOfStudy || group.formOfStudy === plan.formOfStudy));
       plan.entries.forEach(entry => {
         const classHours: Array<[ClassType, number]> = [
-          [ClassType.Lecture, entry.lectureHours],
-          [ClassType.Practical, entry.practiceHours],
-          [ClassType.Lab, entry.labHours],
+          ...getPlanContactActivities(entry).map(activity => [activity.type, activity.hours] as [ClassType, number]),
         ];
         classHours.forEach(([classType, hours]) => {
           if (hours <= 0) return;
@@ -554,11 +553,7 @@ const AnalyticsView: React.FC = () => {
       const plan = findPlanForScenarioGroup(group);
       plan?.entries.filter(entry => isSemesterInCourse(entry.semester, group.course)).forEach(entry => {
         const subjectName = subjectById.get(entry.subjectId)?.name || 'Дисциплина';
-        [
-          [ClassType.Lecture, entry.lectureHours],
-          [ClassType.Practical, entry.practiceHours],
-          [ClassType.Lab, entry.labHours],
-        ].forEach(([classType, hours]) => {
+        getPlanContactActivities(entry).map(activity => [activity.type, activity.hours] as const).forEach(([classType, hours]) => {
           const weeklyPairs = Number(hours) > 0 ? Number(hours) / 2 / weekCount : 0;
           if (weeklyPairs > 0) {
             addedPlanNeeds.push({

@@ -22,6 +22,7 @@ import {
 } from './icons';
 import AvailabilityGridEditor from './AvailabilityGridEditor';
 import { formatSemesterCourse } from '../utils/semesterUtils';
+import { EDUCATION_LEVEL_LABELS, getEducationLevel } from '../utils/educationUtils';
 
 type TabId = 'overview' | 'groups' | 'subgroups' | 'streams' | 'quality';
 
@@ -103,6 +104,7 @@ const CohortManager: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [searchQuery, setSearchQuery] = useState('');
+  const [educationFilter, setEducationFilter] = useState('all');
   const [selectedGroupId, setSelectedGroupId] = useState(groups[0]?.id || '');
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<string>>(new Set());
   const [groupDraft, setGroupDraft] = useState<Omit<Group, 'id'> | Group>(emptyGroupDraft(departments[0]?.id || '', specialties[0]?.id || ''));
@@ -120,6 +122,7 @@ const CohortManager: React.FC = () => {
   const filteredGroups = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     return groups.filter(group => {
+      if (educationFilter !== 'all' && getEducationLevel(specialties.find(item => item.id === group.specialtyId)) !== educationFilter) return false;
       if (!query) return true;
       const department = departments.find(item => item.id === group.departmentId);
       const specialty = specialties.find(item => item.id === group.specialtyId);
@@ -131,7 +134,7 @@ const CohortManager: React.FC = () => {
         group.notes,
       ].join(' ').toLowerCase().includes(query);
     });
-  }, [groups, departments, specialties, searchQuery]);
+  }, [groups, departments, specialties, searchQuery, educationFilter]);
 
   const groupsByCourse = useMemo(() => {
     const result = new Map<number, Group[]>();
@@ -364,6 +367,7 @@ const CohortManager: React.FC = () => {
           </p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <select aria-label="Уровень образования" value={educationFilter} onChange={event => setEducationFilter(event.target.value)} className="rounded-md border border-gray-300 bg-white px-2 py-2 text-sm"><option value="all">Все уровни</option>{Object.entries(EDUCATION_LEVEL_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
           <input
             value={searchQuery}
             onChange={event => setSearchQuery(event.target.value)}

@@ -5,17 +5,18 @@ import {
     ProductionCalendarEvent, SchedulingSettings, AvailabilityGrid, AvailabilityType, UGS, Specialty, 
     EducationalPlan, EducationalPlanTemplate, PlanEntry, AttestationType, ScheduleTemplate, FormOfStudy, DeliveryMode, Subgroup, Elective,
     AcademicDegree, AcademicTitle, FieldOfScience, BaseItem, ClassroomTag, HeuristicConfig, SessionSchedulerConfig, SchedulingExplanation,
-    BuildingPlan, BellScheduleProfile, SchedulingShowcaseState, SchedulingProgressPoint, SchedulingTriageItem
+    BuildingPlan, BellScheduleProfile, SchedulingShowcaseState, SchedulingProgressPoint, SchedulingTriageItem, AcademicWork
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
-import { generateScheduleWithHeuristics, optimizeScheduleLocally, SchedulerResult, SchedulerRunOptions } from '../services/heuristicScheduler';
+import { generateScheduleWithHeuristics, generateClassPool, optimizeScheduleLocally, SchedulerResult, SchedulerRunOptions } from '../services/heuristicScheduler';
 import { generateScheduleWithGemini } from '../services/geminiService';
 import { generateScheduleWithOpenRouter } from '../services/openRouterService';
 import { runIterativeScheduler } from '../services/iterativeScheduler';
-import { generateSessionSchedule } from '../services/sessionScheduler';
+import { generateSessionSchedule, getSessionClassTypesToClear } from '../services/sessionScheduler';
 import { areGroupsCompatibleWithTimeSlot, getGroupsShiftMismatchText, getTimeSlotShiftLabel } from '../utils/shiftUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
+import { getPlanContactActivities, getPlanContactHours, getRequiredClassroomTypes } from '../utils/educationUtils';
 
 // MOCK DATA (Initial State)
 const initialFaculties: Faculty[] = [{
@@ -282,7 +283,7 @@ const generateUnscheduledEntries = (
         const groupSubgroups = subgroups.filter(sg => sg.parentGroupId === group.id);
         const relevantEntries = plan.entries.filter(e =>
             isSemesterInCourse(e.semester, group.course) &&
-            (e.lectureHours > 0 || e.practiceHours > 0 || e.labHours > 0)
+            getPlanContactHours(e) > 0
         );
 
         relevantEntries.forEach(planEntry => {
@@ -337,14 +338,13 @@ const generateUnscheduledEntries = (
             
             // 2. Handle Practices and Labs
             const practiceAndLabTypes = [
-                { type: ClassType.Practical, hours: planEntry.practiceHours },
-                { type: ClassType.Lab, hours: planEntry.labHours },
+                ...getPlanContactActivities(planEntry).filter(activity => activity.type !== ClassType.Lecture),
             ];
             practiceAndLabTypes.forEach(({ type, hours }) => {
                 if (hours <= 0) return;
                 const numClasses = Math.ceil(hours / 2);
 
-                if (planEntry.splitForSubgroups && groupSubgroups.length > 0) {
+                if (planEntry.splitForSubgroups && groupSubgroups.length > 0 && [ClassType.Practical, ClassType.Lab].includes(type)) {
                     groupSubgroups.forEach(subgroup => {
                         const assignment = subgroup.teacherAssignments?.find(a => a.subjectId === planEntry.subjectId && a.classType === type);
                         teacherId = assignment?.teacherId ?? links.find(l => l.subjectId === planEntry.subjectId && l.classTypes.includes(type))?.teacherId;
@@ -401,6 +401,8 @@ const generateUnscheduledEntries = (
 
 
 interface StoreState {
+  academicWorks: AcademicWork[];
+  setAcademicWorks: React.Dispatch<React.SetStateAction<AcademicWork[]>>;
   faculties: Faculty[]; departments: Department[]; teachers: Teacher[]; groups: Group[];
   streams: Stream[]; classrooms: Classroom[]; subjects: Subject[]; cabinets: Cabinet[];
   timeSlots: TimeSlot[]; timeSlotsShortened: TimeSlot[]; bellScheduleProfiles: BellScheduleProfile[]; schedule: ScheduleEntry[]; unscheduledEntries: UnscheduledEntry[];
@@ -539,6 +541,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [ugs, setUgs] = useState(initialUGS);
   const [specialties, setSpecialties] = useState(initialSpecialties);
   const [educationalPlans, setEducationalPlans] = useState(initialEducationalPlans);
+  const [academicWorks, setAcademicWorks] = useState<AcademicWork[]>([]);
   const [teacherSubjectLinks, setTeacherSubjectLinks] = useState(initialTeacherSubjectLinks);
   const [schedulingRules, setSchedulingRules] = useState(initialSchedulingRules);
   const [productionCalendar, setProductionCalendar] = useState(initialProductionCalendar);
@@ -565,7 +568,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   useEffect(() => {
     // 1. Generate all possible classes for the semester from plans. This is the "master list".
-    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+    const allPossibleEntries = generateClassPool({ teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings, teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes, subgroups, electives, schedule: [] });
     
     // 2. Create a set of UIDs for classes that are already on the schedule.
     const allScheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
@@ -653,7 +656,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       ...entry,
       explanation: schedulingExplanations[entry.uid],
     })));
-  }, [groups, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives, unscheduledTimeHorizon, settings.semesterStart, settings.semesterEnd, viewDate, schedulingExplanations]);
+  }, [groups, teachers, subjects, classrooms, classroomTypes, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives, unscheduledTimeHorizon, settings.semesterStart, settings.semesterEnd, viewDate, schedulingExplanations]);
 
   useEffect(() => {
     const initializeApiKeys = async () => {
@@ -695,6 +698,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   }, []);
   
   const getFullState = () => ({
+    schemaVersion: 2, academicWorks,
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, bellScheduleProfiles, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, educationalPlanTemplates, scheduleTemplates,
     classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, buildingPlans, currentFilePath, lastAutosave,
@@ -707,6 +711,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
   
   const loadFullState = (data: any) => {
+    setAcademicWorks(Array.isArray(data.academicWorks) ? data.academicWorks : []);
     setFaculties(data.faculties || []);
     setDepartments(data.departments || []);
     setTeachers(data.teachers || []);
@@ -773,6 +778,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     merge(setUgs, data.ugs);
     merge(setSpecialties, data.specialties);
     merge(setEducationalPlans, data.educationalPlans);
+    merge(setAcademicWorks, data.academicWorks);
     merge(setEducationalPlanTemplates, data.educationalPlanTemplates);
     merge(setScheduleTemplates, data.scheduleTemplates);
     merge(setClassroomTypes, data.classroomTypes);
@@ -1016,6 +1022,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     ));
     setStreams(prev => prev.map(s => ({ ...s, groupIds: s.groupIds.filter(gid => !groupIds.has(gid)) })));
     setElectives(prev => prev.filter(el => !groupIds.has(el.groupId) && !teacherIds.has(el.teacherId) && !subjectIds.has(el.subjectId)));
+    setAcademicWorks(prev => prev.filter(work => !groupIds.has(work.groupId) && !subjectIds.has(work.subjectId)).map(work => ({ ...work, supervisorId: teacherIds.has(work.supervisorId) ? '' : work.supervisorId, reviewerId: teacherIds.has(work.reviewerId || '') ? '' : work.reviewerId })));
     setTeacherSubjectLinks(prev => prev.filter(l => !teacherIds.has(l.teacherId) && !subjectIds.has(l.subjectId)));
     // Cleanup head of department
     if (teacherIds.size > 0) {
@@ -1089,7 +1096,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         return;
       }
 
-      const requiredClassroomTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : subject.classroomTypeRequirements?.[item.classType];
+      const requiredClassroomTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : getRequiredClassroomTypes(subject, item.classType);
       if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) {
           alert(`Для дисциплины "${subject.name}" (тип: ${item.classType}) не указаны подходящие типы аудиторий в справочнике.`);
           return;
@@ -1238,7 +1245,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         originalGroupId = item.groupId;
     }
     
-    const requiredClassroomTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : subject.classroomTypeRequirements?.[item.classType];
+    const requiredClassroomTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : getRequiredClassroomTypes(subject, item.classType);
     if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) {
         throw new Error(`Для дисциплины "${subject.name}" (тип: ${item.classType}) не указаны подходящие типы аудиторий.`);
     }
@@ -1522,6 +1529,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
   
   const clearAllData = () => {
+    setAcademicWorks([]);
     setFaculties([]); setDepartments([]); setTeachers([]); setGroups([]); setStreams([]);
     setClassrooms([]); setSubjects([]); setCabinets([]); setTimeSlots([]); setTimeSlotsShortened([]); setBellScheduleProfiles([]); setSchedule([]);
     setUgs([]); setSpecialties([]); setEducationalPlans([]); setTeacherSubjectLinks([]);
@@ -1712,7 +1720,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             };
             result = await runIterativeScheduler(generationData, config, handleProgress, schedulerRunOptions);
         } else {
-            result = await generateScheduleWithHeuristics(generationData, config, schedulerRunOptions);
+            result = await runIterativeScheduler(generationData, config, setSchedulingProgress, schedulerRunOptions);
         }
 
         setSchedulingProgress(null);
@@ -1763,7 +1771,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setLastSchedulingRunSummary(`Последний прогон: добавлено ${added}, изменено ${changed}, очищено перед генерацией ${removed}, осталось нераспределенных ${result.unschedulable.length}.`);
         setSchedule(nextSchedule);
         const finalPoint: SchedulingProgressPoint = {
-            timeMs: schedulingShowcase?.current?.timeMs || 0,
+            timeMs: 0,
             penalty: result.score?.total || result.unschedulable.length * 1_000_000,
             readiness: result.schedule.length + result.unschedulable.length > 0
                 ? (result.schedule.length / (result.schedule.length + result.unschedulable.length)) * 100
@@ -1783,8 +1791,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             finishedAt: new Date().toISOString(),
             canTakeCurrentResult: false,
             stopRequested: schedulingStopRequestedRef.current,
-            current: finalPoint,
-            history: [...(prev?.history || []), finalPoint].slice(-180),
+            current: { ...finalPoint, timeMs: prev ? Date.now() - new Date(prev.startedAt).getTime() : 0 },
+            history: [...(prev?.history || []), { ...finalPoint, timeMs: prev ? Date.now() - new Date(prev.startedAt).getTime() : 0 }].slice(-180),
             best: prev?.best && prev.best.penalty < finalPoint.penalty ? prev.best : finalPoint,
             partialSchedule: result.schedule,
             failedEntries: result.unschedulable,
@@ -1870,7 +1878,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     };
     const involvedGroups = getEntryGroups(entry);
     const subject = subjects.find(item => item.id === entry.subjectId);
-    const requiredTypes = subject?.classroomTypeRequirements?.[entry.classType] || [];
+    const requiredTypes = getRequiredClassroomTypes(subject, entry.classType) || [];
     const studentCount = involvedGroups.reduce((sum, group) => sum + group.studentCount, 0);
     const suitableClassrooms = classrooms.filter(classroom =>
       (requiredTypes.length === 0 || requiredTypes.includes(classroom.typeId)) &&
@@ -1958,11 +1966,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         const sessionStart = new Date(config.timeFrame.start + 'T00:00:00').getTime();
         const sessionEnd = new Date(config.timeFrame.end + 'T23:59:59').getTime();
         const mode = config.generationMode || 'full';
-        const classTypesToClear =
-            mode === 'consultations_only' ? [ClassType.Consultation] :
-            mode === 'practice_only' ? [ClassType.PracticeConsultation, ClassType.PracticeDefense] :
-            mode === 'full_with_practice' ? [ClassType.Exam, ClassType.Consultation, ClassType.Test, ClassType.PracticeConsultation, ClassType.PracticeDefense] :
-            [ClassType.Exam, ClassType.Consultation, ClassType.Test];
+        const classTypesToClear = getSessionClassTypesToClear(config);
         finalSchedule = schedule.filter(entry => {
             if (!entry.date) return true;
             if (!classTypesToClear.includes(entry.classType)) return true;
@@ -2051,6 +2055,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
 
   const value: StoreState = {
+    academicWorks, setAcademicWorks,
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, bellScheduleProfiles, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, educationalPlanTemplates, scheduleTemplates,
     classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, buildingPlans, currentFilePath, lastAutosave, apiKey, openRouterApiKey, unscheduledTimeHorizon,

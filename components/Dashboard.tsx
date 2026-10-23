@@ -21,6 +21,7 @@ import CohortManager from './CohortManager';
 import RoomResourcesManager from './RoomResourcesManager';
 import BellScheduleManager from './BellScheduleManager';
 import AnalyticsView from './AnalyticsView';
+import AcademicWorkManager from './AcademicWorkManager';
 
 
 interface DashboardProps {
@@ -56,6 +57,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
 
   const renderContent = () => {
     switch (activeView) {
+      case 'Работы и исследования':
+        return <AcademicWorkManager />;
       case 'Планы зданий':
       case 'Аудиторный фонд':
         return <RoomResourcesManager />;
@@ -125,7 +128,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
   return (
     <div className="flex flex-1 overflow-hidden">
       <Sidebar currentRole={currentRole} activeView={activeView} setActiveView={handleSidebarNavigate} />
-      <main className="flex-1 p-6 overflow-y-auto bg-gray-50">
+      <main className="min-w-0 flex-1 p-6 overflow-y-auto bg-gray-50">
         {renderContent()}
       </main>
     </div>

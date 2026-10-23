@@ -27,6 +27,8 @@ const TITLE_MAP: Record<DataType, { single: string }> = {
     ugs: { single: 'УГСН' },
     specialties: { single: 'специальность' },
     educationalPlans: { single: 'учебный план' },
+    educationalPlanTemplates: { single: 'шаблон учебного плана' },
+    bellScheduleProfiles: { single: 'профиль звонков' },
     scheduleTemplates: { single: 'шаблон расписания'},
     classroomTypes: { single: 'тип аудитории' },
     subgroups: { single: 'подгруппу' },

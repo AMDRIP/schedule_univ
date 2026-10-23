@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { FolderIcon, PlusIcon, DocumentTextIcon, ClockIcon, DocumentSearchIcon, DocumentDownloadIcon, UploadIcon, CogIcon } from './icons';
 import { useStore } from '../hooks/useStore';
 
-const APP_VERSION = '3401.2604.2026';
+import { version as APP_VERSION } from '../package.json';
 
 interface SplashScreenProps {
     onFinish: () => void;

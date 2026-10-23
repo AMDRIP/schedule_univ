@@ -14,10 +14,11 @@ import {
 } from '../types';
 import { PlusIcon, EditIcon, TrashIcon, BookOpenIcon, CopyIcon, DocumentTextIcon } from './icons';
 import { formatSemesterCourse } from '../utils/semesterUtils';
+import { EDUCATION_LEVEL_LABELS, getEducationLevel, getPlanContactHours } from '../utils/educationUtils';
 
 const UNASSIGNED_BLOCK_ID = '__unassigned__';
 const BLOCK_COLORS = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#be123c', '#4b5563'];
-const BINDING_CLASS_TYPES = [ClassType.Lecture, ClassType.Practical, ClassType.Lab, ClassType.Consultation];
+const BINDING_CLASS_TYPES = Object.values(ClassType);
 
 const createLocalId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -94,7 +95,7 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
             setFormData(prev => ({ ...prev, [name]: checked }));
             return;
         }
-        const numericFields = ['semester', 'lectureHours', 'practiceHours', 'labHours'];
+        const numericFields = ['semester', 'lectureHours', 'practiceHours', 'labHours', 'researchSeminarHours', 'researchConsultationHours', 'independentStudyHours'];
         setFormData(prev => ({ ...prev, [name]: numericFields.includes(name) ? Number(value) : value }));
     };
 
@@ -123,6 +124,7 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         const finalEntry: PlanEntry = {
+            ...formData,
             subjectId: subjectSelection === 'new' ? '' : formData.subjectId!,
             blockId: formData.blockId || undefined,
             semester: formData.semester,
@@ -180,6 +182,18 @@ const PlanEntryModal: React.FC<PlanEntryModalProps> = ({ isOpen, onClose, onSave
                         <div><label className="block text-sm font-medium text-gray-700">Лаб. (ч)</label><input type="number" name="labHours" value={formData.labHours} onChange={handleChange} className={defaultInputClass} min="0" /></div>
                     </div>
 
+                    <div className="flex items-center">
+                        <div className="w-full grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            {([['researchSeminarHours', 'Научные семинары (ч)'], ['researchConsultationHours', 'Научные консультации (ч)'], ['independentStudyHours', 'Самостоятельная работа / НИР (ч)']] as const).map(([name, label]) => <label key={name} className="text-sm text-gray-700">{label}<input type="number" min="0" step="1" name={name} value={formData[name] || 0} onChange={handleChange} className={defaultInputClass} /></label>)}
+                        </div>
+                    </div>
+                    <fieldset className="rounded-md border border-gray-200 p-3 space-y-3">
+                        <legend className="px-1 font-semibold text-sm">Курсовая работа / проект</legend>
+                        <select aria-label="Вид курсовой" value={formData.coursework?.kind || ''} onChange={event => setFormData(prev => ({ ...prev, coursework: event.target.value ? { kind: event.target.value as 'paper' | 'project', consultationHours: prev.coursework?.consultationHours || 0, defenseHours: prev.coursework?.defenseHours || 2 } : undefined }))} className={defaultInputClass}>
+                            <option value="">Не предусмотрена</option><option value="paper">Курсовая работа</option><option value="project">Курсовой проект</option>
+                        </select>
+                        {formData.coursework && <div className="grid grid-cols-2 gap-3">{(['consultationHours', 'defenseHours'] as const).map(name => <label key={name} className="text-sm">{name === 'consultationHours' ? 'Консультации (контактные часы)' : 'Защита (контактные часы)'}<input type="number" min="0" step="1" value={formData.coursework![name]} onChange={event => setFormData(prev => ({ ...prev, coursework: { ...prev.coursework!, [name]: Number(event.target.value) } }))} className={defaultInputClass} /></label>)}</div>}
+                    </fieldset>
                     <div className="flex items-center">
                         <input type="checkbox" name="splitForSubgroups" id="splitForSubgroups" checked={!!formData.splitForSubgroups} onChange={handleChange} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
                         <label htmlFor="splitForSubgroups" className="ml-2 block text-sm font-medium text-gray-700">Разделить по подгруппам для практик/лабораторных</label>
@@ -592,7 +606,7 @@ const EducationalPlanManager: React.FC = () => {
         const lectures = entries.reduce((sum, entry) => sum + entry.lectureHours, 0);
         const practices = entries.reduce((sum, entry) => sum + entry.practiceHours, 0);
         const labs = entries.reduce((sum, entry) => sum + entry.labHours, 0);
-        const total = lectures + practices + labs;
+        const total = entries.reduce((sum, entry) => sum + getPlanContactHours(entry) + (entry.independentStudyHours || 0) + (entry.coursework?.defenseHours || 0), 0);
         return { lectures, practices, labs, total, zet: (total / 36).toFixed(2) };
     };
 
@@ -607,7 +621,7 @@ const EducationalPlanManager: React.FC = () => {
                 <div className="flex items-center">
                     <BookOpenIcon className="h-8 w-8 text-blue-600 mr-3" />
                     <div>
-                        <h2 className="text-2xl font-bold text-gray-800">Учебные планы</h2>
+                        <h2 className="text-2xl font-bold text-gray-800">Учебные планы · {EDUCATION_LEVEL_LABELS[getEducationLevel(specialties.find(item => item.id === selectedSpecialtyId))]}</h2>
                         <p className="text-sm text-gray-500">Блоки дисциплин, шаблоны и переносы между специальностями</p>
                     </div>
                 </div>
@@ -637,7 +651,7 @@ const EducationalPlanManager: React.FC = () => {
                 <div className="space-y-6">
                     {Object.keys(groupedBySemesterAndBlock).length > 0 ? Object.keys(groupedBySemesterAndBlock).sort((a, b) => Number(a) - Number(b)).map(semester => {
                         const semesterBlocks = groupedBySemesterAndBlock[Number(semester)];
-                        const semesterEntries = Object.values(semesterBlocks).flat();
+                        const semesterEntries = (Object.values(semesterBlocks) as PlanEntry[][]).flat();
                         const semesterTotals = renderTotals(semesterEntries);
                         const orderedBlockIds = Object.keys(semesterBlocks).sort((a, b) => getBlockName(a === UNASSIGNED_BLOCK_ID ? undefined : a).localeCompare(getBlockName(b === UNASSIGNED_BLOCK_ID ? undefined : b), 'ru'));
 
@@ -692,11 +706,11 @@ const EducationalPlanManager: React.FC = () => {
                                                         </thead>
                                                         <tbody>
                                                             {entries.map((entry, index) => {
-                                                                const totalHours = entry.lectureHours + entry.practiceHours + entry.labHours;
+                                                                const totalHours = getPlanContactHours(entry) + (entry.independentStudyHours || 0) + (entry.coursework?.defenseHours || 0);
                                                                 const zet = (totalHours / 36).toFixed(2);
                                                                 return (
                                                                     <tr key={`${entry.subjectId}-${entry.semester}-${index}`} className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} hover:bg-blue-50 transition-colors`}>
-                                                                        <td className="p-2 font-medium border-t border-gray-200 text-gray-900">{getSubjectName(entry.subjectId)}</td>
+                                                                        <td className="p-2 font-medium border-t border-gray-200 text-gray-900">{getSubjectName(entry.subjectId)}<div className="text-xs font-normal text-teal-700">{!!entry.researchSeminarHours && `Семинары: ${entry.researchSeminarHours} ч. `}{!!entry.researchConsultationHours && `Научные консультации: ${entry.researchConsultationHours} ч. `}{!!entry.independentStudyHours && `СР / НИР: ${entry.independentStudyHours} ч. `}{entry.coursework && `${entry.coursework.kind === 'project' ? 'Курсовой проект' : 'Курсовая работа'}: консультации ${entry.coursework.consultationHours} ч, защита ${entry.coursework.defenseHours} ч`}</div></td>
                                                                         <td className="p-2 text-center border-t border-gray-200 text-gray-700">{entry.lectureHours || '-'}</td>
                                                                         <td className="p-2 text-center border-t border-gray-200 text-gray-700">{entry.practiceHours || '-'}</td>
                                                                         <td className="p-2 text-center border-t border-gray-200 text-gray-700">{entry.labHours || '-'}</td>

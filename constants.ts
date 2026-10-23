@@ -12,6 +12,13 @@ export const CLASS_TYPE_COLORS: { [key in ClassType]: string } = {
     [ClassType.Test]: 'bg-pink-100 border-pink-300 text-pink-800',
     [ClassType.Exam]: 'bg-red-100 border-red-300 text-red-800',
     [ClassType.Elective]: 'bg-purple-100 border-purple-300 text-purple-800',
+    [ClassType.ResearchSeminar]: 'bg-teal-100 border-teal-300 text-teal-800',
+    [ClassType.ResearchConsultation]: 'bg-cyan-100 border-cyan-300 text-cyan-800',
+    [ClassType.ResearchAttestation]: 'bg-emerald-100 border-emerald-300 text-emerald-800',
+    [ClassType.CandidateExam]: 'bg-red-100 border-red-300 text-red-800',
+    [ClassType.CourseworkConsultation]: 'bg-sky-100 border-sky-300 text-sky-800',
+    [ClassType.CourseworkDefense]: 'bg-rose-100 border-rose-300 text-rose-800',
+    [ClassType.ThesisDefense]: 'bg-violet-100 border-violet-300 text-violet-800',
 };
 
 export const AVAILABILITY_COLORS: { [key in AvailabilityType]: { bg: string; text: string; border: string; btn: string; } } = {

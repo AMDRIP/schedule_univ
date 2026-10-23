@@ -5,6 +5,7 @@ import { ScheduleEntry, TimeSlot, Group, Teacher, Subject, Classroom, Scheduling
 import { DAYS_OF_WEEK } from '../constants';
 import { useStore } from '../hooks/useStore';
 import { calculateExperience, toYYYYMMDD } from '../utils/dateUtils';
+import { getPlanContactActivities, getPlanContactHours } from '../utils/educationUtils';
 
 const FONT_NAME = 'DejaVuSans';
 const FONT_STYLES = ['normal', 'bold', 'italic', 'bolditalic'] as const;
@@ -235,7 +236,7 @@ export const exportAllDataAsPdf = async (store: ReturnType<typeof useStore>) => 
 
     const planHours = store.educationalPlans.map(plan => {
         const entries = plan.entries || [];
-        const totalHours = sum(entries.map(entry => (entry.lectureHours || 0) + (entry.practiceHours || 0) + (entry.labHours || 0)));
+        const totalHours = sum(entries.map(entry => getPlanContactHours(entry) + (entry.independentStudyHours || 0) + (entry.coursework?.defenseHours || 0)));
         const semesters = Array.from(new Set<number>(entries.map(entry => entry.semester))).sort((a, b) => a - b).join(', ');
         return {
             plan,
@@ -253,9 +254,7 @@ export const exportAllDataAsPdf = async (store: ReturnType<typeof useStore>) => 
     store.educationalPlans.forEach(plan => {
         plan.entries.forEach(entry => {
             const lessonTypes: Array<[ClassType, number]> = [
-                [ClassType.Lecture, entry.lectureHours],
-                [ClassType.Practical, entry.practiceHours],
-                [ClassType.Lab, entry.labHours],
+                ...getPlanContactActivities(entry).map(activity => [activity.type, activity.hours] as [ClassType, number]),
             ];
             lessonTypes.forEach(([classType, hours]) => {
                 if (!hours) return;
@@ -407,7 +406,7 @@ export const exportAllDataAsPdf = async (store: ReturnType<typeof useStore>) => 
         shortList((item.plan.blocks || []).map(block => block.name), 5),
     ]), { limit: 120 });
 
-    addTable("Состав учебных планов", [['Специальность', 'Форма', 'Семестр', 'Блок', 'Дисциплина', 'Лекц.', 'Практ.', 'Лаб.', 'Аттестация']], store.educationalPlans.flatMap(plan => plan.entries.map(entry => [
+    addTable("Состав учебных планов", [['Специальность', 'Форма', 'Семестр', 'Блок', 'Дисциплина', 'Лекц.', 'Практ.', 'Лаб.', 'НИР / сем.', 'СР', 'Курсовая', 'Аттестация']], store.educationalPlans.flatMap(plan => plan.entries.map(entry => [
         specialtyById.get(plan.specialtyId) || plan.specialtyId,
         plan.formOfStudy || 'Любая',
         entry.semester,
@@ -416,9 +415,17 @@ export const exportAllDataAsPdf = async (store: ReturnType<typeof useStore>) => 
         entry.lectureHours || '',
         entry.practiceHours || '',
         entry.labHours || '',
+        (entry.researchSeminarHours || 0) + (entry.researchConsultationHours || 0),
+        entry.independentStudyHours || '',
+        entry.coursework ? `${entry.coursework.kind === 'project' ? 'КП' : 'КР'}: конс. ${entry.coursework.consultationHours}; защ. ${entry.coursework.defenseHours}` : '',
         entry.attestation,
     ])), { limit: 220, fontSize: 6 });
 
+    addTable('Работы и исследования', [['Обучающийся', 'Группа', 'Тема / вид', 'Руководитель', 'Семестр', 'Срок', 'Статус', 'Результат']], (store.academicWorks || []).map(work => [
+        work.studentName, store.groups.find(group => group.id === work.groupId)?.number || work.groupId,
+        `${work.kind}: ${work.topic}`, store.teachers.find(teacher => teacher.id === work.supervisorId)?.name || work.supervisorId,
+        work.semester, work.dueDate || '', work.status, work.grade ?? work.result ?? '',
+    ]));
     // Subjects
     addTable("Дисциплины", [['ID', 'Название', 'Требования к аудиториям', 'Теги', 'Пар в расписании']], store.subjects.map(s => [
         s.id,

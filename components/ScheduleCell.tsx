@@ -8,6 +8,7 @@ import { EditIcon, TrashIcon, CalendarIcon, WifiIcon, BuildingOfficeIcon, BookOp
 import { renderIcon } from './IconMap';
 import { getWeekType } from '../utils/dateUtils';
 import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
+import { getRequiredClassroomTypes } from '../utils/educationUtils';
 
 interface ScheduleEntryCardProps {
   entry: ScheduleEntry;
@@ -91,7 +92,7 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   }, [getInvolvedGroups, subgroup]);
 
   const availableClassrooms = useMemo(() => {
-    const requiredTypes = subject?.classroomTypeRequirements?.[entry.classType];
+    const requiredTypes = getRequiredClassroomTypes(subject, entry.classType);
     if (!requiredTypes || requiredTypes.length === 0 || studentCount === 0) return [];
 
     const suitableByTypeAndCapacity = classrooms.filter(c =>
@@ -640,7 +641,7 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
 
       if (itemType === ItemTypes.UNSCHEDULED_ENTRY) {
         const subject = subjects.find(s => s.id === item.subjectId);
-        const requiredTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : subject?.classroomTypeRequirements?.[item.classType];
+        const requiredTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : getRequiredClassroomTypes(subject, item.classType);
         if (!requiredTypes || requiredTypes.length === 0) return false;
         const studentCount = involvedGroups.length > 0
           ? involvedGroups.reduce((sum, group) => sum + group.studentCount, 0)

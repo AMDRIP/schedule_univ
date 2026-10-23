@@ -10,7 +10,7 @@ const AutoScheduler: React.FC = () => {
     acc[resource] = (acc[resource] || 0) + 1;
     return acc;
   }, {});
-  const topBottlenecks = Object.entries(bottlenecks).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const topBottlenecks = (Object.entries(bottlenecks) as Array<[string, number]>).sort((a, b) => b[1] - a[1]).slice(0, 4);
 
   return (
     <div className="space-y-6">

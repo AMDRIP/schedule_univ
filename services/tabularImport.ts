@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 
 const KNOWN_COLLECTIONS = new Set([
+  'academicWorks',
   'faculties', 'departments', 'teachers', 'groups', 'streams', 'classrooms', 'subjects',
   'timeSlots', 'timeSlotsShortened', 'teacherSubjectLinks', 'schedulingRules',
   'productionCalendar', 'ugs', 'specialties', 'educationalPlans', 'scheduleTemplates',

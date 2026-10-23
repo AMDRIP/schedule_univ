@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { AttestationType, ClassType, FormOfStudy, TeacherSubjectLink } from '../types';
 import { AlertIcon, CheckCircleIcon, CopyIcon, EditIcon, PlusIcon, SparklesIcon, TrashIcon } from './icons';
+import { getPlanContactActivities } from '../utils/educationUtils';
 
 type LinkRole = NonNullable<TeacherSubjectLink['role']>;
 type ProblemLevel = 'error' | 'warning' | 'info';
@@ -104,9 +105,11 @@ const LinkManager: React.FC = () => {
 
     educationalPlans.forEach(plan => {
       plan.entries.forEach(entry => {
-        if (entry.lectureHours > 0) addNeed(entry.subjectId, ClassType.Lecture, entry.semester, plan.id);
-        if (entry.practiceHours > 0) addNeed(entry.subjectId, ClassType.Practical, entry.semester, plan.id);
-        if (entry.labHours > 0) addNeed(entry.subjectId, ClassType.Lab, entry.semester, plan.id);
+        getPlanContactActivities(entry).filter(activity => activity.hours > 0).forEach(activity => addNeed(entry.subjectId, activity.type, entry.semester, plan.id));
+        if (entry.coursework?.defenseHours) addNeed(entry.subjectId, ClassType.CourseworkDefense, entry.semester, plan.id);
+        if (entry.attestation === AttestationType.CandidateExam) addNeed(entry.subjectId, ClassType.CandidateExam, entry.semester, plan.id);
+        if (entry.attestation === AttestationType.ResearchReport) addNeed(entry.subjectId, ClassType.ResearchAttestation, entry.semester, plan.id);
+        if (entry.attestation === AttestationType.ThesisDefense) addNeed(entry.subjectId, ClassType.ThesisDefense, entry.semester, plan.id);
         if (entry.attestation === AttestationType.Exam) addNeed(entry.subjectId, ClassType.Exam, entry.semester, plan.id);
         if (entry.attestation === AttestationType.Test || entry.attestation === AttestationType.DifferentiatedTest) addNeed(entry.subjectId, ClassType.Test, entry.semester, plan.id);
       });

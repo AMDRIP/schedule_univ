@@ -52,7 +52,8 @@ const getLevelByCode = (code?: string): EducationLevel => {
 };
 
 const AcademicProgramsManager: React.FC = () => {
-    const { ugs, specialties, educationalPlans, groups, addItem, updateItem, deleteItem } = useStore();
+    const { ugs, specialties, educationalPlans, groups, teachers, addItem, updateItem, deleteItem } = useStore();
+    const [levelFilter, setLevelFilter] = useState('all');
     const [selectedUgsId, setSelectedUgsId] = useState<string>(ugs[0]?.id || '');
     const [searchQuery, setSearchQuery] = useState('');
     const [ugsDraft, setUgsDraft] = useState<Omit<UGS, 'id'> | UGS>(emptyUgsDraft());
@@ -70,6 +71,7 @@ const AcademicProgramsManager: React.FC = () => {
     const specialtiesByUgs = useMemo(() => {
         const query = searchQuery.trim().toLowerCase();
         return specialties
+            .filter(item => levelFilter === 'all' || (item.educationLevel || getLevelByCode(item.code)) === levelFilter)
             .filter(item => !selectedUgs?.id || item.ugsId === selectedUgs.id)
             .filter(item => {
                 if (!query) return true;
@@ -86,7 +88,7 @@ const AcademicProgramsManager: React.FC = () => {
                 ].join(' ').toLowerCase().includes(query);
             })
             .sort((a, b) => `${a.code} ${a.name}`.localeCompare(`${b.code} ${b.name}`));
-    }, [specialties, selectedUgs, searchQuery]);
+    }, [specialties, selectedUgs, searchQuery, levelFilter]);
 
     const stats = useMemo(() => ({
         ugs: ugs.length,
@@ -300,6 +302,13 @@ const AcademicProgramsManager: React.FC = () => {
                 </aside>
 
                 <main className="min-h-0 overflow-y-auto p-6">
+                    <div className="mb-4 flex flex-wrap items-center gap-3">
+                        <label className="text-sm text-gray-700">Уровень программы</label>
+                        <select value={levelFilter} onChange={event => setLevelFilter(event.target.value)} className={inputClass} style={{ width: 'auto' }}>
+                            <option value="all">Все уровни</option>
+                            {EDUCATION_LEVELS.map(level => <option key={level.value} value={level.value}>{level.label}</option>)}
+                        </select>
+                    </div>
                     <div className="mb-5 rounded-lg border border-gray-200 bg-white p-4">
                         <h2 className="text-lg font-semibold text-gray-900">{editingSpecialtyId ? 'Редактирование специальности' : 'Новая специальность / программа'}</h2>
                         <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-4">
@@ -316,6 +325,14 @@ const AcademicProgramsManager: React.FC = () => {
                             <input value={specialtyDraft.standardCode || ''} onChange={event => setSpecialtyDraft(current => ({ ...current, standardCode: event.target.value }))} className={inputClass} placeholder="ФГОС / стандарт" />
                             <input value={specialtyDraft.oksoCode || ''} onChange={event => setSpecialtyDraft(current => ({ ...current, oksoCode: event.target.value }))} className={inputClass} placeholder="Доп. код ОКСО" />
                         </div>
+                        {(specialtyDraft.educationLevel === 'master' || specialtyDraft.educationLevel === 'postgraduate') && (
+                            <div className="mt-3 grid grid-cols-1 gap-3 rounded-md border border-teal-200 bg-teal-50 p-3 lg:grid-cols-2">
+                                <label className="text-sm">Срок обучения, лет<input type="number" min="1" max="10" step="0.5" value={specialtyDraft.durationYears || ''} onChange={event => setSpecialtyDraft(current => ({ ...current, durationYears: Number(event.target.value) || undefined }))} className={inputClass} /></label>
+                                <label className="text-sm">Руководитель программы<select value={specialtyDraft.programHeadTeacherId || ''} onChange={event => setSpecialtyDraft(current => ({ ...current, programHeadTeacherId: event.target.value }))} className={inputClass}><option value="">Не назначен</option>{teachers.map(teacher => <option key={teacher.id} value={teacher.id}>{teacher.name}</option>)}</select></label>
+                                <label className="text-sm">{specialtyDraft.educationLevel === 'postgraduate' ? 'Шифр научной специальности' : 'Код научного направления'}<input value={specialtyDraft.scientificSpecialtyCode || ''} onChange={event => setSpecialtyDraft(current => ({ ...current, scientificSpecialtyCode: event.target.value }))} className={inputClass} /></label>
+                                <label className="text-sm">Область исследований<input value={specialtyDraft.scientificField || ''} onChange={event => setSpecialtyDraft(current => ({ ...current, scientificField: event.target.value }))} className={inputClass} /></label>
+                            </div>
+                        )}
                         <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
                             <textarea value={joinList(specialtyDraft.profiles)} onChange={event => setSpecialtyDraft(current => ({ ...current, profiles: splitList(event.target.value) }))} className={`${inputClass} min-h-24`} placeholder="Профили подготовки, каждый с новой строки" />
                             <textarea value={joinList(specialtyDraft.competencies)} onChange={event => setSpecialtyDraft(current => ({ ...current, competencies: splitList(event.target.value) }))} className={`${inputClass} min-h-24`} placeholder="Компетенции, каждая с новой строки" />
@@ -358,6 +375,7 @@ const AcademicProgramsManager: React.FC = () => {
                                             </div>
                                             <h3 className="mt-2 text-base font-semibold text-gray-900">{item.name}</h3>
                                             {item.qualification && <p className="mt-1 text-sm text-gray-600">Квалификация: {item.qualification}</p>}
+                                            {(item.educationLevel === 'master' || item.educationLevel === 'postgraduate') && <p className="mt-1 text-sm text-teal-800">{item.durationYears ? `${item.durationYears} лет · ` : ''}{item.scientificSpecialtyCode || ''} {item.scientificField || ''}{item.programHeadTeacherId && ` · Руководитель: ${teachers.find(teacher => teacher.id === item.programHeadTeacherId)?.name || 'не найден'}`}</p>}
                                         </div>
                                         <div className="flex gap-1">
                                             <button type="button" onClick={() => startEditSpecialty(item)} className="rounded-md p-2 text-gray-500 hover:bg-blue-50 hover:text-blue-600" title="Редактировать">

@@ -50,7 +50,7 @@ const UnscheduledCard: React.FC<UnscheduledCardProps> = ({ entry }) => {
 
   const groupName = getGroupName();
 
-  if (!subject || !teacher || !groupName) return null;
+  if (!subject || !groupName) return null;
 
   const colorClass = CLASS_TYPE_COLORS[entry.classType] || 'bg-gray-100 border-gray-300';
   
@@ -76,7 +76,7 @@ const UnscheduledCard: React.FC<UnscheduledCardProps> = ({ entry }) => {
 
       <div className="flex items-center gap-1.5 text-gray-600">
         <UsersIcon className="w-3.5 h-3.5 flex-shrink-0" />
-        <p className="truncate" title={teacher.name}>{teacher.name}</p>
+        <p className="truncate" title={teacher?.name || 'Нет привязки преподавателя'}>{teacher?.name || 'Нет привязки преподавателя'}</p>
       </div>
       
       {requiredTags.length > 0 && (

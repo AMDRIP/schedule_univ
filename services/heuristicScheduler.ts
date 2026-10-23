@@ -8,6 +8,7 @@ import { DAYS_OF_WEEK } from '../constants';
 import { getWeekNumber, toYYYYMMDD } from '../utils/dateUtils';
 import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
+import { getPlanContactActivities, getPlanContactHours, matchesSemesterParity, getRequiredClassroomTypes } from '../utils/educationUtils';
 
 interface GenerationData {
     teachers: Teacher[];
@@ -61,6 +62,11 @@ export interface LocalOptimizerResult {
 }
 
 interface SchedulerIndex {
+    scoringContext?: {
+        retained: ScheduleEntry[]; generated: ScheduleEntry[]; count: number; all: ScheduleEntry[];
+        teacher: Map<string, ScheduleEntry[]>; teacherDay: Map<string, ScheduleEntry[]>;
+        groupDay: Map<string, ScheduleEntry[]>; subject: Map<string, ScheduleEntry[]>;
+    };
     teachersById: Map<string, Teacher>;
     groupsById: Map<string, Group>;
     classroomsById: Map<string, Classroom>;
@@ -200,7 +206,7 @@ const SCHEDULER_YIELD_INTERVAL = 20;
 const MAX_PRIMARY_CLASSROOM_CANDIDATES = 24;
 const MAX_PRIMARY_WORK_DAYS = 10;
 const GOOD_ENOUGH_SLOT_COST = 0;
-const DOMAIN_CACHE_VERSION = 'domain-cache-v4';
+const DOMAIN_CACHE_VERSION = 'domain-cache-v5';
 const DOMAIN_PRECOMPUTE_BATCH_SIZE = 24;
 const TABU_TENURE = 24;
 
@@ -511,8 +517,8 @@ const teacherLinkMatchesContext = (
 ) => {
     if (link.isActive === false) return false;
     if (streamId && link.allowStreams === false) return false;
-    if (link.allowedFormOfStudy?.length && !groups.some(group => link.allowedFormOfStudy!.includes(group.formOfStudy))) return false;
-    if (link.allowedGroupIds?.length && !groups.some(group => link.allowedGroupIds!.includes(group.id))) return false;
+    if (link.allowedFormOfStudy?.length && !groups.every(group => link.allowedFormOfStudy!.includes(group.formOfStudy))) return false;
+    if (link.allowedGroupIds?.length && !groups.every(group => link.allowedGroupIds!.includes(group.id))) return false;
     if (link.excludedGroupIds?.length && groups.some(group => link.excludedGroupIds!.includes(group.id))) return false;
     return true;
 };
@@ -529,7 +535,7 @@ const getTeacherCandidates = (
         .filter(link => teacherLinkMatchesContext(link, groups, streamId))
         .sort((a, b) => getTeacherLinkPriority(a) - getTeacherLinkPriority(b));
     const candidates = [
-        ...(preferredTeacherId ? [preferredTeacherId] : []),
+        ...(preferredTeacherId && links.some(link => link.teacherId === preferredTeacherId) ? [preferredTeacherId] : []),
         ...links.map(link => link.teacherId),
     ];
     return Array.from(new Set(candidates)).filter(teacherId => index.teachersById.has(teacherId));
@@ -544,8 +550,7 @@ const streamCanScheduleLecture = (stream: Stream, subjectId: string) => {
 const getPlanForGroup = (group: Group, index: SchedulerIndex) => {
     const plans = index.plansBySpecialty.get(group.specialtyId) || [];
     return plans.find(plan => plan.formOfStudy === group.formOfStudy) ||
-        plans.find(plan => !plan.formOfStudy) ||
-        plans[0];
+        plans.find(plan => !plan.formOfStudy);
 };
 
 const groupHasLecture = (group: Group, subjectId: string, semester: number, index: SchedulerIndex) => {
@@ -599,7 +604,7 @@ const selectLectureStream = (groupId: string, subjectId: string, semester: numbe
 };
 
 const getSuitableClassrooms = (entry: UnscheduledEntry, subject: Subject, index: SchedulerIndex) => {
-    const requiredClassroomTypes = entry.classroomTypeIds?.length ? entry.classroomTypeIds : subject.classroomTypeRequirements?.[entry.classType];
+    const requiredClassroomTypes = entry.classroomTypeIds?.length ? entry.classroomTypeIds : getRequiredClassroomTypes(subject, entry.classType);
     if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) return null;
 
     const requiredTags = entry.requiredClassroomTagIds?.length ? entry.requiredClassroomTagIds : subject.requiredClassroomTagIds || [];
@@ -610,6 +615,8 @@ const getSuitableClassrooms = (entry: UnscheduledEntry, subject: Subject, index:
     const classrooms = requiredClassroomTypes.flatMap(typeId => index.classroomsByType.get(typeId) || [])
         .filter((classroom, position, array) => array.findIndex(item => item.id === classroom.id) === position)
         .filter(classroom => {
+            if (classroom.status === 'closed' || classroom.status === 'repair') return false;
+            if (classroom.allowedClassTypes?.length && !classroom.allowedClassTypes.includes(entry.classType)) return false;
             if (classroom.capacity < entry.studentCount) return false;
             if (requiredTags.length > 0) {
                 const classroomTags = classroom.tagIds || [];
@@ -750,6 +757,7 @@ const getEntrySignature = (
             classroom.capacity,
             classroom.typeId,
             classroom.tagIds?.join(',') || '',
+            classroom.status || '', classroom.allowedClassTypes || [], classroom.availabilityGrid || {},
         ])
         : [];
     const teacherFacts = teacherCandidates.map(teacherId => {
@@ -762,6 +770,7 @@ const getEntrySignature = (
     });
     const groupFacts = groups.map(group => [
         group.id,
+        group.course,
         group.formOfStudy,
         group.shift || '',
         group.pinnedClassroomId || '',
@@ -784,12 +793,11 @@ const getEntrySignature = (
             rule.severity,
             rule.scope || '',
             JSON.stringify(rule.conditions),
-            JSON.stringify((rule as SchedulingRule & { parameters?: unknown }).parameters || {}),
+            JSON.stringify(rule),
         ]);
 
     return JSON.stringify({
         version: DOMAIN_CACHE_VERSION,
-        uid: entry.uid,
         subjectId: entry.subjectId,
         classType: entry.classType,
         groupIds: getEntryGroupIds(entry).slice().sort(),
@@ -802,6 +810,7 @@ const getEntrySignature = (
         requiredClassroomTagIds,
         preferredTimeSlotIds: entry.preferredTimeSlotIds || [],
         teacherCandidates,
+        links: index.teacherLinksBySubjectType.get(makeSubjectTypeKey(entry.subjectId, entry.classType)),
         teacherFacts,
         groupFacts,
         suitableClassroomIds,
@@ -924,9 +933,21 @@ const precomputePlacementDomains = async (
     config: HeuristicConfig
 ) => {
     const domains = new Map<string, PlacementDomain>();
+    const seriesDomains = new Map<string, PlacementDomain>();
+    let nextYieldAt = Date.now() + 12;
     for (let i = 0; i < entries.length; i++) {
-        domains.set(entries[i].uid, getOrComputePlacementDomain(entries[i], data, index, workDays, config));
-        if ((i + 1) % DOMAIN_PRECOMPUTE_BATCH_SIZE === 0) await yieldToEventLoop();
+        const { uid, targetWeek, explanation, ...facts } = entries[i];
+        const seriesKey = JSON.stringify(facts);
+        let domain = seriesDomains.get(seriesKey);
+        if (!domain) {
+            domain = getOrComputePlacementDomain(entries[i], data, index, workDays, config);
+            seriesDomains.set(seriesKey, domain);
+        }
+        domains.set(uid, domain);
+        if ((i + 1) % DOMAIN_PRECOMPUTE_BATCH_SIZE === 0 && Date.now() >= nextYieldAt) {
+            await yieldToEventLoop();
+            nextYieldAt = Date.now() + 12;
+        }
     }
     return domains;
 };
@@ -938,7 +959,7 @@ const chooseCandidate = <T>(candidates: T[], rng: () => number, stochasticity = 
 };
 
 // Generates the initial pool of classes to be scheduled from educational plans
-const generateClassPool = (data: GenerationData, index = createSchedulerIndex(data)): UnscheduledEntry[] => {
+export const generateClassPool = (data: GenerationData, index = createSchedulerIndex(data)): UnscheduledEntry[] => {
     const { groups, electives } = data;
     const entries: UnscheduledEntry[] = [];
 
@@ -951,7 +972,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
         const groupSubgroups = index.subgroupsByParent.get(group.id) || [];
         const relevantEntries = plan.entries.filter(e =>
             isSemesterInCourse(e.semester, group.course) &&
-            (e.lectureHours > 0 || e.practiceHours > 0 || e.labHours > 0)
+            getPlanContactHours(e) > 0
         );
 
         relevantEntries.forEach(planEntry => {
@@ -968,7 +989,11 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                 // Lecture streams are optional filters: empty subject means any shared lecture,
                 // filled subject means only that discipline.
                 if (lectureStream) {
-                    lectureGroups = getLectureGroupsForStream(lectureStream, planEntry.subjectId, planEntrySemester, groups, index);
+                    lectureGroups = getLectureGroupsForStream(lectureStream, planEntry.subjectId, planEntrySemester, groups, index).filter(candidate =>
+                        candidate.course === group.course &&
+                        getPlanForGroup(candidate, index)?.entries.find(item => item.subjectId === planEntry.subjectId && item.semester === planEntrySemester)?.lectureHours === planEntry.lectureHours &&
+                        (!group.shift || !candidate.shift || group.shift === 'both' || candidate.shift === 'both' || candidate.shift === group.shift)
+                    );
                 }
 
                 const streamCoversExactly = lectureStream
@@ -977,7 +1002,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                 const exactLectureStream = streamCoversExactly ? lectureStream : undefined;
 
                         const teacherCandidates = getTeacherCandidates(planEntry.subjectId, ClassType.Lecture, index, exactLectureStream?.teacherId, lectureGroups, exactLectureStream?.id);
-                if (teacherCandidates.length > 0) {
+                {
                     const studentCount = lectureGroups.reduce((sum, g) => sum + g.studentCount, 0);
                     const groupIds = lectureGroups.map(g => g.id);
                     const subjectClassroomTypes = index.subjectsById.get(planEntry.subjectId)?.classroomTypeRequirements?.[ClassType.Lecture] || [];
@@ -991,7 +1016,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                             uid: `unsched-${planEntry.subjectId}-sem${planEntrySemester}-${groupIds.join('_')}-${ClassType.Lecture}-${i}`,
                             subjectId: planEntry.subjectId,
                             classType: ClassType.Lecture,
-                            teacherId: teacherCandidates[0],
+                            teacherId: teacherCandidates[0] || '',
                             teacherCandidates,
                             studentCount,
                             classroomTypeIds: classroomTypeIds.length > 0 ? classroomTypeIds : undefined,
@@ -1012,18 +1037,17 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
 
             // 2. Handle Practices and Labs
             const practiceAndLabTypes = [
-                { type: ClassType.Practical, hours: planEntry.practiceHours },
-                { type: ClassType.Lab, hours: planEntry.labHours },
+                ...getPlanContactActivities(planEntry).filter(activity => activity.type !== ClassType.Lecture),
             ];
             practiceAndLabTypes.forEach(({ type, hours }) => {
                 if (hours <= 0) return;
                 const numClasses = Math.ceil(hours / 2);
 
-                if (planEntry.splitForSubgroups && groupSubgroups.length > 0) {
+                if (planEntry.splitForSubgroups && groupSubgroups.length > 0 && [ClassType.Practical, ClassType.Lab].includes(type)) {
                     groupSubgroups.forEach(subgroup => {
                         const assignment = subgroup.teacherAssignments?.find(a => a.subjectId === planEntry.subjectId && a.classType === type);
                         const teacherCandidates = getTeacherCandidates(planEntry.subjectId, type, index, assignment?.teacherId, [group]);
-                        if (teacherCandidates.length > 0) {
+                        {
                             for (let i = 0; i < numClasses; i++) {
                                 entries.push({
                                     uid: `unsched-${planEntry.subjectId}-sem${planEntrySemester}-${subgroup.id}-${type}-${i}`,
@@ -1035,7 +1059,7 @@ const generateClassPool = (data: GenerationData, index = createSchedulerIndex(da
                     });
                 } else { // Whole group for practice/lab
                     const teacherCandidates = getTeacherCandidates(planEntry.subjectId, type, index, undefined, [group]);
-                    if (teacherCandidates.length > 0) {
+                    {
                         for (let i = 0; i < numClasses; i++) {
                             entries.push({
                                 uid: `unsched-${planEntry.subjectId}-sem${planEntrySemester}-${group.id}-${type}-${i}`,
@@ -1081,6 +1105,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     const index = createSchedulerIndex(data);
     const rng = createSeededRandom(config.seed);
     const runStartedAt = Date.now();
+    let lastProgressAt = 0;
     const reportProgress = (
         phase: string,
         processed: number,
@@ -1090,6 +1115,8 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         label: string
     ) => {
         if (!options.onProgress) return;
+        if (phase === 'placing' && Date.now() - lastProgressAt < 200) return;
+        lastProgressAt = Date.now();
         const remaining = Math.max(0, total - processed);
         const hardViolations = failedSnapshot.length + remaining;
         const softPenalty = Math.max(0, Math.round((remaining * 38_000) + (failedSnapshot.length * 120_000) + Math.max(0, total - scheduleSnapshot.length) * 3_000));
@@ -1117,7 +1144,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     // We import dynamically to avoid issues if the module is not built
     let nativeService;
     try {
-        nativeService = require('./nativeScheduler');
+        if (config.useNative) nativeService = require('./nativeScheduler');
     } catch (e) { }
 
     if (config.useNative && data.schedulingRules.length === 0 && nativeService && nativeService.isNativeSchedulerAvailable() && !config.target) { // Native only supports full generation for now
@@ -1187,7 +1214,10 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     const incrementalScoreState = createIncrementalScoreState(existingSchedule);
 
     // --- 2. PREPARE CLASS POOL AND WORKDAYS ---
-    let classPool = generateClassPool(data, index);
+    let classPool = generateClassPool(data, index).filter(entry => {
+        const semester = entry.uid.match(/-sem(\d+)-/)?.[1];
+        return !semester || matchesSemesterParity(Number(semester), config.semesterParity || 'all');
+    });
     const existingUids = new Set(existingSchedule.map(e => e.unscheduledUid));
     classPool = classPool.filter(e => !existingUids.has(e.uid)); // Don't try to schedule what's already there
 
@@ -1238,16 +1268,24 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
 
     const workDays = createWorkDays(data, config, index);
     const domainMap = await precomputePlacementDomains(classPool, data, index, workDays, config);
-    const domainSizes = new Map(classPool.map(entry => [entry.uid, domainMap.get(entry.uid)?.difficulty ?? estimateDomainSize(entry, data, index, workDays)]));
-    classPool.sort((a, b) =>
-        getConstraintScore(b, data, index, workDays, domainSizes.get(b.uid) ?? 0) -
-        getConstraintScore(a, data, index, workDays, domainSizes.get(a.uid) ?? 0)
-    );
+    // Evaluate priorities once instead of scanning the semester inside each sort comparison.
+    const domainPriorities = new Map<PlacementDomain, number>();
+    const priorities = new Map(classPool.map(entry => {
+        const domain = domainMap.get(entry.uid)!;
+        if (!domainPriorities.has(domain)) domainPriorities.set(domain, getConstraintScore(entry, data, index, workDays, domain.difficulty));
+        return [entry.uid, domainPriorities.get(domain)!] as const;
+    }));
+    classPool.sort((a, b) => priorities.get(b.uid)! - priorities.get(a.uid)!);
     reportProgress('preparing', 0, classPool.length, newSchedule, unschedulable, 'Домен занятий рассчитан. Начинаю расстановку самых трудных пар.');
 
     // --- 3. PLACEMENT LOOP ---
     let processedEntries = 0;
-    for (const entryToPlace of classPool) {
+    for (const [entryIndex, entryToPlace] of classPool.entries()) {
+        processedEntries = entryIndex;
+        if (entryIndex % SCHEDULER_YIELD_INTERVAL === 0) {
+            reportProgress('placing', entryIndex, classPool.length, newSchedule, unschedulable, `Размещено ${newSchedule.length} из ${classPool.length}.`);
+            await yieldToEventLoop();
+        }
         if (options.shouldStop?.()) {
             classPool.slice(processedEntries).forEach(remainingEntry => markUnscheduled(remainingEntry, unschedulable, explanations, explainEntry(
                 remainingEntry,
@@ -1298,7 +1336,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             continue;
         }
 
-        const requiredClassroomTypes = entryToPlace.classroomTypeIds?.length ? entryToPlace.classroomTypeIds : subject?.classroomTypeRequirements?.[entryToPlace.classType];
+        const requiredClassroomTypes = entryToPlace.classroomTypeIds?.length ? entryToPlace.classroomTypeIds : getRequiredClassroomTypes(subject, entryToPlace.classType);
         if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) {
             markUnscheduled(entryToPlace, unschedulable, explanations, explainEntry(
                 entryToPlace,
@@ -1407,8 +1445,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                                 continue;
                             }
 
-                            const cost = estimateIncrementalPlacementPenalty(incrementalScoreState, candidateEntry, dateStr, classroom.id, softPenaltyMultiplier) +
-                                calculateSlotCost(candidateEntry, date, timeSlot.id, classroom, involvedGroups, resourceBookings, schedulingData, softPenaltyMultiplier, newSchedule, config, activeTimeSlots, index);
+                            const cost = calculateSlotCost(candidateEntry, date, timeSlot.id, classroom, involvedGroups, resourceBookings, schedulingData, softPenaltyMultiplier, newSchedule, config, activeTimeSlots, index);
                             if (cost === Infinity) {
                                 stats.rules++;
                                 conflicts.push(`Строгое пользовательское правило запрещает ${dayName}, ${timeSlot.time}.`);
@@ -1455,6 +1492,10 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                 timeSlotId: chosenSlot.timeSlotId,
                 classroomId: chosenSlot.classroom.id,
                 groupId: entryToPlace.groupId,
+                classroomTypeIds: entryToPlace.classroomTypeIds,
+                requiredClassroomTagIds: entryToPlace.requiredClassroomTagIds,
+                pinnedClassroomId: entryToPlace.pinnedClassroomId,
+                preferredTimeSlotIds: entryToPlace.preferredTimeSlotIds,
                 groupIds: entryToPlace.groupIds,
                 subgroupId: entryToPlace.subgroupId,
                 streamId: entryToPlace.streamId,
@@ -1495,8 +1536,8 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     if (newSchedule.length > 0) {
         console.log(`Initial placement finished. ${newSchedule.length} entries placed. Starting refinement.`);
         reportProgress('refining', classPool.length, classPool.length, newSchedule, unschedulable, 'Первичная сетка собрана. Снижаю штрафы локальными перестановками.');
-        const refinedSchedule = await refineSchedule(newSchedule, schedulingData, config, resourceBookings, index);
-        const result = { schedule: refinedSchedule, unschedulable, explanations };
+        const refinedSchedule = await refineSchedule(newSchedule, schedulingData, config, resourceBookings, index, options);
+        const result = { schedule: refinedSchedule, unschedulable, explanations, interrupted: options.shouldStop?.() || false };
         reportProgress('completed', classPool.length, classPool.length, refinedSchedule, unschedulable, 'Генерация завершена. Готовлю триаж оставшихся проблем.');
         return { ...result, score: calculateScheduleScore(data, result, config, index) };
     }
@@ -2056,8 +2097,8 @@ const getTeacherLinkConstraintPenalty = (
     if (link.role === 'undesirable') cost += 450 * penaltyMultiplier;
 
     if (entry.streamId && link.allowStreams === false) return Infinity;
-    if (link.allowedFormOfStudy?.length && !involvedGroups.some(group => link.allowedFormOfStudy!.includes(group.formOfStudy))) return Infinity;
-    if (link.allowedGroupIds?.length && !involvedGroups.some(group => link.allowedGroupIds!.includes(group.id))) return Infinity;
+    if (link.allowedFormOfStudy?.length && !involvedGroups.every(group => link.allowedFormOfStudy!.includes(group.formOfStudy))) return Infinity;
+    if (link.allowedGroupIds?.length && !involvedGroups.every(group => link.allowedGroupIds!.includes(group.id))) return Infinity;
     if (link.excludedGroupIds?.length && involvedGroups.some(group => link.excludedGroupIds!.includes(group.id))) return Infinity;
     if (link.allowedClassroomIds?.length && !link.allowedClassroomIds.includes(classroom.id)) return Infinity;
     if (link.allowedClassroomTypeIds?.length && !link.allowedClassroomTypeIds.includes(classroom.typeId)) return Infinity;
@@ -2164,6 +2205,27 @@ const getWeekSimilarityPenalty = (
 };
 
 // Calculates the "cost" of placing a class in a specific slot.
+const getScoringContext = (data: GenerationData, generated: ScheduleEntry[], index: SchedulerIndex) => {
+    let context = index.scoringContext;
+    const append = (entry: ScheduleEntry) => {
+        context!.all.push(entry);
+        const put = (map: Map<string, ScheduleEntry[]>, key: string) => {
+            const entries = map.get(key); if (entries) entries.push(entry); else map.set(key, [entry]);
+        };
+        put(context!.teacher, entry.teacherId);
+        put(context!.teacherDay, `${entry.teacherId}-${entry.date}`);
+        getEntryGroupIds(entry).forEach(id => put(context!.groupDay, `${id}-${entry.date}`));
+        put(context!.subject, entry.subjectId);
+    };
+    if (!context || context.retained !== data.schedule || context.generated !== generated || context.count > generated.length) {
+        context = { retained: data.schedule, generated, count: 0, all: [], teacher: new Map(), teacherDay: new Map(), groupDay: new Map(), subject: new Map() };
+        index.scoringContext = context;
+        data.schedule.forEach(append);
+    }
+    while (context.count < generated.length) append(generated[context.count++]);
+    return context;
+};
+
 const calculateSlotCost = (
     entry: UnscheduledEntry,
     date: Date,
@@ -2185,8 +2247,21 @@ const calculateSlotCost = (
     const subject = index.subjectsById.get(entry.subjectId);
     const dayName = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
     const dateStr = toYYYYMMDD(date);
-    const allScheduleForScoring = [...data.schedule, ...newSchedule];
+    const scoring = getScoringContext(data, newSchedule, index);
+    const allScheduleForScoring = scoring.all;
     const candidateTimeSlot = activeTimeSlots.find(slot => slot.id === timeSlotId);
+    if (!teacher || !subject || !candidateTimeSlot || dateStr < config.timeFrame.start || dateStr > config.timeFrame.end) return Infinity;
+    if (teacher.availabilityGrid?.[dayName]?.[timeSlotId] === AvailabilityType.Forbidden) return Infinity;
+    if (involvedGroups.some(group => group.availabilityGrid?.[dayName]?.[timeSlotId] === AvailabilityType.Forbidden)) return Infinity;
+    if (classroom.status === 'closed' || classroom.status === 'repair' || classroom.capacity < entry.studentCount) return Infinity;
+    if (classroom.availabilityGrid?.[dayName]?.[timeSlotId] === AvailabilityType.Forbidden) return Infinity;
+    if (classroom.allowedClassTypes?.length && !classroom.allowedClassTypes.includes(entry.classType)) return Infinity;
+    const requiredTypes = entry.classroomTypeIds?.length ? entry.classroomTypeIds : getRequiredClassroomTypes(subject, entry.classType);
+    if (!requiredTypes?.includes(classroom.typeId)) return Infinity;
+    if ((entry.requiredClassroomTagIds || subject.requiredClassroomTagIds || []).some(tag => !classroom.tagIds?.includes(tag))) return Infinity;
+    const teacherLinks = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(entry.subjectId, entry.classType)) || [];
+    const explicitlyAssignedElective = data.electives.some(elective => entry.uid.startsWith(`unsched-elective-${elective.id}-`) && elective.teacherId === entry.teacherId && elective.subjectId === entry.subjectId);
+    if (!explicitlyAssignedElective && !teacherLinks.some(link => link.teacherId === entry.teacherId && teacherLinkMatchesContext(link, involvedGroups, entry.streamId))) return Infinity;
     if (!areGroupsCompatibleWithTimeSlot(candidateTimeSlot, involvedGroups)) {
         return Infinity;
     }
@@ -2194,15 +2269,10 @@ const calculateSlotCost = (
         return Infinity;
     }
 
-    const allBookingsTodayForGroups = allScheduleForScoring.filter(e => {
-        if (e.date !== dateStr) return false;
-        const entryGroupIds = getEntryGroupIds(e);
-        return entryGroupIds.some(gid => involvedGroups.some(ig => ig.id === gid));
-    });
+    const allBookingsTodayForGroups = Array.from(new Set(involvedGroups.flatMap(group => scoring.groupDay.get(`${group.id}-${dateStr}`) || [])));
 
     // Availability Grids
     const teacherAvailability = teacher?.availabilityGrid?.[dayName]?.[timeSlotId];
-    if (teacherAvailability === AvailabilityType.Forbidden) return Infinity;
     if (teacherAvailability === AvailabilityType.Undesirable) cost += 20 * penaltyMultiplier;
     if (teacherAvailability === AvailabilityType.Desirable) cost -= 10 * penaltyMultiplier;
     involvedGroups.forEach(g => {
@@ -2252,9 +2322,9 @@ const calculateSlotCost = (
     }
 
     // Day Load Penalty
-    const teacherBookingsToday = allScheduleForScoring.filter(e => e.teacherId === teacher?.id && e.date === dateStr);
+    const teacherBookingsToday = scoring.teacherDay.get(`${entry.teacherId}-${dateStr}`) || [];
     const teacherClassesOnDay = teacherBookingsToday.length;
-    cost += getTeacherLoadPenalty(entry.teacherId, dateStr, allScheduleForScoring, penaltyMultiplier);
+    cost += ((scoring.teacher.get(entry.teacherId)?.length || 0) * 3 + teacherClassesOnDay * 18) * penaltyMultiplier;
 
     if (settings.enforceStandardRules && teacherClassesOnDay >= 4) {
         cost += (teacherClassesOnDay - 3) * 150 * penaltyMultiplier;
@@ -2262,11 +2332,7 @@ const calculateSlotCost = (
 
     // FIX: Define groupClassesOnDay to calculate class load per group.
     const groupClassesOnDay = involvedGroups.map(group => {
-        return allScheduleForScoring.filter(e => {
-            if (e.date !== dateStr) return false;
-            const entryGroupIds = getEntryGroupIds(e);
-            return entryGroupIds.includes(group.id);
-        }).length;
+        return scoring.groupDay.get(`${group.id}-${dateStr}`)?.length || 0;
     });
 
     groupClassesOnDay.forEach(count => {
@@ -2375,8 +2441,9 @@ const calculateSlotCost = (
         }
     }
 
-    cost += getWeekSimilarityPenalty(entry, date, timeSlotId, allScheduleForScoring, penaltyMultiplier);
-    cost += getLectureSequencePenalty(entry, dateStr, timeSlotId, activeTimeSlots, allScheduleForScoring, penaltyMultiplier, enforceLectureOrder);
+    const subjectSchedule = scoring.subject.get(entry.subjectId) || [];
+    cost += getWeekSimilarityPenalty(entry, date, timeSlotId, subjectSchedule, penaltyMultiplier);
+    cost += getLectureSequencePenalty(entry, dateStr, timeSlotId, activeTimeSlots, subjectSchedule, penaltyMultiplier, enforceLectureOrder);
 
     // Lecture-Practice Order Penalty
     if (enforceLectureOrder) {
@@ -2525,6 +2592,10 @@ export const optimizeScheduleLocally = async (
         );
     }).length;
 
+    if (afterScore.hardViolations > beforeScore.hardViolations || afterScore.total > beforeScore.total) {
+        return { schedule: data.schedule, beforeScore, afterScore: beforeScore, improved: 0, considered: candidates.length };
+    }
+
     const optimizedById = new Map(optimizedCandidates.map(entry => [entry.id, entry]));
     const schedule = data.schedule.map(entry => optimizedById.get(entry.id) || entry);
 
@@ -2617,6 +2688,10 @@ const toUnscheduledForOptimization = (entry: ScheduleEntry, index: SchedulerInde
         teacherCandidates: getTeacherCandidates(entry.subjectId, entry.classType, index, entry.teacherId, involvedGroups, entry.streamId),
         studentCount,
         deliveryMode: entry.deliveryMode,
+        classroomTypeIds: entry.classroomTypeIds,
+        requiredClassroomTagIds: entry.requiredClassroomTagIds,
+        pinnedClassroomId: entry.pinnedClassroomId,
+        preferredTimeSlotIds: entry.preferredTimeSlotIds,
     };
 };
 
@@ -2824,7 +2899,8 @@ const annealAndTabuRefinement = async (
     data: GenerationData,
     config: HeuristicConfig,
     index: SchedulerIndex,
-    workDays: Date[]
+    workDays: Date[],
+    options: SchedulerRunOptions = {}
 ) => {
     if (initialSchedule.length < 2) return initialSchedule;
 
@@ -2843,6 +2919,7 @@ const annealAndTabuRefinement = async (
     let bestScore = currentScore;
 
     for (let iteration = 0; iteration < maxIterations; iteration++) {
+        if (options.shouldStop?.()) break;
         if (iteration > 0 && iteration % SCHEDULER_YIELD_INTERVAL === 0) await yieldToEventLoop();
 
         for (const [key, until] of Array.from(tabu.entries())) {
@@ -2889,7 +2966,8 @@ async function refineSchedule(
     data: GenerationData,
     config: HeuristicConfig,
     initialBookings: Map<string, Set<string>>,
-    index = createSchedulerIndex(data)
+    index = createSchedulerIndex(data),
+    options: SchedulerRunOptions = {}
 ): Promise<ScheduleEntry[]> {
     console.log("Starting schedule refinement phase...");
     let refinedSchedule = [...initialSchedule];
@@ -2919,6 +2997,7 @@ async function refineSchedule(
     }
 
     for (let pass = 0; pass < REFINEMENT_PASSES; pass++) {
+        if (options.shouldStop?.()) break;
         const entriesWithCosts = refinedSchedule.map(entry => {
             const involvedGroups = getInvolvedGroups(entry, index);
             const subGroup = entry.subgroupId ? index.subgroupsById.get(entry.subgroupId) : undefined;
@@ -2966,6 +3045,7 @@ async function refineSchedule(
 
         let refinedCandidateIndex = 0;
         for (const { entry: entryToMove, cost: currentCost } of candidatesToRefine) {
+            if (options.shouldStop?.()) break;
             refinedCandidateIndex++;
             if (refinedCandidateIndex % SCHEDULER_YIELD_INTERVAL === 0) await yieldToEventLoop();
 
@@ -3081,5 +3161,5 @@ async function refineSchedule(
     }
 
     console.log("Refinement phase finished.");
-    return annealAndTabuRefinement(refinedSchedule, data, config, index, workDays);
+    return annealAndTabuRefinement(refinedSchedule, data, config, index, workDays, options);
 }

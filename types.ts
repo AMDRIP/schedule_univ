@@ -37,6 +37,13 @@ export enum ClassType {
   Test = 'Зачёт',
   Exam = 'Экзамен',
   Elective = 'Факультатив',
+  ResearchSeminar = 'Научный семинар',
+  ResearchConsultation = 'Научная консультация',
+  ResearchAttestation = 'Аттестация НИР',
+  CandidateExam = 'Кандидатский экзамен',
+  CourseworkConsultation = 'Консультация по курсовой',
+  CourseworkDefense = 'Защита курсовой',
+  ThesisDefense = 'Защита диссертации / ВКР',
 }
 
 export enum AvailabilityType {
@@ -47,6 +54,10 @@ export enum AvailabilityType {
 }
 
 export enum AttestationType {
+  None = 'Без аттестации',
+  CandidateExam = 'Кандидатский экзамен',
+  ResearchReport = 'Отчёт по НИР',
+  ThesisDefense = 'Защита ВКР / диссертации',
   Exam = 'Экзамен',
   Test = 'Зачёт',
   DifferentiatedTest = 'Диф. зачёт',
@@ -274,6 +285,10 @@ export interface Specialty extends BaseItem {
   educationLevel?: 'bachelor' | 'specialist' | 'master' | 'postgraduate' | 'secondary' | 'additional';
   standardCode?: string;
   description?: string;
+  durationYears?: number;
+  scientificSpecialtyCode?: string;
+  scientificField?: string;
+  programHeadTeacherId?: string;
 }
 
 export interface PlanEntry {
@@ -285,6 +300,31 @@ export interface PlanEntry {
   labHours: number;
   attestation: AttestationType;
   splitForSubgroups?: boolean;
+  researchSeminarHours?: number;
+  researchConsultationHours?: number;
+  independentStudyHours?: number;
+  coursework?: {
+    kind: 'paper' | 'project';
+    consultationHours: number;
+    defenseHours: number;
+  };
+}
+
+export interface AcademicWork extends BaseItem {
+  kind: 'coursework' | 'courseProject' | 'masterThesis' | 'dissertation' | 'research';
+  topic: string;
+  studentName: string;
+  groupId: string;
+  subjectId: string;
+  semester: number;
+  supervisorId: string;
+  reviewerId?: string;
+  status: 'planned' | 'active' | 'review' | 'ready' | 'defended';
+  dueDate?: string;
+  grade?: number;
+  result?: string;
+  notes?: string;
+  milestones: { id: string; title: string; dueDate?: string; completed: boolean }[];
 }
 
 export interface PlanBlock extends BaseItem {
@@ -509,6 +549,7 @@ export interface HeuristicConfig {
   seed?: number | string;
   stochasticity?: number; // 0 = always best candidate, 1 = broad randomized choice among top candidates
   useNative?: boolean;
+  semesterParity?: 'odd' | 'even' | 'all';
 }
 
 export type SchedulingRunPhase = 'idle' | 'preparing' | 'placing' | 'refining' | 'annealing' | 'completed' | 'stopping' | 'cancelled' | 'failed';
@@ -563,6 +604,8 @@ export interface SessionSchedulerConfig {
   generationMode?: 'full' | 'consultations_only' | 'practice_only' | 'full_with_practice';
   includePracticeConsultations?: boolean;
   includePracticeDefenses?: boolean;
+  includeCoursework?: boolean;
+  semesterParity?: 'odd' | 'even' | 'all';
 }
 
 export interface LessonPlan {
@@ -583,6 +626,10 @@ export interface LessonPlan {
 }
 
 export interface ScheduleEntry extends BaseItem {
+  classroomTypeIds?: string[];
+  requiredClassroomTagIds?: string[];
+  pinnedClassroomId?: string;
+  preferredTimeSlotIds?: string[];
   day: string;
   timeSlotId: string;
   groupId?: string; // Is now optional

@@ -21,6 +21,22 @@ export const runIterativeScheduler = async (
     onProgress: (progress: { current: number, total: number }) => void,
     options: SchedulerRunOptions = {}
 ): Promise<SchedulerResult> => {
+    if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
+        return new Promise<SchedulerResult>((resolve, reject) => {
+            const worker = new Worker(new URL('dist/schedulerBrowserWorker.js', window.location.href).href);
+            const stopTimer = setInterval(() => { if (options.shouldStop?.()) worker.postMessage({ type: 'stop' }); }, 100);
+            const cleanup = () => { clearInterval(stopTimer); worker.terminate(); };
+            worker.onmessage = event => {
+                const message = event.data;
+                if (message.type === 'iteration') onProgress(message.progress);
+                if (message.type === 'progress') options.onProgress?.(message.progress);
+                if (message.type === 'result') { cleanup(); resolve(message.result); }
+                if (message.type === 'error') { cleanup(); reject(new Error(message.error)); }
+            };
+            worker.onerror = event => { cleanup(); reject(new Error(event.message || 'Не удалось запустить фоновый планировщик.')); };
+            worker.postMessage({ type: 'start', data, config });
+        });
+    }
     if (!options.onProgress && !options.shouldStop && typeof window !== 'undefined' && window.electronAPI?.runParallelScheduler && config.iterations > 1) {
         try {
             onProgress({ current: 0, total: config.iterations });
@@ -58,7 +74,7 @@ export const runIterativeScheduler = async (
             bestResult = { ...currentResult, score: currentScore };
             console.log(`New best result found at iteration ${i}: score=${currentScore.total.toFixed(2)}, unscheduled=${currentScore.unscheduled}, hard=${currentScore.hardViolations}.`);
         }
-        if (currentResult.interrupted) return { ...currentResult, score: currentScore };
+        if (currentResult.interrupted) return { ...(bestResult || currentResult), interrupted: true };
     }
 
     // Fallback in case no iterations produced a valid result (highly unlikely)

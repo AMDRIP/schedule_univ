@@ -191,7 +191,7 @@ const createPlanEntry = (subjectId = ''): PlanEntry => ({
 const updateItemInCollection = <T extends { id: string }>(
     setter: React.Dispatch<React.SetStateAction<T[]>>,
     id: string,
-    patch: Partial<T>,
+    patch: Partial<T> & Record<string, unknown>,
 ) => {
     setter(prev => prev.map(item => (item.id === id ? { ...item, ...patch } : item)));
 };
@@ -498,7 +498,7 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
                     )
                     && cleanSubjects.every(subject => {
                         const requirements = subject.classroomTypeRequirements || {};
-                        return Object.values(requirements).every(ids => (ids || []).every(id => classroomTypeIds.has(id)));
+                        return (Object.values(requirements) as string[][]).every(ids => (ids || []).every(id => classroomTypeIds.has(id)));
                     })
                     && cleanTeachers.every(teacher => !teacher.pinnedClassroomId || classroomIds.has(teacher.pinnedClassroomId))
                     && cleanGroups.every(group => !group.pinnedClassroomId || classroomIds.has(group.pinnedClassroomId));
@@ -573,7 +573,7 @@ const NewProjectWizard: React.FC<NewProjectWizardProps> = ({ isOpen, onClose }) 
             const requirements = Object.fromEntries(
                 Object.entries(subject.classroomTypeRequirements || {}).map(([key, ids]) => [
                     key,
-                    (ids || []).filter(id => validClassroomTypeIds.has(id)),
+                    ((ids || []) as string[]).filter(id => validClassroomTypeIds.has(id)),
                 ]).filter(([, ids]) => (ids as string[]).length > 0),
             ) as Subject['classroomTypeRequirements'];
 

@@ -21,6 +21,8 @@ const SessionSchedulerModal: React.FC<SessionSchedulerModalProps> = ({ isOpen, o
     const [generationMode, setGenerationMode] = useState<NonNullable<SessionSchedulerConfig['generationMode']>>('full');
     const [includePracticeConsultations, setIncludePracticeConsultations] = useState(true);
     const [includePracticeDefenses, setIncludePracticeDefenses] = useState(true);
+    const [includeCoursework, setIncludeCoursework] = useState(true);
+    const [semesterParity, setSemesterParity] = useState<'odd' | 'even' | 'all'>(new Date(settings.semesterStart + 'T00:00:00').getMonth() >= 6 ? 'odd' : 'even');
 
     useEffect(() => {
         setStartDate(settings.sessionStart);
@@ -45,6 +47,7 @@ const SessionSchedulerModal: React.FC<SessionSchedulerModalProps> = ({ isOpen, o
             generationMode,
             includePracticeConsultations,
             includePracticeDefenses,
+            includeCoursework, semesterParity,
         };
         onStart(config);
     };
@@ -61,6 +64,8 @@ const SessionSchedulerModal: React.FC<SessionSchedulerModalProps> = ({ isOpen, o
                     <h2 className="text-xl font-bold text-gray-800">Планировщик сессии</h2>
                 </div>
                 <div className="space-y-4">
+                    <label className="block text-sm">Учебный семестр<select value={semesterParity} onChange={event => setSemesterParity(event.target.value as 'odd' | 'even' | 'all')} className={defaultInputClass}><option value="odd">Нечётный семестр курса</option><option value="even">Чётный семестр курса</option><option value="all">Оба семестра курса</option></select></label>
+                    <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={includeCoursework} onChange={event => setIncludeCoursework(event.target.checked)} />Включить защиты курсовых из учебных планов</label>
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Временные рамки сессии</label>
                         <div className="flex gap-2 mt-1">
