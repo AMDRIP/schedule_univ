@@ -1,6 +1,7 @@
 import { AttestationType, ClassType, EducationalPlan, Group, ScheduleEntry, Stream, Subgroup } from '../types';
 import { getPlanForGroup, getPlanContactActivities, matchesSemesterParity } from '../utils/educationUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
+import { isIndividualEntry } from '../utils/participants';
 
 export interface PlanBalanceRow {
     groupId: string; subjectId: string; classType: ClassType; subgroupId?: string;
@@ -37,7 +38,7 @@ export const calculatePlanBalance = (data: {
         }
     }
     for (const entry of data.schedule) {
-        if (!entry.date || entry.date < period.start || entry.date > period.end || entry.academicWorkId || entry.classType === ClassType.Elective) continue;
+        if (!entry.date || entry.date < period.start || entry.date > period.end || isIndividualEntry(entry) || entry.classType === ClassType.Elective) continue;
         const groupIds = entry.groupIds?.length ? entry.groupIds : entry.groupId ? [entry.groupId] : data.streams.find(stream => stream.id === entry.streamId)?.groupIds || [];
         for (const groupId of new Set(groupIds)) getRow(groupId, entry.subjectId, entry.classType, entry.subgroupId).scheduledHours += 2;
     }

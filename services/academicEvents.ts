@@ -2,6 +2,7 @@ import { ScheduleEntry, ClassType, DeliveryMode } from '../types';
 import { createScheduleValidator, GenerationData, getActiveTimeSlotsForDate } from './heuristicScheduler';
 import { toYYYYMMDD } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
+import { studentIdentity } from '../utils/participants';
 
 export interface AcademicEventRequest {
     workId: string;
@@ -16,7 +17,10 @@ export const planAcademicEvent = async (data: GenerationData, request: AcademicE
     if (!request.start || !request.end || request.end < request.start || request.start < data.settings.semesterStart || request.end > data.settings.semesterEnd) return { issues: ['Период должен находиться в пределах семестра.'] };
     const committee = [...new Set([...(request.kind !== 'consultation' && work.reviewerId ? [work.reviewerId] : []), ...request.committeeTeacherIds])].filter(id => id !== work.supervisorId);
     if (request.kind !== 'consultation' && !committee.length) return { issues: ['Для предзащиты и защиты укажите хотя бы одного участника комиссии или рецензента.'] };
-    const validate = createScheduleValidator(data);
+    const studentId = work.studentId || studentIdentity(work.studentName, work.groupId);
+    if (work.studentId && !data.students?.some(student => student.id === work.studentId && student.groupId === work.groupId)) return { issues: ['Обучающийся научной работы не найден в реестре или относится к другой группе.'] };
+    const students = data.students?.some(student => student.id === studentId) ? data.students : [...(data.students || []), { id: studentId, name: work.studentName, groupId: work.groupId }];
+    const validate = createScheduleValidator({ ...data, students });
     const issues = new Map<string, number>();
     const start = new Date(request.start + 'T00:00:00');
     if (!Number.isFinite(start.getTime()) || toYYYYMMDD(start) !== request.start) return { issues: ['Некорректная дата.'] };
@@ -28,7 +32,7 @@ export const planAcademicEvent = async (data: GenerationData, request: AcademicE
             if (++probes % 32 === 0) await new Promise(resolve => setTimeout(resolve, 0));
             const entry: ScheduleEntry = {
                 id: `academic-${work.id}-${Date.now()}-${probes}`, academicWorkId: work.id, academicEventKind: request.kind,
-                additionalTeacherIds: committee, groupId: work.groupId, subjectId: work.subjectId, teacherId: work.supervisorId,
+                additionalTeacherIds: committee, studentIds: [studentId], groupId: work.groupId, subjectId: work.subjectId, teacherId: work.supervisorId,
                 classType: request.kind === 'consultation' ? ClassType.ResearchConsultation : work.kind === 'coursework' || work.kind === 'courseProject' ? ClassType.CourseworkDefense : ClassType.ThesisDefense,
                 date: dateStr, day: DAYS_OF_WEEK[(date.getDay() + 6) % 7], timeSlotId: slot.id, classroomId: room.id, weekType: 'every', deliveryMode: DeliveryMode.Offline,
             };

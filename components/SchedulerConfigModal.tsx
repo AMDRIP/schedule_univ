@@ -17,7 +17,8 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
     const [startDate, setStartDate] = useState(settings.semesterStart);
     const [endDate, setEndDate] = useState(settings.semesterEnd);
     const [clearExisting, setClearExisting] = useState(true);
-    const [iterations, setIterations] = useState(1);
+    const [iterations, setIterations] = useState(4);
+    const [parallelWorkers, setParallelWorkers] = useState(0);
     const [enforceLectureOrder, setEnforceLectureOrder] = useState(true);
     const [distributeEvenly, setDistributeEvenly] = useState(true);
     const [semesterParity, setSemesterParity] = useState<'odd' | 'even' | 'all'>(new Date(settings.semesterStart + 'T00:00:00').getMonth() >= 6 ? 'odd' : 'even');
@@ -43,6 +44,7 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
             timeFrame: { start: startDate, end: endDate },
             clearExisting,
             iterations,
+            parallelWorkers,
             enforceLectureOrder,
             distributeEvenly,
             semesterParity,
@@ -65,6 +67,7 @@ const SchedulerConfigModal: React.FC<SchedulerConfigModalProps> = ({ isOpen, onC
                     <h2 className="text-xl font-bold text-gray-800">Настройки эвристического планировщика</h2>
                 </div>
                 <div className="space-y-4">
+                    <label className="block text-sm font-medium text-gray-700">Параллельные итерации<select aria-label="Параллельные итерации" value={parallelWorkers} onChange={event => setParallelWorkers(Number(event.target.value))} className={defaultInputClass}><option value={0}>Автоматически</option>{[1, 2, 4, 6, 8].map(count => <option key={count} value={count}>{count === 1 ? 'Один поток' : `${count} потока`}</option>)}</select></label>
                     <label className="block text-sm font-medium text-gray-700">Учебный семестр<select value={semesterParity} onChange={event => setSemesterParity(event.target.value as 'odd' | 'even' | 'all')} className={defaultInputClass}><option value="odd">Осенний: нечётные семестры курса</option><option value="even">Весенний: чётные семестры курса</option><option value="all">Оба семестра курса</option></select></label>
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Строгость соблюдения правил ({strictness})</label>

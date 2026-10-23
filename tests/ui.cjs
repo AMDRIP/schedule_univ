@@ -39,6 +39,8 @@ async function run() {
         await page.waitForFunction(() => window.__store.academicWorks.length === 1);
         const snapshot = await page.evaluate(() => window.__store.getFullState());
         assert.equal(snapshot.academicWorks[0].milestones.length, 5);
+        assert.equal(snapshot.students.length, 1);
+        assert.equal(snapshot.academicWorks[0].studentId, snapshot.students[0].id);
         await page.evaluate(data => window.__store.loadFullState(data), snapshot);
         await page.waitForFunction(() => window.__store.academicWorks[0]?.studentName === 'Иван Тестов');
         await page.screenshot({ path: '.test-output/work-register-desktop.png', fullPage: true });
@@ -92,14 +94,50 @@ async function run() {
         await page.evaluate(() => window.__store.dismissRepairPreview());
         const rejected = await page.evaluate(() => { try { window.__store.addScheduleEntry({ ...window.__store.schedule[0], date: '2026-10-20', day: 'Вторник', classroomId: 'missing' }); return false; } catch { return true; } });
         assert.equal(rejected, true);
+        await page.getByRole('link', { name: 'Обучающиеся', exact: true }).click();
+        await page.getByRole('button', { name: 'Обучающийся', exact: true }).click();
+        const studentForm = page.getByRole('form', { name: 'Карточка обучающегося' });
+        await studentForm.getByLabel('ФИО', { exact: true }).fill('Анна Тестова');
+        await studentForm.getByRole('button', { name: 'Сохранить обучающегося', exact: true }).click();
+        await page.waitForFunction(() => window.__store.students.some(student => student.name === 'Анна Тестова'));
+        const substitutionData = makeFixture(); substitutionData.schedule = [lesson];
+        substitutionData.teacherSubjectLinks.push({ ...substitutionData.teacherSubjectLinks[0], id: 'reserve-binding', teacherId: 'reserve' });
+        await page.evaluate(data => window.__store.loadFullState(data), substitutionData);
+        await page.waitForFunction(() => window.__store.schedule.length === 1 && !window.__store.resourceAbsences.length);
+        await page.getByRole('link', { name: 'Оперативные замены', exact: true }).click();
+        const substitutionForm = page.getByRole('form', { name: 'Подбор оперативных замен' });
+        await substitutionForm.getByLabel('Причина', { exact: true }).fill('Больничный для автотеста');
+        await substitutionForm.getByRole('button', { name: 'Подобрать замены', exact: true }).click();
+        await page.getByText('Предпросмотр замен', { exact: true }).waitFor();
+        await page.getByRole('button', { name: 'Применить замены', exact: true }).click();
+        await page.waitForFunction(() => window.__store.substitutionLog.length === 1);
+        assert.equal(await page.evaluate(() => window.__store.resourceAbsences[0].reason), 'Больничный для автотеста');
+        const withLog = await page.evaluate(() => window.__store.getFullState());
+        await page.evaluate(data => window.__store.loadFullState(data), withLog);
+        await page.waitForFunction(() => window.__store.substitutionLog[0]?.absence?.reason === 'Больничный для автотеста');
         await page.evaluate(data => window.__store.loadFullState(data), makeFixture());
         await page.waitForFunction(() => window.__store.schedule.length === 0);
-        const result = await page.evaluate(async configuration => window.__store.runScheduler('heuristic', configuration), config);
+        await page.getByRole('link', { name: 'Статистика', exact: true }).click();
+        await page.getByRole('button', { name: 'Что, если?', exact: true }).click();
+        await page.getByLabel('Итерации пробного расчёта', { exact: true }).fill('2');
+        await page.getByRole('button', { name: 'Запустить пробный расчёт', exact: true }).click();
+        await page.getByTestId('what-if-result').waitFor();
+        assert.equal(await page.evaluate(() => window.__store.schedule.length), 0);
+        await page.evaluate(() => {
+            const OriginalWorker = window.Worker; window.__poolStats = { active: 0, peak: 0, created: 0 };
+            window.Worker = class extends OriginalWorker {
+                constructor(...args) { super(...args); this.finished = false; window.__poolStats.active++; window.__poolStats.created++; window.__poolStats.peak = Math.max(window.__poolStats.peak, window.__poolStats.active); }
+                terminate() { if (!this.finished) { this.finished = true; window.__poolStats.active--; } return super.terminate(); }
+            };
+        });
+        const result = await page.evaluate(async configuration => window.__store.runScheduler('heuristic', configuration), { ...config, iterations: 4, parallelWorkers: 2 });
         assert.equal(result.scheduled, 5); assert.equal(result.unscheduled, 0);
+        const pool = await page.evaluate(() => window.__poolStats);
+        assert.equal(pool.peak, 2); assert.equal(pool.active, 0);
         await page.getByText('Генерация завершена.', { exact: true }).waitFor();
         await page.screenshot({ path: '.test-output/generation-desktop.png', fullPage: true });
         assert.deepEqual(errors, []);
-        console.log('Electron UI: version, coursework CRUD, milestones, state round-trip, individual defense, plan version creation, balance view, repair preview/apply/undo/stale rejection, strict manual validation, worker generation passed.');
+        console.log('Electron UI: version, coursework/student CRUD, migration, individual defense, plan versions, balance, ranked repair/apply/undo/stale rejection, substitutions and persisted journal, isolated what-if trial, 2 concurrent workers for 4 iterations, automatic worker cleanup passed.');
     } finally {
         if (app) await app.close();
         await new Promise(resolve => server.close(resolve));

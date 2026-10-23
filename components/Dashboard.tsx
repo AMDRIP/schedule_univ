@@ -23,6 +23,8 @@ import BellScheduleManager from './BellScheduleManager';
 import AnalyticsView from './AnalyticsView';
 import AcademicWorkManager from './AcademicWorkManager';
 import RepairPreviewModal from './RepairPreviewModal';
+import StudentManager from './StudentManager';
+import SubstitutionsView from './SubstitutionsView';
 
 
 interface DashboardProps {
@@ -58,6 +60,8 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
 
   const renderContent = () => {
     switch (activeView) {
+      case 'Обучающиеся': return <StudentManager />;
+      case 'Оперативные замены': return <SubstitutionsView />;
       case 'Работы и исследования':
         return <AcademicWorkManager />;
       case 'Планы зданий':

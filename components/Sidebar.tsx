@@ -45,9 +45,11 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
           tooltip: !isGeminiAvailable ? 'Функция недоступна. Убедитесь, что приложение запущено через Electron и API-ключ Gemini настроен.' : 'Автоматическое составление расписания с помощью ИИ'
         },
         { name: 'Планы занятий', icon: <DocumentTextIcon /> },
+        { name: 'Оперативные замены', icon: <CalendarIcon /> },
         { type: 'divider' },
         { name: 'Учебные планы', icon: <BookOpenIcon /> },
         { name: 'Работы и исследования', icon: <FlaskIcon /> },
+        { name: 'Обучающиеся', icon: <IdentificationIcon /> },
         { name: 'Дисциплины', icon: <CollectionIcon /> },
         { name: 'Факультативы', icon: <FlaskIcon /> },
         { name: 'Шаблоны расписания', icon: <BookmarkIcon /> },
@@ -71,7 +73,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
     if (currentRole === Role.Methodist) {
       return [
         ...baseItems,
+        { name: 'Оперативные замены', icon: <CalendarIcon /> },
         { name: 'Работы и исследования', icon: <FlaskIcon /> },
+        { name: 'Обучающиеся', icon: <IdentificationIcon /> },
         {
           name: 'Составление расписания',
           icon: <SparklesIcon />,

@@ -2,6 +2,7 @@ import {
     ScheduleEntry, UnscheduledEntry, HeuristicConfig 
 } from '../types';
 import { calculateScheduleScore, generateScheduleWithHeuristics, SchedulerResult, SchedulerRunOptions } from './heuristicScheduler';
+import { runWorkerPool } from './parallelScheduler';
 
 // The full GenerationData type is complex, so we'll just accept 'any' for simplicity in this new file
 // as it's just passing it through. A better approach would be to define GenerationData in types.ts.
@@ -21,34 +22,7 @@ export const runIterativeScheduler = async (
     onProgress: (progress: { current: number, total: number }) => void,
     options: SchedulerRunOptions = {}
 ): Promise<SchedulerResult> => {
-    if (typeof window !== 'undefined' && typeof Worker !== 'undefined') {
-        return new Promise<SchedulerResult>((resolve, reject) => {
-            const worker = new Worker(new URL('dist/schedulerBrowserWorker.js', window.location.href).href);
-            const stopTimer = setInterval(() => { if (options.shouldStop?.()) worker.postMessage({ type: 'stop' }); }, 100);
-            const cleanup = () => { clearInterval(stopTimer); worker.terminate(); };
-            worker.onmessage = event => {
-                const message = event.data;
-                if (message.type === 'iteration') onProgress(message.progress);
-                if (message.type === 'progress') options.onProgress?.(message.progress);
-                if (message.type === 'result') { cleanup(); resolve(message.result); }
-                if (message.type === 'error') { cleanup(); reject(new Error(message.error)); }
-            };
-            worker.onerror = event => { cleanup(); reject(new Error(event.message || 'Не удалось запустить фоновый планировщик.')); };
-            worker.postMessage({ type: 'start', data, config });
-        });
-    }
-    if (!options.onProgress && !options.shouldStop && typeof window !== 'undefined' && window.electronAPI?.runParallelScheduler && config.iterations > 1) {
-        try {
-            onProgress({ current: 0, total: config.iterations });
-            const parallelResult = await window.electronAPI.runParallelScheduler(data, config);
-            if (parallelResult) {
-                onProgress({ current: config.iterations, total: config.iterations });
-                return parallelResult as SchedulerResult;
-            }
-        } catch (error) {
-            console.warn('Parallel scheduler failed, falling back to sequential mode:', error);
-        }
-    }
+    if (typeof window !== 'undefined' && typeof Worker !== 'undefined') return runWorkerPool(data, config, onProgress, options);
     
     let bestResult: SchedulerResult | null = null;
     let lowestScore = Infinity;

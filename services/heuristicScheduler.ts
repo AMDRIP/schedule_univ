@@ -2,15 +2,18 @@ import {
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, BellScheduleProfile,
     SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS,
     Specialty, EducationalPlan, UnscheduledEntry, AvailabilityType, WeekType, DeliveryMode, ClassroomType, Subgroup, Elective, HeuristicConfig,
-    RuleSeverity, RuleAction, RuleCondition, ProductionCalendarEventType, SchedulingExplanation, SchedulingBottleneck, SchedulingProgressPoint, AcademicWork
+    RuleSeverity, RuleAction, RuleCondition, ProductionCalendarEventType, SchedulingExplanation, SchedulingBottleneck, SchedulingProgressPoint, AcademicWork, Student, ResourceAbsence
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { getWeekNumber, getWeekType, toYYYYMMDD } from '../utils/dateUtils';
 import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
 import { getPlanContactActivities, getPlanContactHours, matchesSemesterParity, getRequiredClassroomTypes, getPlanForGroup as resolvePlanForGroup } from '../utils/educationUtils';
+import { bookedResourceKeys, groupsShareParticipants, isIndividualEntry, studentIdsOf, resolveParticipantEntry, studentIdentity } from '../utils/participants';
 
 export interface GenerationData {
+    students?: Student[];
+    resourceAbsences?: ResourceAbsence[];
     academicWorks?: AcademicWork[];
     teachers: Teacher[];
     groups: Group[];
@@ -208,7 +211,7 @@ const SCHEDULER_YIELD_INTERVAL = 20;
 const MAX_PRIMARY_CLASSROOM_CANDIDATES = 24;
 const MAX_PRIMARY_WORK_DAYS = 10;
 const GOOD_ENOUGH_SLOT_COST = 0;
-const DOMAIN_CACHE_VERSION = 'domain-cache-v5';
+const DOMAIN_CACHE_VERSION = 'domain-cache-v6';
 const DOMAIN_PRECOMPUTE_BATCH_SIZE = 24;
 const TABU_TENURE = 24;
 
@@ -268,11 +271,7 @@ const createFastResourceIndex = (schedule: ScheduleEntry[]): FastResourceIndex =
         if (!entry.date || !entry.timeSlotId) return;
         const bookingKey = `${entry.date}-${entry.timeSlotId}`;
         const bit = 1n << BigInt(getSlotIndex(bookingKey));
-        const resourceKeys = [
-            `teacher-${entry.teacherId}`,
-            `classroom-${entry.classroomId}`,
-            ...getEntryGroupIds(entry).map(groupId => `group-${groupId}`),
-        ].filter(Boolean);
+        const resourceKeys = bookedResourceKeys(entry);
         resourceKeys.forEach(resourceKey => {
             masks.set(resourceKey, (masks.get(resourceKey) || 0n) | bit);
         });
@@ -392,10 +391,7 @@ const createResourceBookings = (
     schedule.forEach(entry => {
         if (!entry.date) return;
         const bookingKey = `${entry.date}-${entry.timeSlotId}`;
-        addBooking(resourceBookings, `teacher-${entry.teacherId}`, bookingKey);
-        entry.additionalTeacherIds?.forEach(id => addBooking(resourceBookings, `teacher-${id}`, bookingKey));
-        getEntryGroupIds(entry).forEach(gid => addBooking(resourceBookings, `group-${gid}`, bookingKey));
-        addBooking(resourceBookings, `classroom-${entry.classroomId}`, bookingKey);
+        bookedResourceKeys(entry).forEach(key => addBooking(resourceBookings, key, bookingKey));
     });
 
     return resourceBookings;
@@ -434,18 +430,20 @@ const hasResourceBookingConflict = (
     const bookingKey = `${dateStr}-${timeSlotId}`;
     if (bookings.get(`teacher-${entry.teacherId}`)?.has(bookingKey)) return true;
     if (bookings.get(`classroom-${classroomId}`)?.has(bookingKey)) return true;
-    return groupIds.some(groupId => bookings.get(`group-${groupId}`)?.has(bookingKey));
+    return groupIds.some(groupId => bookings.get(`group-${groupId}`)?.has(bookingKey) || bookings.get(`individual-group-${groupId}`)?.has(bookingKey));
 };
 
-const getRetainedExistingSchedule = (schedule: ScheduleEntry[], config: HeuristicConfig) => {
+export const getRetainedExistingSchedule = (schedule: ScheduleEntry[], config: HeuristicConfig) => {
     if (!config.clearExisting) return schedule;
     const startDate = new Date(config.timeFrame.start + 'T00:00:00');
     const endDate = new Date(config.timeFrame.end + 'T00:00:00');
 
     return schedule.filter(entry => {
+        if (entry.locked || isIndividualEntry(entry)) return true;
         if (!entry.date) return true;
         const entryDate = new Date(entry.date + 'T00:00:00');
         if (entryDate < startDate || entryDate > endDate) return true;
+        if (config.targetGroupIds?.length) return !getEntryGroupIds(entry).some(id => config.targetGroupIds!.includes(id));
         if (!config.target) return false;
         if (config.target.type === 'group') {
             if (entry.groupId === config.target.id) return false;
@@ -460,7 +458,7 @@ const getRetainedExistingSchedule = (schedule: ScheduleEntry[], config: Heuristi
 export const expandScheduleOccurrences = (data: GenerationData, schedule: ScheduleEntry[], period: { start: string; end: string }): ScheduleEntry[] => {
     const resolve = (entry: ScheduleEntry) => !entry.groupId && !entry.groupIds?.length && entry.streamId ? { ...entry, groupIds: data.streams.find(stream => stream.id === entry.streamId)?.groupIds || [] } : entry;
     return schedule.flatMap(original => {
-        const entry = resolve(original);
+        const entry = resolveParticipantEntry(resolve(original), data.academicWorks);
         if (entry.date) return [entry];
         const occurrences: ScheduleEntry[] = [];
         for (const date = new Date(period.start + 'T00:00:00'); toYYYYMMDD(date) <= period.end; date.setDate(date.getDate() + 1)) {
@@ -473,6 +471,7 @@ export const expandScheduleOccurrences = (data: GenerationData, schedule: Schedu
 };
 
 const isEntryInOptimizationScope = (entry: ScheduleEntry, config: HeuristicConfig) => {
+    if (entry.locked || isIndividualEntry(entry)) return false;
     if (!entry.date) return false;
     const entryDate = new Date(entry.date + 'T00:00:00');
     const startDate = new Date(config.timeFrame.start + 'T00:00:00');
@@ -841,6 +840,7 @@ const getEntrySignature = (
         teacherFacts,
         groupFacts,
         suitableClassroomIds,
+        resourceAbsences: (data.resourceAbsences || []).filter(absence => absence.kind === 'teacher' ? teacherCandidates.includes(absence.resourceId) : suitableClassroomIds.some(facts => facts[0] === absence.resourceId)),
         dateFacts,
         activeRules,
         timeFrame: config.timeFrame,
@@ -888,6 +888,7 @@ const computePlacementDomain = (
     let skippedByShift = 0;
     let skippedByGroupAvailability = 0;
     let skippedByTeacherAvailability = 0;
+    let skippedByRoomAvailability = 0;
 
     for (const date of workDays) {
         const dateStr = toYYYYMMDD(date);
@@ -897,12 +898,13 @@ const computePlacementDomain = (
         skippedByShift += Math.max(0, activeTimeSlots.length - compatibleTimeSlots.length);
 
         for (const timeSlot of compatibleTimeSlots) {
+            if (!classrooms.some(room => room.availabilityGrid?.[dayName]?.[timeSlot.id] !== AvailabilityType.Forbidden && !(data.resourceAbsences || []).some(absence => absence.kind === 'classroom' && absence.resourceId === room.id && dateStr >= absence.start && dateStr <= absence.end))) { skippedByRoomAvailability++; continue; }
             if (involvedGroups.some(group => group.availabilityGrid?.[dayName]?.[timeSlot.id] === AvailabilityType.Forbidden)) {
                 skippedByGroupAvailability++;
                 continue;
             }
             const hasFeasibleTeacher = teacherIds.some(teacherId =>
-                index.teachersById.get(teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] !== AvailabilityType.Forbidden
+                index.teachersById.get(teacherId)?.availabilityGrid?.[dayName]?.[timeSlot.id] !== AvailabilityType.Forbidden && !(data.resourceAbsences || []).some(absence => absence.kind === 'teacher' && absence.resourceId === teacherId && dateStr >= absence.start && dateStr <= absence.end)
             );
             if (!hasFeasibleTeacher) {
                 skippedByTeacherAvailability++;
@@ -913,6 +915,8 @@ const computePlacementDomain = (
     }
 
     if (candidates.length === 0) {
+        if (skippedByRoomAvailability) diagnostics.push(`Нет доступной аудитории в подходящие слоты: ${skippedByRoomAvailability}.`);
+        for (const absence of data.resourceAbsences || []) if (absence.kind === 'teacher' ? teacherIds.includes(absence.resourceId) : classrooms.some(room => room.id === absence.resourceId)) diagnostics.push(`Ресурс недоступен с ${absence.start} по ${absence.end}: ${absence.reason}.`);
         if (skippedByShift > 0) diagnostics.push(`All candidate slots were rejected by group shift compatibility (${skippedByShift}).`);
         if (skippedByGroupAvailability > 0) diagnostics.push(`Group availability forbids candidate slots (${skippedByGroupAvailability}).`);
         if (skippedByTeacherAvailability > 0) diagnostics.push(`Teacher availability forbids candidate slots (${skippedByTeacherAvailability}).`);
@@ -1173,7 +1177,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         if (config.useNative) nativeService = require('./nativeScheduler');
     } catch (e) { }
 
-    if (config.useNative && data.schedulingRules.length === 0 && nativeService && nativeService.isNativeSchedulerAvailable() && !config.target) { // Native only supports full generation for now
+    if (config.useNative && data.schedulingRules.length === 0 && !data.resourceAbsences?.length && !data.schedule.some(isIndividualEntry) && !config.targetGroupIds?.length && nativeService && nativeService.isNativeSchedulerAvailable() && !config.target) { // Native only supports full generation for now
         console.log("Using Native C++ Scheduler...");
         try {
             const classPool = generateClassPool(data, index);
@@ -1246,8 +1250,14 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         const semester = entry.uid.match(/-sem(\d+)-/)?.[1];
         return !semester || matchesSemesterParity(Number(semester), config.semesterParity || 'all');
     });
-    const existingUids = new Set(existingSchedule.map(e => e.unscheduledUid));
-    classPool = classPool.filter(e => !existingUids.has(e.uid)); // Don't try to schedule what's already there
+    if (config.targetGroupIds?.length) classPool = classPool.filter(entry => getEntryGroupIds(entry).some(id => config.targetGroupIds!.includes(id)));
+    const existingDemand = existingSchedule.filter(entry => !isIndividualEntry(entry));
+    classPool = classPool.filter(entry => {
+        let match = existingDemand.findIndex(placed => placed.unscheduledUid === entry.uid);
+        if (match < 0) match = existingDemand.findIndex(placed => entriesBelongToSameSeries(entry, placed));
+        if (match < 0) return true;
+        existingDemand.splice(match, 1); return false;
+    });
 
     if (target) {
         classPool = classPool.filter(entry => {
@@ -1437,7 +1447,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                     if (!domainSlotKeys.has(bookingKey)) continue;
                     stats.checkedSlots++;
 
-                    if (involvedGroups.some(g => fastResourceHas(fastResourceIndex, `group-${g.id}`, bookingKey))) {
+                    if (involvedGroups.some(g => fastResourceHas(fastResourceIndex, `group-${g.id}`, bookingKey) || fastResourceHas(fastResourceIndex, `individual-group-${g.id}`, bookingKey))) {
                         stats.group++;
                         conflicts.push(`Группа или поток уже заняты: ${dateStr}, ${timeSlot.time}.`);
                         continue;
@@ -1451,6 +1461,8 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                     }
 
                     for (const teacherId of teacherCandidates) {
+                        const teacherAbsence = data.resourceAbsences?.find(absence => absence.kind === 'teacher' && absence.resourceId === teacherId && dateStr >= absence.start && dateStr <= absence.end);
+                        if (teacherAbsence) { stats.teacher++; conflicts.push(`Преподаватель недоступен: ${teacherAbsence.reason}, ${dateStr}.`); continue; }
                         if (fastResourceHas(fastResourceIndex, `teacher-${teacherId}`, bookingKey)) {
                             stats.teacher++;
                             conflicts.push(`Преподаватель занят: ${dateStr}, ${timeSlot.time}.`);
@@ -1465,6 +1477,8 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                         const candidateEntry = { ...entryToPlace, teacherId };
 
                         for (const classroom of classroomsToScan) {
+                            const roomAbsence = data.resourceAbsences?.find(absence => absence.kind === 'classroom' && absence.resourceId === classroom.id && dateStr >= absence.start && dateStr <= absence.end);
+                            if (roomAbsence) { stats.classroom++; conflicts.push(`Аудитория ${classroom.number} недоступна: ${roomAbsence.reason}, ${dateStr}.`); continue; }
                             if (!domainClassroomIds.has(classroom.id)) continue;
                             stats.checkedClassrooms++;
                             if (fastResourceHas(fastResourceIndex, `classroom-${classroom.id}`, bookingKey)) {
@@ -2274,6 +2288,14 @@ const getPlacementIssues = (
     if (data.settings.respectProductionCalendar && index.productionByDate.get(dateStr)?.isWorkDay === false) issues.push('Нерабочий день производственного календаря.');
     if (!involvedGroups.length || involvedGroups.length !== getEntryGroupIds(entry).length) issues.push('Не найдены все группы занятия.');
     const participants = [...new Set([entry.teacherId, ...(dated.additionalTeacherIds || [])])];
+    for (const absence of data.resourceAbsences || []) if (dateStr >= absence.start && dateStr <= absence.end && (absence.kind === 'teacher' ? participants.includes(absence.resourceId) : classroom.id === absence.resourceId)) issues.push(`Ресурс недоступен: ${absence.reason}.`);
+    for (const id of dated.studentIds || []) {
+        const legacyWork = data.academicWorks?.find(work => !work.studentId && studentIdentity(work.studentName, work.groupId) === id);
+        const student = data.students?.find(student => student.id === id) || (legacyWork ? { id, name: legacyWork.studentName, groupId: legacyWork.groupId, availabilityGrid: undefined } : undefined);
+        if (!student || !involvedGroups.some(group => group.id === student.groupId)) issues.push('Обучающийся не найден или не относится к группе события.');
+        if (student?.availabilityGrid?.[day]?.[timeSlotId] === AvailabilityType.Forbidden) issues.push(`Запрещённое время обучающегося: ${student.name}.`);
+        if (bookings.get(`student-${id}`)?.has(`${dateStr}-${timeSlotId}`)) issues.push(`Обучающийся занят: ${student?.name || id}.`);
+    }
     for (const id of participants) {
         const person = index.teachersById.get(id);
         if (!person) issues.push('Участник комиссии не найден.');
@@ -2291,6 +2313,7 @@ const getPlacementIssues = (
     if ((entry.requiredClassroomTagIds || subject?.requiredClassroomTagIds || []).some(tag => !classroom.tagIds?.includes(tag))) issues.push('Не хватает оборудования аудитории.');
     if (bookings.get(`classroom-${classroom.id}`)?.has(`${dateStr}-${timeSlotId}`)) issues.push('Аудитория занята.');
     if (involvedGroups.some(group => bookings.get(`group-${group.id}`)?.has(`${dateStr}-${timeSlotId}`))) issues.push('Группа или участники потока заняты.');
+    if (!isIndividualEntry(dated) && involvedGroups.some(group => bookings.get(`individual-group-${group.id}`)?.has(`${dateStr}-${timeSlotId}`))) issues.push('Обучающийся группы занят на индивидуальном событии.');
     const interval = (value?: TimeSlot) => {
         const match = value?.time.match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/);
         return match ? [Number(match[1]) * 60 + Number(match[2]), Number(match[3]) * 60 + Number(match[4])] : null;
@@ -2299,7 +2322,7 @@ const getPlacementIssues = (
     for (const other of nearby) {
         if (other.timeSlotId === timeSlotId) continue;
         const otherTeachers = [other.teacherId, ...(other.additionalTeacherIds || [])];
-        const sharesResource = other.classroomId === classroom.id || participants.some(id => otherTeachers.includes(id)) || getEntryGroupIds(other).some(id => involvedGroups.some(group => group.id === id));
+        const sharesResource = other.classroomId === classroom.id || participants.some(id => otherTeachers.includes(id)) || groupsShareParticipants({ ...dated, classroomId: classroom.id }, other);
         if (!sharesResource) continue;
         const otherSlot = activeTimeSlots.find(item => item.id === other.timeSlotId) || [...data.timeSlots, ...data.timeSlotsShortened, ...(data.bellScheduleProfiles || []).flatMap(profile => profile.slots)].find(item => item.id === other.timeSlotId);
         const range = interval(otherSlot);
@@ -2308,6 +2331,7 @@ const getPlacementIssues = (
     }
     const individualWork = dated.academicWorkId && data.academicWorks?.find(work => work.id === dated.academicWorkId && work.subjectId === entry.subjectId && work.groupId === involvedGroups[0]?.id && work.supervisorId === entry.teacherId);
     if (dated.academicWorkId && !individualWork) issues.push('Индивидуальное событие не соответствует работе, группе или руководителю.');
+    if (individualWork && dated.studentIds?.length && (dated.studentIds.length !== 1 || dated.studentIds[0] !== (individualWork.studentId || studentIdentity(individualWork.studentName, individualWork.groupId)))) issues.push('Участник события не совпадает с обучающимся научной работы.');
     const elective = data.electives.some(item => entry.uid.startsWith(`unsched-elective-${item.id}-`) && item.teacherId === entry.teacherId && item.subjectId === entry.subjectId);
     const links = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(entry.subjectId, entry.classType)) || [];
     if (!individualWork && !elective && !links.some(link => link.teacherId === entry.teacherId && teacherLinkMatchesContext(link, involvedGroups, entry.streamId))) issues.push('Нет допустимой привязки преподавателя к дисциплине и типу занятия.');
@@ -2320,7 +2344,7 @@ export const createScheduleValidator = (data: GenerationData, config?: Heuristic
     const index = createSchedulerIndex(data);
     const configuration: HeuristicConfig = config || { strictness: 5, iterations: 1, clearExisting: false, enforceLectureOrder: true, distributeEvenly: true, timeFrame: { start: data.settings.semesterStart, end: data.settings.semesterEnd } };
     return (entry: ScheduleEntry, schedule = data.schedule): PlacementValidation => {
-        const resolveGroups = (item: ScheduleEntry) => !item.groupId && !item.groupIds?.length && item.streamId ? { ...item, groupIds: data.streams.find(stream => stream.id === item.streamId)?.groupIds || [] } : item;
+        const resolveGroups = (original: ScheduleEntry) => { const item = resolveParticipantEntry(original, data.academicWorks); return !item.groupId && !item.groupIds?.length && item.streamId ? { ...item, groupIds: data.streams.find(stream => stream.id === item.streamId)?.groupIds || [] } : item; };
         entry = resolveGroups(entry);
         if (!entry.date || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) return { valid: false, issues: ['Для проверки требуется календарная дата.'], softPenalty: 0 };
         const date = new Date(entry.date + 'T00:00:00');
@@ -2330,7 +2354,7 @@ export const createScheduleValidator = (data: GenerationData, config?: Heuristic
         const other = schedule.filter(item => item.id !== entry.id).map(resolveGroups).flatMap(item => item.date ? [item] : item.day === day && (item.weekType === 'every' || item.weekType === parity) ? [{ ...item, date: entry.date }] : []);
         const groups = getInvolvedGroups(entry, index);
         const subgroup = entry.subgroupId && index.subgroupsById.get(entry.subgroupId);
-        const demand = { ...entry, uid: entry.unscheduledUid || entry.id, studentCount: subgroup ? subgroup.studentCount : groups.reduce((sum, group) => sum + group.studentCount, 0) } as unknown as UnscheduledEntry;
+        const demand = { ...entry, uid: entry.unscheduledUid || entry.id, studentCount: isIndividualEntry(entry) ? Math.max(1, studentIdsOf(entry).length) + new Set([entry.teacherId, ...(entry.additionalTeacherIds || [])]).size : subgroup ? subgroup.studentCount : groups.reduce((sum, group) => sum + group.studentCount, 0) } as unknown as UnscheduledEntry;
         const classroom = index.classroomsById.get(entry.classroomId);
         if (!classroom) return { valid: false, issues: ['Аудитория не найдена.'], softPenalty: 0 };
         const slots = getActiveTimeSlotsForDate(data, date, index);
@@ -2340,6 +2364,7 @@ export const createScheduleValidator = (data: GenerationData, config?: Heuristic
         const context: RuleEvaluationContext = { entry: demand, classroom, involvedGroups: groups, teacher: index.teachersById.get(entry.teacherId), dateStr: entry.date, dayName: day, timeSlotId: entry.timeSlotId, activeTimeSlots: slots, schedule: other, index, penaltyMultiplier: configuration.strictness / 5 };
         for (const rule of data.schedulingRules) if (applySchedulingRules(context, [rule]) === Infinity) issues.push(`Нарушено правило: ${rule.description || rule.id}.`);
         const penalty = issues.length ? 0 : calculateSlotCost(demand, date, entry.timeSlotId, classroom, groups, bookings, { ...data, schedule: other }, configuration.strictness / 5, [], configuration, slots, index);
+        if (!issues.length && !Number.isFinite(penalty)) issues.push('Нарушены ограничения привязки преподавателя к группе или аудитории.');
         return { valid: !issues.length && Number.isFinite(penalty), issues, softPenalty: Number.isFinite(penalty) ? penalty : 0 };
     };
 };
@@ -2594,7 +2619,7 @@ export const calculateScheduleScore = (
 
         const involvedGroups = getInvolvedGroups(entry, index);
         const subGroup = entry.subgroupId ? index.subgroupsById.get(entry.subgroupId) : undefined;
-        const studentCount = subGroup ? subGroup.studentCount : involvedGroups.reduce((sum, group) => sum + group.studentCount, 0);
+        const studentCount = isIndividualEntry(entry) ? Math.max(1, studentIdsOf(entry).length) + new Set([entry.teacherId, ...(entry.additionalTeacherIds || [])]).size : subGroup ? subGroup.studentCount : involvedGroups.reduce((sum, group) => sum + group.studentCount, 0);
         const classroom = index.classroomsById.get(entry.classroomId);
         if (!classroom || !entry.date) {
             hardViolations++;
@@ -2602,10 +2627,7 @@ export const calculateScheduleScore = (
         }
 
         const activeTimeSlots = getActiveTimeSlotsForDate(data, entry.date, index);
-        removeBooking(bookings, `teacher-${entry.teacherId}`, bookingKey);
-        entry.additionalTeacherIds?.forEach(id => removeBooking(bookings, `teacher-${id}`, bookingKey));
-        removeBooking(bookings, `classroom-${entry.classroomId}`, bookingKey);
-        getEntryGroupIds(entry).forEach(groupId => removeBooking(bookings, `group-${groupId}`, bookingKey));
+        bookedResourceKeys(entry).forEach(key => removeBooking(bookings, key, bookingKey));
 
         const cost = calculateSlotCost(
             { ...entry, uid: entry.unscheduledUid || entry.id, studentCount } as unknown as UnscheduledEntry,
@@ -2624,10 +2646,7 @@ export const calculateScheduleScore = (
         if (cost === Infinity) hardViolations++;
         else softPenalty += cost;
 
-        addBooking(bookings, `teacher-${entry.teacherId}`, bookingKey);
-        entry.additionalTeacherIds?.forEach(id => addBooking(bookings, `teacher-${id}`, bookingKey));
-        addBooking(bookings, `classroom-${entry.classroomId}`, bookingKey);
-        getEntryGroupIds(entry).forEach(groupId => addBooking(bookings, `group-${groupId}`, bookingKey));
+        bookedResourceKeys(entry).forEach(key => addBooking(bookings, key, bookingKey));
     });
 
     const unscheduled = result.unschedulable.length;

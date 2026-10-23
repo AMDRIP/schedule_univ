@@ -9,6 +9,7 @@ import { renderIcon } from './IconMap';
 import { getWeekType } from '../utils/dateUtils';
 import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
 import { getRequiredClassroomTypes } from '../utils/educationUtils';
+import { groupsShareParticipants, studentIdsOf } from '../utils/participants';
 
 interface ScheduleEntryCardProps {
   entry: ScheduleEntry;
@@ -183,11 +184,12 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     schedule.forEach(otherEntry => {
       if (!matchesSameConcreteTime(otherEntry)) return;
 
-      if (entry.teacherId && otherEntry.teacherId === entry.teacherId) {
+      if ([entry.teacherId, ...(entry.additionalTeacherIds || [])].some(id => [otherEntry.teacherId, ...(otherEntry.additionalTeacherIds || [])].includes(id))) {
         reasons.add(`Коллизия преподавателя: ${teacher?.name || entry.teacherId}`);
       }
 
-      const overlappingGroupIds = getResourceGroupIds(otherEntry).filter(groupId => entryGroupIdSet.has(groupId));
+      const overlappingGroupIds = groupsShareParticipants({ ...entry, groupIds: getResourceGroupIds(entry) }, { ...otherEntry, groupIds: getResourceGroupIds(otherEntry) }) ? getResourceGroupIds(otherEntry).filter(groupId => entryGroupIdSet.has(groupId)) : [];
+      if (studentIdsOf(entry).some(id => studentIdsOf(otherEntry).includes(id))) reasons.add('Коллизия обучающегося');
       if (entry.streamId && otherEntry.streamId === entry.streamId && overlappingGroupIds.length > 0) {
         const streamName = streams.find(s => s.id === entry.streamId)?.name || 'поток';
         reasons.add(`Коллизия потока: ${streamName}`);
@@ -226,12 +228,12 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   };
 
   const getBlockingEntries = (target: ScheduleEntry) => {
-    const targetGroupIds = new Set(getResourceGroupIds(target));
+    const targetGroupIds = new Set<string>(getResourceGroupIds(target));
     return schedule.filter(otherEntry => {
       if (!matchesSameConcreteTime(target, otherEntry)) return false;
       if (otherEntry.teacherId === target.teacherId) return true;
       if (otherEntry.classroomId === target.classroomId) return true;
-      return getResourceGroupIds(otherEntry).some(groupId => targetGroupIds.has(groupId));
+      return groupsShareParticipants({ ...target, groupIds: [...targetGroupIds] }, { ...otherEntry, groupIds: getResourceGroupIds(otherEntry) });
     });
   };
 
@@ -556,6 +558,7 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
             <SparklesIcon className="h-4 w-4" />
             Исправить локально
           </button>
+          <button onClick={() => { updateScheduleEntry({ ...entry, locked: !entry.locked }); setContextMenu(null); }} className="block w-full px-3 py-2 text-left text-slate-700 hover:bg-gray-50">{entry.locked ? 'Открепить занятие' : 'Закрепить занятие'}</button>
           <button
             onClick={() => setContextMenu(null)}
             className="block w-full px-3 py-2 text-left text-slate-500 hover:bg-slate-50"
@@ -637,7 +640,7 @@ const ScheduleCell: React.FC<ScheduleCellProps> = ({ entries, day, date, timeSlo
         if (entry.teacherId === item.teacherId) return true;
         if (item.classroomId && entry.classroomId === item.classroomId) return true;
         const entryGroupIds = entry.groupIds?.length ? entry.groupIds : (entry.groupId ? [entry.groupId] : []);
-        return entryGroupIds.some(groupId => involvedGroupIds.includes(groupId));
+        return groupsShareParticipants({ ...item, classroomId: item.classroomId || '', groupIds: involvedGroupIds }, { ...entry, groupIds: entryGroupIds });
       });
       if (hasResourceConflict) return false;
 

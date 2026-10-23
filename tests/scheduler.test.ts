@@ -3,12 +3,153 @@ import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { generateClassPool, generateScheduleWithHeuristics, calculateScheduleScore, createScheduleValidator, optimizeScheduleLocally } from '../services/heuristicScheduler';
 import { calculatePlanBalance } from '../services/planBalance';
-import { previewScheduleRepair, validateRepair } from '../services/scheduleRepair';
+import { previewScheduleRepair, validateRepair, replacementWarnings } from '../services/scheduleRepair';
 import { planAcademicEvent } from '../services/academicEvents';
 import { generateSessionEventPool, generateSessionSchedule } from '../services/sessionScheduler';
 import { getEducationLevel, getPlanForGroup, getPlanContactHours } from '../utils/educationUtils';
 import { ClassType, FormOfStudy, AttestationType, RuleAction, RuleSeverity, DeliveryMode, ScheduleEntry } from '../types';
 import { makeFixture, config, forbid } from './fixtures';
+import { migrateStudents } from '../utils/participants';
+import { chooseWorkerCount, runWorkerPool } from '../services/parallelScheduler';
+import { buildWhatIfScenario } from '../services/whatIfTrial';
+import { affectedByAbsence, previewSubstitution, validateSubstitution } from '../services/substitutions';
+
+test('student migration preserves identity across works and separates names in different groups', () => {
+    const first: any = { ...researchWork(), id: 'one' }; const second = { ...first, id: 'two' };
+    const other = { ...first, id: 'other-group', groupId: 'different' };
+    const migrated = migrateStudents([], [first, second, other], [lesson({ academicWorkId: 'two' })]);
+    assert.equal(migrated.students.length, 2); assert.equal(migrated.academicWorks[0].studentId, migrated.academicWorks[1].studentId);
+    assert.notEqual(migrated.academicWorks[0].studentId, migrated.academicWorks[2].studentId);
+    assert.equal(migrated.schedule[0].studentIds?.[0], migrated.academicWorks[1].studentId);
+    assert.deepEqual(migrateStudents(migrated.students, migrated.academicWorks, migrated.schedule), migrated);
+});
+
+test('different students of the same group can meet independently, but a shared lesson blocks both', () => {
+    const data = makeFixture();
+    data.students = [{ id: 'a', name: 'A', groupId: 'group' }, { id: 'b', name: 'B', groupId: 'group' }];
+    data.teacherSubjectLinks.push({ ...data.teacherSubjectLinks[0], id: 'link-reserve', teacherId: 'reserve' });
+    const first = lesson({ studentIds: ['a'] });
+    const second = lesson({ id: 'second-student', studentIds: ['b'], teacherId: 'reserve', classroomId: 'room2' });
+    data.schedule = [first];
+    const validate = createScheduleValidator(data);
+    assert.equal(validate(second).valid, true);
+    assert.equal(validate({ ...second, studentIds: ['a'] }).valid, false);
+    assert.equal(validate({ ...second, studentIds: undefined }).valid, false);
+    data.schedule = [lesson()];
+    assert.equal(createScheduleValidator(data)(second).valid, false);
+});
+
+test('individual room capacity uses actual participants and student bans are enforced', async () => {
+    const data = makeFixture(); const work: any = { ...researchWork(), studentId: 'student', reviewerId: undefined };
+    data.students = [{ id: 'student', name: work.studentName, groupId: 'group' }]; data.academicWorks = [work];
+    data.classrooms = [{ ...data.classrooms[0], capacity: 2 }];
+    const result = await planAcademicEvent(data, { workId: 'work', kind: 'consultation', start: '2026-10-19', end: '2026-10-19', committeeTeacherIds: [] });
+    assert.ok(result.entry); assert.equal(result.entry?.classroomId, 'room');
+    data.students[0].availabilityGrid = forbid();
+    assert.equal((await planAcademicEvent(data, { workId: 'work', kind: 'consultation', start: '2026-10-19', end: '2026-10-19', committeeTeacherIds: [] })).entry, undefined);
+});
+
+test('parallel pool limits cores and preserves the best result across worker completion order', async () => {
+    assert.equal(chooseWorkerCount(20, 0, 16, 32), 4); assert.equal(chooseWorkerCount(1, 8, 16), 1);
+    assert.equal(chooseWorkerCount(20, 0, 16, 2), 2); assert.equal(chooseWorkerCount(20, 20, 16), 8);
+    let active = 0; let peak = 0; let terminated = 0; const seeds = new Set<string>();
+    const result = await runWorkerPool(makeFixture(), { ...config, iterations: 4, parallelWorkers: 2 }, () => {}, {}, () => {
+        const worker: any = { onmessage: null, onerror: null, terminate: () => { terminated++; }, postMessage: message => {
+            if (message.type === 'stop') return;
+            active++; peak = Math.max(peak, active); seeds.add(message.config.seed);
+            const index = Number(message.config.seed.split('-').pop());
+            setTimeout(() => { active--; worker.onmessage?.({ data: { type: 'result', result: { schedule: [], unschedulable: [], explanations: {}, score: { total: 10 - index, hardViolations: 0, unscheduled: 0, softPenalty: 10 - index, placed: 0 } } } }); }, index % 2 ? 30 : 10);
+        } }; return worker;
+    });
+    assert.equal(result.score?.total, 6); assert.equal(seeds.size, 4); assert.equal(peak, 2); assert.equal(terminated, 2);
+});
+
+test('worker failure cannot silently return an empty success', async () => {
+    await assert.rejects(runWorkerPool(makeFixture(), { ...config, iterations: 1 }, () => {}, {}, () => {
+        const worker: any = { onmessage: null, onerror: null, terminate: () => {}, postMessage: message => { if (message.type !== 'stop') setTimeout(() => worker.onerror?.({ message: 'broken worker' }), 0); } }; return worker;
+    }), /broken worker/);
+});
+
+test('parallel stop keeps a completed best result and releases every worker', async () => {
+    let stop = false; let completed = 0; let terminated = 0;
+    const result = await runWorkerPool(makeFixture(), { ...config, iterations: 5, parallelWorkers: 2 }, point => { completed = point.current; if (completed) stop = true; }, { shouldStop: () => stop }, () => {
+        let timer: ReturnType<typeof setTimeout>; let running = false;
+        const emit = (interrupted = false) => { if (!running) return; running = false; worker.onmessage?.({ data: { type: 'result', result: { schedule: [], unschedulable: [], explanations: {}, interrupted, score: { total: interrupted ? 1000 : 10, softPenalty: interrupted ? 1000 : 10, hardViolations: 0, unscheduled: 0, placed: 0 } } } }); };
+        const worker: any = { onmessage: null, onerror: null, terminate: () => { clearTimeout(timer); terminated++; }, postMessage: message => { if (message.type === 'stop') { clearTimeout(timer); setTimeout(() => emit(true), 0); } else { running = true; timer = setTimeout(() => emit(false), 20); } } }; return worker;
+    });
+    assert.equal(result.interrupted, true); assert.equal(result.score?.total, 10); assert.equal(terminated, 2); assert.ok(completed <= 2);
+});
+
+test('local repair can exchange two constrained lessons and rank verified alternatives', async () => {
+    const data = makeFixture();
+    data.groups[0].availabilityGrid = forbid(); delete data.groups[0].availabilityGrid['Понедельник'];
+    data.teachers[0].availabilityGrid = { Понедельник: { first: 'Запрещено' } };
+    data.teachers[1].availabilityGrid = { Понедельник: { second: 'Запрещено' } };
+    data.teacherSubjectLinks.push({ ...data.teacherSubjectLinks[0], id: 'reserve-link', teacherId: 'reserve', classTypes: [ClassType.Practical] });
+    data.schedule = [lesson(), lesson({ id: 'blocker', teacherId: 'reserve', classType: ClassType.Practical, timeSlotId: 'second', classroomId: 'room2' })];
+    const preview = await previewScheduleRepair(data, 'lesson', 1000);
+    assert.equal(preview.changes.length, 2); assert.deepEqual(validateRepair(data, preview.changes), []);
+    assert.ok(preview.alternatives?.every((alternative, index, all) => !index || all[index - 1].score <= alternative.score));
+});
+
+test('replacement overload warnings use actual weekly load and binding limits', () => {
+    const data = makeFixture(); data.teacherSubjectLinks.push({ ...data.teacherSubjectLinks[0], id: 'reserve', teacherId: 'reserve', maxWeeklyLessons: 1 });
+    data.schedule = [lesson(), lesson({ id: 'reserve-load', teacherId: 'reserve', date: '2026-10-20', day: 'Вторник' })];
+    assert.ok(replacementWarnings([{ before: data.schedule[0], after: { ...data.schedule[0], teacherId: 'reserve' } }], data).some(warning => warning.includes('Нежелательная замена')));
+    data.teacherSubjectLinks[1].maxWeeklyLessons = 4;
+    assert.equal(replacementWarnings([{ before: data.schedule[0], after: { ...data.schedule[0], teacherId: 'reserve' } }], data).length, 0);
+});
+
+test('substitution preview finds safe changes, leaves source untouched and retains its reason', async () => {
+    const data = makeFixture(); data.schedule = [lesson()];
+    data.teacherSubjectLinks.push({ ...data.teacherSubjectLinks[0], id: 'reserve-link', teacherId: 'reserve' });
+    const absence = { id: 'absence', kind: 'teacher' as const, resourceId: 'teacher', start: config.timeFrame.start, end: config.timeFrame.end, reason: 'Больничный' };
+    const before = JSON.stringify(data); const proposal = await previewSubstitution(data, absence, 1500);
+    assert.equal(JSON.stringify(data), before); assert.equal(proposal.unresolved.length, 0);
+    const next = validateSubstitution(data, proposal.record);
+    assert.ok(next.every(entry => !affectedByAbsence(entry, absence))); assert.equal(proposal.record.absence.reason, 'Больничный');
+});
+
+test('locked lessons cannot be moved or silently cancelled by substitution', async () => {
+    const data = makeFixture(); data.schedule = [lesson({ locked: true })];
+    const absence = { id: 'absence', kind: 'classroom' as const, resourceId: 'room', start: config.timeFrame.start, end: config.timeFrame.end, reason: 'Ремонт' };
+    const proposal = await previewSubstitution(data, absence, 100);
+    assert.equal(proposal.unresolved.length, 1);
+    assert.throws(() => validateSubstitution(data, { ...proposal.record, changes: [{ before: data.schedule[0] }] }), /Закреплённые/);
+    const generated = await generateScheduleWithHeuristics(data, { ...config, clearExisting: true });
+    assert.ok(generated.schedule.every(entry => entry.date !== data.schedule[0].date || entry.timeSlotId !== data.schedule[0].timeSlotId || entry.teacherId !== data.schedule[0].teacherId));
+});
+
+test('absence cancellation is explicit and the generator diagnoses the resource restriction', async () => {
+    const data = makeFixture(); data.schedule = [lesson()];
+    const absence = { id: 'absence', kind: 'teacher' as const, resourceId: 'teacher', start: config.timeFrame.start, end: config.timeFrame.end, reason: 'Больничный на неделю' };
+    const proposal = await previewSubstitution(data, absence, 250);
+    assert.equal(proposal.unresolved.length, 1);
+    assert.throws(() => validateSubstitution(data, proposal.record), /Не для всех/);
+    const next = validateSubstitution(data, { ...proposal.record, changes: [{ before: data.schedule[0] }] });
+    assert.equal(next.length, 0);
+    data.schedule = next; data.resourceAbsences = [absence];
+    const result = await generateScheduleWithHeuristics(data, config);
+    assert.equal(result.schedule.length, 0); assert.equal(result.unschedulable.length, 5);
+    assert.ok(result.unschedulable.some(entry => entry.explanation?.conflicts.some(issue => issue.includes(absence.reason))));
+});
+
+test('what-if uses a deep copy, stream closure and concrete plans without changing the project', async () => {
+    const data = makeFixture(); const before = JSON.stringify(data);
+    const scenario = buildWhatIfScenario(data, { groupIds: ['group'], plannedGroups: [{ ...data.groups[0], id: 'planned', number: 'Новая' }], mode: 'rebuild', iterations: 1, semesterParity: 'odd' });
+    scenario.data.classrooms[0].status = 'closed';
+    assert.equal(JSON.stringify(data), before); assert.equal(scenario.data.groups.length, 2);
+    const result = await generateScheduleWithHeuristics(scenario.data, scenario.config);
+    assert.equal(result.schedule.length + result.unschedulable.length, 10); assert.equal(result.score?.hardViolations, 0);
+    assert.equal(JSON.stringify(data), before);
+});
+
+test('complete mode recognizes manually placed lessons without an unscheduled UID', async () => {
+    const data = makeFixture(); data.schedule = [lesson()];
+    const result = await generateScheduleWithHeuristics(data, config);
+    assert.equal(result.schedule.length + result.unschedulable.length, 4);
+    assert.ok(!result.schedule.some(entry => entry.classType === ClassType.Lecture));
+});
 
 const lesson = (patch: Partial<ScheduleEntry> = {}): ScheduleEntry => ({ id: 'lesson', subjectId: 'subject', groupId: 'group', teacherId: 'teacher', classroomId: 'room', classType: ClassType.Lecture, date: '2026-10-19', day: 'Понедельник', timeSlotId: 'first', deliveryMode: DeliveryMode.Offline, weekType: 'every', ...patch });
 const period = { ...config.timeFrame, parity: 'odd' as const };

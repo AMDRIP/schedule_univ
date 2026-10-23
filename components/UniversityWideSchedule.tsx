@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { groupsShareParticipants } from '../utils/participants';
 import * as XLSX from 'xlsx';
 import { useDrag, useDrop } from 'react-dnd';
 import { DAYS_OF_WEEK, ItemTypes } from '../constants';
@@ -288,7 +289,7 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
     const teacher = teachers.find(item => item.id === entry.teacherId);
     const sameTime = relevantSchedule.filter(other => matchesSameConcreteTime(entry, other));
 
-    if (sameTime.some(other => other.teacherId === entry.teacherId)) {
+    if (sameTime.some(other => [entry.teacherId, ...(entry.additionalTeacherIds || [])].some(id => [other.teacherId, ...(other.additionalTeacherIds || [])].includes(id)))) {
       issues.push({ type: 'teacher', label: `Коллизия преподавателя: ${teacher?.name || entry.teacherId}`, severity: 'error' });
     }
     if (sameTime.some(other => other.classroomId === entry.classroomId)) {
@@ -297,7 +298,7 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
     const entryGroupSet = new Set(getResourceGroupIds(entry));
     const overlappingGroups = new Set<string>();
     sameTime.forEach(other => getResourceGroupIds(other).forEach(groupId => {
-      if (entryGroupSet.has(groupId)) overlappingGroups.add(groupId);
+      if (entryGroupSet.has(groupId) && groupsShareParticipants({ ...entry, groupIds: getResourceGroupIds(entry) }, { ...other, groupIds: getResourceGroupIds(other) })) overlappingGroups.add(groupId);
     }));
     if (overlappingGroups.size > 0) {
       issues.push({

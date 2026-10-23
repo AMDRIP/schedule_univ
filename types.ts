@@ -175,6 +175,26 @@ export interface Group extends BaseItem {
   educationalPlanId?: string;
   notes?: string;
 }
+export interface Student extends BaseItem {
+  name: string;
+  groupId: string;
+  recordNumber?: string;
+  availabilityGrid?: AvailabilityGrid;
+  notes?: string;
+}
+export interface ResourceAbsence extends BaseItem {
+  kind: 'teacher' | 'classroom';
+  resourceId: string;
+  start: string;
+  end: string;
+  reason: string;
+}
+export interface SubstitutionRecord extends BaseItem {
+  absence: ResourceAbsence;
+  createdAt: string;
+  changes: { before: ScheduleEntry; after?: ScheduleEntry }[];
+  warnings: string[];
+}
 export type StreamType = 'lecture' | 'practice' | 'elective' | 'exam' | 'project' | 'custom';
 export type SubgroupType = 'general' | 'language' | 'lab' | 'practice' | 'project' | 'individual';
 
@@ -313,6 +333,7 @@ export interface PlanEntry {
 }
 
 export interface AcademicWork extends BaseItem {
+  studentId?: string;
   kind: 'coursework' | 'courseProject' | 'masterThesis' | 'dissertation' | 'research';
   topic: string;
   studentName: string;
@@ -554,6 +575,8 @@ export interface HeuristicConfig {
   seed?: number | string;
   stochasticity?: number; // 0 = always best candidate, 1 = broad randomized choice among top candidates
   useNative?: boolean;
+  parallelWorkers?: number;
+  targetGroupIds?: string[];
   semesterParity?: 'odd' | 'even' | 'all';
 }
 
@@ -631,6 +654,8 @@ export interface LessonPlan {
 }
 
 export interface ScheduleEntry extends BaseItem {
+  studentIds?: string[];
+  locked?: boolean;
   academicWorkId?: string;
   academicEventKind?: 'consultation' | 'predefense' | 'defense';
   additionalTeacherIds?: string[];
@@ -668,6 +693,9 @@ export interface SchedulingExplanation {
 }
 
 export interface UnscheduledEntry {
+  studentIds?: string[];
+  academicWorkId?: string;
+  additionalTeacherIds?: string[];
   uid: string;
   subjectId: string;
   groupId?: string; // Is now optional

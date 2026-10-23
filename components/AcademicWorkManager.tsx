@@ -7,6 +7,7 @@ import { isSemesterInCourse } from '../utils/semesterUtils';
 import { toYYYYMMDD } from '../utils/dateUtils';
 import { PlusIcon, EditIcon, TrashIcon, DocumentDownloadIcon, BookOpenIcon, CalendarIcon } from './icons';
 import AcademicEventPlanner from './AcademicEventPlanner';
+import { studentIdentity } from '../utils/participants';
 
 const KINDS: Record<AcademicWork['kind'], string> = {
     coursework: 'Курсовая работа', courseProject: 'Курсовой проект', masterThesis: 'Магистерская диссертация',
@@ -19,7 +20,7 @@ const fieldClass = 'w-full rounded border border-gray-300 bg-white p-2 text-sm t
 const makeId = () => `work-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const AcademicWorkManager: React.FC = () => {
-    const { academicWorks, setAcademicWorks, groups, specialties, subjects, teachers, educationalPlans, schedule, removeScheduleEntries } = useStore();
+    const { academicWorks, setAcademicWorks, students, setStudents, groups, specialties, subjects, teachers, educationalPlans, schedule, removeScheduleEntries } = useStore();
     const [level, setLevel] = useState('all');
     const [query, setQuery] = useState('');
     const [kindFilter, setKindFilter] = useState('all');
@@ -57,7 +58,10 @@ const AcademicWorkManager: React.FC = () => {
         if (draft.grade !== undefined && (!Number.isInteger(draft.grade) || draft.grade < 2 || draft.grade > 5)) {
             setError('Оценка должна быть целым числом от 2 до 5.'); return;
         }
-        const payload = { ...draft, topic: draft.topic.trim(), studentName: draft.studentName.trim() };
+        const student = students.find(student => student.id === draft.studentId) || students.find(student => student.groupId === draft.groupId && student.name.trim().toLowerCase() === draft.studentName.trim().toLowerCase());
+        const studentId = student?.id || studentIdentity(draft.studentName, draft.groupId);
+        if (!student) setStudents(prev => [...prev, { id: studentId, name: draft.studentName.trim(), groupId: draft.groupId }]);
+        const payload = { ...draft, studentId, topic: draft.topic.trim(), studentName: student?.name || draft.studentName.trim() };
         setAcademicWorks(prev => prev.some(item => item.id === payload.id) ? prev.map(item => item.id === payload.id ? payload : item) : [...prev, payload]);
         setDraft(null);
     };
@@ -94,8 +98,9 @@ const AcademicWorkManager: React.FC = () => {
         {!!supervisorLoads.length && <section className="border-t pt-4"><h2 className="mb-2 font-semibold text-gray-900">Научное руководство: активные работы</h2><div className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-700">{supervisorLoads.map(item => <span key={item.teacher.id}>{item.teacher.name}: <strong>{item.count}</strong></span>)}</div></section>}
         {draft && <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/50 p-4"><form onSubmit={save} className="max-h-[92vh] w-full max-w-3xl overflow-auto rounded-lg bg-white p-5 space-y-4"><h2 className="text-xl font-semibold">Работа и индивидуальный план</h2>{error && <p role="alert" className="text-sm text-red-700">{error}</p>}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="text-sm sm:col-span-2">Выбрать из реестра<select aria-label="Выбрать обучающегося из реестра" value={draft.studentId || ''} onChange={event => { const student = students.find(student => student.id === event.target.value); setDraft(student ? { ...draft, studentId: student.id, studentName: student.name, groupId: student.groupId, semester: (groupById.get(student.groupId)?.course || 1) * 2 - 1 } : { ...draft, studentId: undefined }); }} className={fieldClass}><option value="">Новый обучающийся</option>{students.map(student => <option key={student.id} value={student.id}>{student.name} · {groupById.get(student.groupId)?.number} · {student.recordNumber || ''}</option>)}</select></label>
                 <label className="text-sm">Вид работы<select value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value as AcademicWork['kind'] })} className={fieldClass}>{Object.entries(KINDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-                <label className="text-sm">Обучающийся<input required value={draft.studentName} onChange={event => setDraft({ ...draft, studentName: event.target.value })} className={fieldClass} /></label>
+                <label className="text-sm">Обучающийся<input required value={draft.studentName} onChange={event => setDraft({ ...draft, studentName: event.target.value, studentId: undefined })} className={fieldClass} /></label>
                 <label className="text-sm">Группа / аспирантура<select required value={draft.groupId} onChange={event => setDraft({ ...draft, groupId: event.target.value, subjectId: '', semester: (groupById.get(event.target.value)?.course || 1) * 2 - 1 })} className={fieldClass}><option value="">Выберите группу</option>{groups.map(group => <option key={group.id} value={group.id}>{group.number} · {EDUCATION_LEVEL_LABELS[getEducationLevel(programOf(group.id))]}</option>)}</select></label>
                 <label className="text-sm">Семестр<input type="number" min="1" required value={draft.semester} onChange={event => setDraft({ ...draft, semester: Number(event.target.value) })} className={fieldClass} /></label>
                 <label className="text-sm sm:col-span-2">Дисциплина / НИР<select required value={draft.subjectId} onChange={event => setDraft({ ...draft, subjectId: event.target.value })} className={fieldClass}><option value="">Выберите дисциплину</option>{subjects.map(subject => <option key={subject.id} value={subject.id}>{subject.name}{relevantPlanEntries.some(entry => entry.subjectId === subject.id) ? ' · в плане' : ''}</option>)}</select></label>

@@ -1,0 +1,30 @@
+import React, { useState } from 'react';
+import * as XLSX from 'xlsx';
+import { useStore } from '../hooks/useStore';
+import { Student } from '../types';
+import AvailabilityGridEditor from './AvailabilityGridEditor';
+import { PlusIcon, EditIcon, TrashIcon, DocumentDownloadIcon } from './icons';
+
+export default function StudentManager() {
+    const { students, setStudents, groups, academicWorks, setAcademicWorks, schedule, timeSlots } = useStore();
+    const [query, setQuery] = useState(''); const [groupId, setGroupId] = useState('');
+    const [draft, setDraft] = useState<Student | null>(null); const [error, setError] = useState('');
+    const visible = students.filter(student => (!groupId || student.groupId === groupId) && `${student.name} ${student.recordNumber || ''}`.toLowerCase().includes(query.toLowerCase()));
+    const remove = (student: Student) => {
+        if (academicWorks.some(work => work.studentId === student.id) || schedule.some(entry => entry.studentIds?.includes(student.id))) { setError('Обучающийся связан с работами или расписанием. Сначала измените эти связи.'); return; }
+        if (confirm(`Удалить обучающегося ${student.name}?`)) setStudents(prev => prev.filter(item => item.id !== student.id));
+    };
+    return <section className="space-y-4"><header className="flex flex-wrap items-center justify-between gap-3 border-b pb-4"><h1 className="text-2xl font-bold">Обучающиеся</h1><div className="flex gap-2"><button title="Экспорт обучающихся в Excel" onClick={() => { const book = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(book, XLSX.utils.json_to_sheet(visible), 'students'); XLSX.writeFile(book, 'students.xlsx'); }} className="rounded border p-2"><DocumentDownloadIcon className="h-5 w-5" /></button><button onClick={() => { setError(''); setDraft({ id: `student-${Date.now()}-${Math.random()}`, name: '', groupId: groups[0]?.id || '' }); }} className="flex items-center gap-2 rounded bg-teal-700 px-3 py-2 text-sm text-white"><PlusIcon className="h-4 w-4" />Обучающийся</button></div></header>
+        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
+        <div className="flex flex-wrap gap-3"><input aria-label="Поиск обучающихся" placeholder="ФИО или номер зачётной книжки" value={query} onChange={event => setQuery(event.target.value)} className="min-w-64 rounded border p-2 text-sm" /><select aria-label="Группа обучающихся" value={groupId} onChange={event => setGroupId(event.target.value)} className="rounded border p-2 text-sm"><option value="">Все группы</option>{groups.map(group => <option key={group.id} value={group.id}>{group.number}</option>)}</select><span className="self-center text-sm text-gray-600">Всего: {visible.length}</span></div>
+        <div className="overflow-auto"><table className="w-full text-left text-sm"><thead className="border-b bg-gray-100"><tr>{['ФИО', 'Группа', 'Зачётная книжка', 'Работы', ''].map((label, index) => <th key={index} className="p-3">{label}</th>)}</tr></thead><tbody>{visible.map(student => <tr key={student.id} className="border-b"><td className="p-3 font-medium">{student.name}</td><td className="p-3">{groups.find(group => group.id === student.groupId)?.number || student.groupId}</td><td className="p-3">{student.recordNumber || ''}</td><td className="p-3">{academicWorks.filter(work => work.studentId === student.id).length}</td><td className="p-3"><div className="flex gap-3"><button title="Редактировать обучающегося" onClick={() => { setError(''); setDraft({ ...student }); }}><EditIcon className="h-4 w-4 text-blue-700" /></button><button title="Удалить обучающегося" onClick={() => remove(student)}><TrashIcon className="h-4 w-4 text-red-700" /></button></div></td></tr>)}</tbody></table></div>
+        {draft && <div className="fixed inset-0 z-[95] flex items-center justify-center bg-black/50 p-4"><form aria-label="Карточка обучающегося" className="max-h-[92vh] w-full max-w-2xl space-y-4 overflow-auto rounded-lg bg-white p-5" onSubmit={event => { event.preventDefault();
+            if (!draft.name.trim() || !groups.some(group => group.id === draft.groupId)) { setError('Укажите ФИО и действующую группу.'); return; }
+            if (academicWorks.some(work => work.studentId === draft.id && work.groupId !== draft.groupId) || schedule.some(entry => entry.studentIds?.includes(draft.id) && entry.groupId !== draft.groupId && !entry.groupIds?.includes(draft.groupId))) { setError('Сначала перенесите связанные работы и события в новую группу.'); return; }
+            const payload = { ...draft, name: draft.name.trim() }; setStudents(prev => prev.some(student => student.id === payload.id) ? prev.map(student => student.id === payload.id ? payload : student) : [...prev, payload]);
+            setAcademicWorks(prev => prev.map(work => work.studentId === payload.id ? { ...work, studentName: payload.name } : work)); setDraft(null);
+        }}><h2 className="text-xl font-semibold">Карточка обучающегося</h2><label className="block text-sm">ФИО<input required value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} className="mt-1 w-full rounded border p-2" /></label><label className="block text-sm">Группа<select value={draft.groupId} onChange={event => setDraft({ ...draft, groupId: event.target.value })} className="mt-1 w-full rounded border p-2">{groups.map(group => <option key={group.id} value={group.id}>{group.number}</option>)}</select></label><label className="block text-sm">Зачётная книжка<input value={draft.recordNumber || ''} onChange={event => setDraft({ ...draft, recordNumber: event.target.value })} className="mt-1 w-full rounded border p-2" /></label>
+            <AvailabilityGridEditor grid={draft.availabilityGrid || {}} onGridChange={grid => setDraft({ ...draft, availabilityGrid: grid })} />
+            <div className="flex justify-end gap-3"><button type="button" onClick={() => setDraft(null)} className="rounded border px-3 py-2 text-sm">Отмена</button><button className="rounded bg-teal-700 px-3 py-2 text-sm text-white">Сохранить обучающегося</button></div></form></div>}
+    </section>;
+}

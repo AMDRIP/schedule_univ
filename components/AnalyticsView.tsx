@@ -4,6 +4,8 @@ import { ClassType, Classroom, Department, EducationalPlan, FormOfStudy, Group, 
 import { isSemesterInCourse } from '../utils/semesterUtils';
 import { getPlanContactActivities, getPlanForGroup } from '../utils/educationUtils';
 import PlanBalanceView from './PlanBalanceView';
+import WhatIfTrialPanel from './WhatIfTrialPanel';
+import { isIndividualEntry } from '../utils/participants';
 
 type ResourceStat = {
   id: string;
@@ -85,6 +87,8 @@ type WhatIfScenario = {
     formOfStudy: FormOfStudy;
     course: number;
     studentCount: number;
+    admissionYear?: number;
+    profile?: string;
   }>;
   extraGroups: number;
   lessonsPerGroupPerWeek: number;
@@ -175,6 +179,8 @@ const AnalyticsView: React.FC = () => {
     formOfStudy: FormOfStudy.FullTime,
     course: 1,
     studentCount: settings.whatIfDefaults.studentsPerGroup,
+    admissionYear: new Date(settings.semesterStart + 'T00:00:00').getFullYear(),
+    profile: '',
   });
 
   const analytics = useMemo(() => {
@@ -239,7 +245,7 @@ const AnalyticsView: React.FC = () => {
 
     const teacherStats = resourceEntries<Teacher>(
       teachers,
-      teacher => scheduled.filter(entry => entry.teacherId === teacher.id),
+      teacher => scheduled.filter(entry => entry.teacherId === teacher.id || entry.additionalTeacherIds?.includes(teacher.id)),
       teacher => departmentById.get(teacher.departmentId)?.name,
       teacherCapacityBase
     ).sort((a, b) => b.total - a.total);
@@ -247,7 +253,7 @@ const AnalyticsView: React.FC = () => {
     const groupResources: Array<Group & { name: string }> = groups.map(group => ({ ...group, name: group.number }));
     const groupStats = resourceEntries<Group & { name: string }>(
       groupResources,
-      group => scheduled.filter(entry => getEntryGroupIds(entry).includes(group.id)),
+      group => scheduled.filter(entry => !isIndividualEntry(entry) && getEntryGroupIds(entry).includes(group.id)),
       group => departmentById.get(group.departmentId)?.name
     ).sort((a, b) => b.total - a.total);
 
@@ -281,6 +287,7 @@ const AnalyticsView: React.FC = () => {
 
     const collisionMap = new Map<string, ScheduleEntry[]>();
     scheduled.forEach(entry => {
+      if (isIndividualEntry(entry)) return;
       const resources = [
         `teacher:${entry.teacherId}`,
         `classroom:${entry.classroomId}`,
@@ -872,6 +879,8 @@ const AnalyticsView: React.FC = () => {
           formOfStudy: whatIfGroupDraft.formOfStudy || whatIf.formOfStudy || FormOfStudy.FullTime,
           course: Math.max(1, whatIfGroupDraft.course || whatIf.course || 1),
           studentCount: Math.max(1, whatIfGroupDraft.studentCount),
+          admissionYear: whatIfGroupDraft.admissionYear,
+          profile: whatIfGroupDraft.profile.trim() || undefined,
         },
       ],
     }));
@@ -1043,6 +1052,7 @@ const AnalyticsView: React.FC = () => {
 
       {activeTab === 'whatif' && (
         <div className="grid gap-5 xl:grid-cols-3">
+          <WhatIfTrialPanel groupIds={whatIf.groupIds} plannedGroups={whatIf.plannedGroups} removedTeacherId={whatIf.removedTeacherId} closedClassroomId={whatIf.closedClassroomId} />
           <div className="space-y-5 xl:col-span-1">
             <div className="rounded-lg border border-gray-200 bg-white p-5">
               <h2 className="text-base font-semibold text-gray-900">Сценарий</h2>
@@ -1138,6 +1148,8 @@ const AnalyticsView: React.FC = () => {
                       onChange={(event) => setWhatIfGroupDraft(prev => ({ ...prev, studentCount: Math.max(1, Number(event.target.value) || 1) }))}
                       className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
+                    <label className="block text-xs text-gray-600">Год набора<input aria-label="Год набора планируемой группы" type="number" min="1900" max="2200" value={whatIfGroupDraft.admissionYear} onChange={event => setWhatIfGroupDraft(prev => ({ ...prev, admissionYear: Number(event.target.value) || new Date().getFullYear() }))} className="mt-1 w-full rounded border p-2 text-sm" /></label>
+                    <label className="block text-xs text-gray-600">Профиль<input aria-label="Профиль планируемой группы" value={whatIfGroupDraft.profile} onChange={event => setWhatIfGroupDraft(prev => ({ ...prev, profile: event.target.value }))} className="mt-1 w-full rounded border p-2 text-sm" /></label>
                     <button
                       type="button"
                       onClick={addPlannedWhatIfGroup}
