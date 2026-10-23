@@ -32,6 +32,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
       { name: 'Просмотр расписания', icon: <CalendarIcon /> },
       { name: 'Академический календарь', icon: <CalendarIcon /> },
       { name: 'Сводное расписание', icon: <TableCellsIcon /> },
+      { name: 'Личный календарь', icon: <IdentificationIcon /> },
       { name: 'Статистика', icon: <PresentationChartBarIcon /> },
     ];
 

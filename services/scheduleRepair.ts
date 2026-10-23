@@ -21,7 +21,7 @@ export interface RepairPreview {
     message: string;
 }
 export const scheduleSignature = (schedule: ScheduleEntry[]) => JSON.stringify(schedule);
-export const planningSignature = (data: GenerationData) => JSON.stringify(Object.fromEntries(['teachers', 'groups', 'classrooms', 'subjects', 'streams', 'timeSlots', 'timeSlotsShortened', 'bellScheduleProfiles', 'settings', 'teacherSubjectLinks', 'schedulingRules', 'productionCalendar', 'ugs', 'specialties', 'educationalPlans', 'classroomTypes', 'subgroups', 'electives', 'schedule', 'academicWorks', 'students', 'resourceAbsences'].map(key => [key, data[key] ?? []])));
+export const planningSignature = (data: GenerationData) => JSON.stringify(Object.fromEntries(['teachers', 'groups', 'classrooms', 'subjects', 'streams', 'timeSlots', 'timeSlotsShortened', 'bellScheduleProfiles', 'settings', 'teacherSubjectLinks', 'schedulingRules', 'productionCalendar', 'ugs', 'specialties', 'educationalPlans', 'classroomTypes', 'subgroups', 'electives', 'schedule', 'academicWorks', 'students', 'resourceAbsences', 'buildingPlans'].map(key => [key, data[key] ?? []])));
 const slotMinutes = (entry: ScheduleEntry, data: GenerationData) => {
     const slot = [...data.timeSlots, ...data.timeSlotsShortened, ...(data.bellScheduleProfiles || []).flatMap(profile => profile.slots)].find(slot => slot.id === entry.timeSlotId);
     const match = slot?.time.match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/);

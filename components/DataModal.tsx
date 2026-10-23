@@ -156,6 +156,10 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
         setFormData((prev: any) => ({ ...prev, [name]: checked }));
         return;
     }
+    if (dataType === 'electives' && name === 'groupId') {
+        setFormData((prev: any) => ({ ...prev, groupId: value, groupIds: [value] }));
+        return;
+    }
     
      // Autocomplete for UGS
     if (dataType === 'ugs' && name === 'code') {
@@ -455,7 +459,9 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
       case 'teacherId': return (
           <div><label className="block text-sm font-medium text-gray-700">Преподаватель</label><select name="teacherId" value={formData.teacherId} onChange={handleChange} className={defaultInputClass}>{teachers.map(t => <option key={t.id} value={t.id}>{teacherDisplayNames.get(t.id)}</option>)}</select></div>
         );
-       case 'groupId': return (
+       case 'groupId':
+          if (dataType === 'electives' && (formData.studentIds?.length || formData.groupIds?.length > 1)) return <div className="text-sm"><span className="font-medium">Состав объединения</span><p>{formData.studentIds?.length ? `${formData.studentIds.length} обучающихся` : `${formData.groupIds.length} групп`}</p></div>;
+          return (
           <div><label className="block text-sm font-medium text-gray-700">Группа</label><select name="groupId" value={formData.groupId} onChange={handleChange} className={defaultInputClass}>{groups.map(g => <option key={g.id} value={g.id}>{g.number}</option>)}</select></div>
         );
       case 'pinnedClassroomId': return (
@@ -599,7 +605,7 @@ const DataModal: React.FC<DataModalProps> = ({ isOpen, onClose, onSave, item, da
             <div className="pt-4 border-t">
               <h3 className="text-lg font-medium text-gray-800 mb-2">Требования к типам аудиторий</h3>
               <div className="space-y-3">
-                {[ClassType.Lecture, ClassType.Practical, ClassType.Lab, ClassType.Elective, ClassType.Consultation, ClassType.PracticeConsultation, ClassType.PracticeDefense].map(classType => (
+                {Object.values(ClassType).map(classType => (
                   <div key={classType}>
                     <label className="block text-sm font-medium text-gray-700">{classType}</label>
                     <select

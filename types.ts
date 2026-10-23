@@ -180,6 +180,9 @@ export interface Student extends BaseItem {
   groupId: string;
   recordNumber?: string;
   availabilityGrid?: AvailabilityGrid;
+  requiredClassroomTagIds?: string[];
+  requiresStepFreeAccess?: boolean;
+  extraTransitionMinutes?: number;
   notes?: string;
 }
 export interface ResourceAbsence extends BaseItem {
@@ -237,6 +240,7 @@ export interface Classroom extends BaseItem {
   allowedClassTypes?: ClassType[];
   prioritySubjectIds?: string[];
   notes?: string;
+  stepFreeAccess?: boolean;
 }
 
 export interface Cabinet extends BaseItem {
@@ -509,6 +513,12 @@ export interface ProductionCalendarEvent extends BaseItem {
 }
 
 export interface SchedulingSettings {
+  travelPolicy?: {
+    enabled: boolean;
+    sameBuildingMinutes: number;
+    perFloorMinutes: number;
+    betweenBuildingsMinutes: number;
+  };
   semesterStart: string;
   semesterEnd: string;
   sessionStart: string;
@@ -654,6 +664,7 @@ export interface LessonPlan {
 }
 
 export interface ScheduleEntry extends BaseItem {
+  semester?: number;
   studentIds?: string[];
   locked?: boolean;
   academicWorkId?: string;
@@ -693,6 +704,7 @@ export interface SchedulingExplanation {
 }
 
 export interface UnscheduledEntry {
+  semester?: number;
   studentIds?: string[];
   academicWorkId?: string;
   additionalTeacherIds?: string[];
@@ -740,6 +752,9 @@ export interface Elective extends BaseItem {
   subjectId: string;
   teacherId: string;
   groupId: string;
+  groupIds?: string[];
+  studentIds?: string[];
+  semester?: number;
   hoursPerSemester: number;
   classType?: ClassType;
   deliveryMode?: DeliveryMode;
@@ -796,6 +811,7 @@ export interface BuildingRoom extends BaseItem {
 }
 
 export interface BuildingFloor extends BaseItem {
+  stepFreeAccess?: boolean;
   name: string;
   number: number;
   width: number;
@@ -805,6 +821,7 @@ export interface BuildingFloor extends BaseItem {
 }
 
 export interface BuildingPlan extends BaseItem {
+  travelMinutesTo?: Record<string, number>;
   name: string;
   address?: string;
   floors: BuildingFloor[];

@@ -13,6 +13,8 @@ import { generateScheduleWithHeuristics, generateClassPool, optimizeScheduleLoca
 import { RepairPreview, previewScheduleRepair, scheduleSignature, planningSignature, validateRepair } from '../services/scheduleRepair';
 import { validateSubstitution } from '../services/substitutions';
 import { migrateStudents, groupsShareParticipants } from '../utils/participants';
+import { electiveDemand } from '../utils/trajectories';
+import { prepareLearningGroupUpdate } from '../services/learningGroups';
 import { generateScheduleWithGemini } from '../services/geminiService';
 import { generateScheduleWithOpenRouter } from '../services/openRouterService';
 import { runIterativeScheduler } from '../services/iterativeScheduler';
@@ -270,7 +272,8 @@ const generateUnscheduledEntries = (
     links: TeacherSubjectLink[],
     streams: Stream[],
     subgroups: Subgroup[],
-    electives: Elective[]
+    electives: Elective[],
+    students: Student[] = []
 ): UnscheduledEntry[] => {
     const entries: UnscheduledEntry[] = [];
 
@@ -374,33 +377,14 @@ const generateUnscheduledEntries = (
         });
     });
     
-    electives.forEach(elective => {
-        const numClasses = Math.ceil(elective.hoursPerSemester / 2);
-        const group = groups.find(g => g.id === elective.groupId);
-        if (!group) return;
-
-        for (let i = 0; i < numClasses; i++) {
-            entries.push({
-                uid: `unsched-elective-${elective.id}-${i}`,
-                subjectId: elective.subjectId,
-                groupId: elective.groupId,
-                classType: elective.classType || ClassType.Elective,
-                teacherId: elective.teacherId,
-                studentCount: group.studentCount,
-                deliveryMode: elective.deliveryMode || DeliveryMode.Offline,
-                classroomTypeIds: elective.classroomTypeIds,
-                requiredClassroomTagIds: elective.requiredClassroomTagIds,
-                pinnedClassroomId: elective.pinnedClassroomId,
-                preferredTimeSlotIds: elective.preferredTimeSlotIds,
-            });
-        }
-    });
+    electives.forEach(elective => entries.push(...electiveDemand(elective, students, groups)));
 
     return entries;
 };
 
 
 interface StoreState {
+  saveLearningGroup: (elective: Elective) => void;
   students: Student[];
   setStudents: React.Dispatch<React.SetStateAction<Student[]>>;
   resourceAbsences: ResourceAbsence[];
@@ -587,7 +571,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   useEffect(() => {
     // 1. Generate all possible classes for the semester from plans. This is the "master list".
-    const allPossibleEntries = generateClassPool({ teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings, teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes, subgroups, electives, schedule: [] });
+    const allPossibleEntries = generateClassPool({ teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings, teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes, subgroups, electives, students, buildingPlans, schedule: [] });
     
     // 2. Create a set of UIDs for classes that are already on the schedule.
     const allScheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
@@ -675,7 +659,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       ...entry,
       explanation: schedulingExplanations[entry.uid],
     })));
-  }, [groups, teachers, subjects, classrooms, classroomTypes, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives, unscheduledTimeHorizon, settings.semesterStart, settings.semesterEnd, viewDate, schedulingExplanations]);
+  }, [groups, teachers, subjects, classrooms, classroomTypes, educationalPlans, teacherSubjectLinks, streams, schedule, subgroups, electives, students, buildingPlans, unscheduledTimeHorizon, settings.semesterStart, settings.semesterEnd, viewDate, schedulingExplanations]);
 
   useEffect(() => {
     const initializeApiKeys = async () => {
@@ -716,7 +700,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     initializeApiKeys();
   }, []);
   
-  const getSchedulingData = () => ({ teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings, teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes, subgroups, electives, schedule, academicWorks, students, resourceAbsences });
+  const getSchedulingData = () => ({ teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings, teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes, subgroups, electives, schedule, academicWorks, students, resourceAbsences, buildingPlans });
   const assertPlacement = (entry: ScheduleEntry, current = schedule) => {
     const validate = createScheduleValidator(getSchedulingData());
     const result = createScheduleValidator(getSchedulingData(), undefined, { finalValidation: false })(entry, current);
@@ -1109,9 +1093,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const streamGroupIds = item.streamId && explicitGroupIds.length === 0 ? streams.find(stream => stream.id === item.streamId)?.groupIds || [] : [];
       const itemGroupIds = explicitGroupIds.length > 0 ? explicitGroupIds : streamGroupIds;
       const involvedGroups = groups.filter(group => itemGroupIds.includes(group.id));
-      const placementStudentCount = involvedGroups.length > 1
+      const placementStudentCount = item.studentIds?.length || (involvedGroups.length > 1
         ? involvedGroups.reduce((sum, group) => sum + group.studentCount, 0)
-        : item.studentCount;
+        : item.studentCount);
       if (!areGroupsCompatibleWithTimeSlot(targetTimeSlot, involvedGroups)) {
         const mismatch = getGroupsShiftMismatchText(targetTimeSlot, involvedGroups);
         alert(`Нельзя разместить занятие: слот "${targetTimeSlot?.time || timeSlotId}" (${getTimeSlotShiftLabel(targetTimeSlot?.shift)}) не совпадает со сменой группы ${mismatch}.`);
@@ -1190,6 +1174,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       const isStreamPlacement = itemGroupIds.length > 1 || !!item.streamId;
       const newEntry: ScheduleEntry = {
+          studentIds: item.studentIds, semester: item.semester, academicWorkId: item.academicWorkId, additionalTeacherIds: item.additionalTeacherIds,
           classroomTypeIds: item.classroomTypeIds, requiredClassroomTagIds: item.requiredClassroomTagIds,
           pinnedClassroomId: item.pinnedClassroomId, preferredTimeSlotIds: item.preferredTimeSlotIds,
           id: `sched-${Date.now()}-${Math.random()}`,
@@ -1289,6 +1274,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         originalGroupId = item.groupId;
     }
     
+    if (item.studentIds?.length) studentCount = item.studentIds.length + (item.academicWorkId ? 1 + (item.additionalTeacherIds?.length || 0) : 0);
     const requiredClassroomTypes = item.classroomTypeIds?.length ? item.classroomTypeIds : getRequiredClassroomTypes(subject, item.classType);
     if (!requiredClassroomTypes || requiredClassroomTypes.length === 0) {
         throw new Error(`Для дисциплины "${subject.name}" (тип: ${item.classType}) не указаны подходящие типы аудиторий.`);
@@ -1330,6 +1316,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if ('uid' in item) { // UnscheduledEntry
         const isStreamPlacement = placementGroupIds.length > 1 || !!item.streamId;
         const newEntry: Omit<ScheduleEntry, 'id'> = {
+            studentIds: item.studentIds, semester: item.semester, academicWorkId: item.academicWorkId, additionalTeacherIds: item.additionalTeacherIds,
             classroomTypeIds: item.classroomTypeIds, requiredClassroomTagIds: item.requiredClassroomTagIds,
             pinnedClassroomId: item.pinnedClassroomId, preferredTimeSlotIds: item.preferredTimeSlotIds,
             day, timeSlotId, date, classroomId: bestFit.id, classType: item.classType, deliveryMode: item.deliveryMode || DeliveryMode.Offline,
@@ -1357,6 +1344,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const newEntry = { ...entry, id: `manual-${Date.now()}-${Math.random()}` };
     assertPlacement(newEntry);
     setSchedule(prev => [...prev, newEntry]);
+  };
+
+  const saveLearningGroup = (elective: Elective) => {
+      const result = prepareLearningGroupUpdate(getSchedulingData(), elective);
+      setElectives(result.electives);
+      setSchedule(result.schedule);
   };
 
   const updateScheduleEntry = (updatedEntry: ScheduleEntry) => {
@@ -1436,7 +1429,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     });
 
     // 2. Get a pool of available unscheduled entries.
-    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives, students);
     const scheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
     const availablePool = allPossibleEntries.filter(e => !scheduledUids.has(e.uid));
 
@@ -1527,7 +1520,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const targetWeekStart = toYYYYMMDD(targetWeekDays[0]);
     const targetWeekEnd = toYYYYMMDD(targetWeekDays[5]);
 
-    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+    const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives, students);
     const currentlyScheduledUids = new Set(schedule.map(e => e.unscheduledUid).filter(Boolean));
     const availablePool = allPossibleEntries.filter(e => !currentlyScheduledUids.has(e.uid));
 
@@ -1744,7 +1737,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
-        subgroups, electives, schedule, classroomTags, faculties, departments, academicWorks, students, resourceAbsences
+        subgroups, electives, schedule, classroomTags, faculties, departments, academicWorks, students, resourceAbsences, buildingPlans
     };
 
     let result: SchedulerResult | null = null;
@@ -1833,7 +1826,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     // Common logic for AI schedulers
     if (newSchedule) {
-        const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives);
+        const allPossibleEntries = generateUnscheduledEntries(groups, educationalPlans, teacherSubjectLinks, streams, subgroups, electives, students);
         const tempUnscheduled = [...allPossibleEntries];
         newSchedule.forEach(schedEntry => {
             const matchIndex = tempUnscheduled.findIndex(unsched => 
@@ -1873,7 +1866,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
-        subgroups, electives, schedule, classroomTags, faculties, departments, academicWorks, students, resourceAbsences
+        subgroups, electives, schedule, classroomTags, faculties, departments, academicWorks, students, resourceAbsences, buildingPlans
     };
 
     const result = await optimizeScheduleLocally(generationData, config);
@@ -1929,7 +1922,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
-        subgroups, schedule, electives, academicWorks, students, resourceAbsences
+        subgroups, schedule, electives, academicWorks, students, resourceAbsences, buildingPlans
       };
 
       const signature = planningSignature(generationData);
@@ -2027,7 +2020,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
 
   const value: StoreState = {
-    students, setStudents, resourceAbsences, substitutionLog, applySubstitution, removeResourceAbsence: id => setResourceAbsences(prev => prev.filter(item => item.id !== id)),
+    students, setStudents, saveLearningGroup, resourceAbsences, substitutionLog, applySubstitution, removeResourceAbsence: id => setResourceAbsences(prev => prev.filter(item => item.id !== id)),
     academicWorks, setAcademicWorks,
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, bellScheduleProfiles, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, educationalPlanTemplates, scheduleTemplates,

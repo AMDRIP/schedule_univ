@@ -18,9 +18,11 @@ import {
   TrashIcon,
 } from './icons';
 import BuildingPlanEditor from './BuildingPlanEditor';
+import CampusTravelPanel from './CampusTravelPanel';
+import SubjectRoomLinks from './SubjectRoomLinks';
 import { ColorPalettePicker, IconSelect } from './VisualPickers';
 
-type TabId = 'overview' | 'classrooms' | 'cabinets' | 'types' | 'tags' | 'plans' | 'quality';
+type TabId = 'overview' | 'classrooms' | 'cabinets' | 'types' | 'tags' | 'plans' | 'quality' | 'travel' | 'links';
 type RoomStatus = NonNullable<Classroom['status']>;
 type TagCategory = NonNullable<ClassroomTag['category']>;
 type RequiredLevel = NonNullable<ClassroomTag['requiredLevel']>;
@@ -356,6 +358,8 @@ const RoomResourcesManager: React.FC = () => {
     { id: 'types', label: 'Типы' },
     { id: 'tags', label: 'Оснащение' },
     { id: 'plans', label: 'Планы зданий' },
+    { id: 'travel', label: 'Переходы и доступность' },
+    { id: 'links', label: 'Привязки дисциплин' },
     { id: 'quality', label: 'Проверка' },
   ];
 
@@ -406,6 +410,8 @@ const RoomResourcesManager: React.FC = () => {
         ))}
       </div>
 
+      {activeTab === 'travel' && <CampusTravelPanel />}
+      {activeTab === 'links' && <SubjectRoomLinks />}
       {activeTab === 'overview' && (
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
           <section className="rounded-lg border border-gray-200 bg-white shadow-sm">

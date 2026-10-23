@@ -3,6 +3,7 @@ import { useStore } from '../hooks/useStore';
 import { DataItem, DataType, TeacherSubjectLink, AcademicDegree, AcademicTitle, Teacher, ClassType } from '../types';
 import DataModal from './DataModal';
 import LinkModal from './LinkModal';
+import SubjectRoomLinks from './SubjectRoomLinks';
 import { EditIcon, TrashIcon, PlusIcon, DocumentSearchIcon, CopyIcon, LinkIcon } from './icons';
 import { calculateExperience } from '../utils/dateUtils';
 import { renderIcon } from './IconMap';
@@ -185,6 +186,11 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
   };
 
   const handleSave = (item: Omit<DataItem, 'id'> | DataItem) => {
+    if (dataType === 'electives') {
+      try { store.saveLearningGroup({ ...item, id: ('id' in item && item.id) || `elective-${Date.now()}-${Math.random()}` } as import('../types').Elective); setIsModalOpen(false); }
+      catch (error) { alert(error.message); }
+      return;
+    }
     if (dataType === 'teachers') {
       const { quickSubjectLinks = [], ...teacherPayload } = item as any;
       const savedTeacher = 'id' in teacherPayload && teacherPayload.id
@@ -422,6 +428,7 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
           Добавить
         </button>
       </div>
+      {dataType === 'subjects' && <SubjectRoomLinks />}
       <div className="overflow-x-auto">
         <table className="w-full border-collapse">
           <thead>

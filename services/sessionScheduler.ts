@@ -1,7 +1,7 @@
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
     SchedulingSettings, TeacherSubjectLink, ProductionCalendarEvent, Specialty, EducationalPlan, 
-    DeliveryMode, ClassroomType, Subgroup, SessionSchedulerConfig, AttestationType, SchedulingRule, BellScheduleProfile, Elective, Student, AcademicWork, ResourceAbsence
+    DeliveryMode, ClassroomType, Subgroup, SessionSchedulerConfig, AttestationType, SchedulingRule, BellScheduleProfile, Elective, Student, AcademicWork, ResourceAbsence, BuildingPlan
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { toYYYYMMDD } from '../utils/dateUtils';
@@ -11,6 +11,7 @@ import { createScheduleValidator, getActiveTimeSlotsForDate, expandScheduleOccur
 import { groupIdsOf, isIndividualEntry } from '../utils/participants';
 
 interface SessionGenerationData {
+  buildingPlans?: BuildingPlan[];
   students?: Student[];
   academicWorks?: AcademicWork[];
   resourceAbsences?: ResourceAbsence[];
