@@ -231,6 +231,11 @@ test('desktop IPC serializes API startup, rotates tokens, sanitizes files and st
     const call = (name: string, ...args: any[]) => Promise.resolve().then(() => handlers.get(name)(event, ...args));
     t.after(async () => { await call('stop-publication-server'); await fs.rm(folder, { recursive: true, force: true }); });
     await assert.rejects(Promise.resolve().then(() => handlers.get('publication-server-status')({ sender: {}, senderFrame: {} })), /denied/);
+    for (const channel of ['telegram-bot-status', 'telegram-bot-save', 'telegram-bot-check', 'telegram-bot-start', 'telegram-bot-stop', 'telegram-bot-forget']) {
+        await assert.rejects(Promise.resolve().then(() => handlers.get(channel)({ sender: {}, senderFrame: {} })), /denied/);
+        await assert.rejects(Promise.resolve().then(() => handlers.get(channel)({ sender: window.webContents, senderFrame: {} })), /denied/);
+    }
+    assert.equal((await call('telegram-bot-status')).hasToken, false);
     const feed = exportPublishedFeed(await published());
     await call('sync-published-feed', { ...feed, students: [{ name: 'PRIVATE' }], current: { ...feed.current, privateNotes: 'PRIVATE' } });
     const [first, duplicate] = await Promise.all([call('start-publication-server', 0), call('start-publication-server', 0)]);

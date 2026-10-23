@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, net } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const os = require('os');
@@ -8,6 +8,9 @@ const log = require('electron-log');
 const { randomBytes } = require('node:crypto');
 const { createReadServer } = require('./integrations/readServer.cjs');
 const { sanitizeFeed } = require('./integrations/publicSchedule.cjs');
+const { createBotController } = require('./integrations/botController.cjs');
+
+let telegramController;
 
 let publishedFeed = null;
 let publicationServer = null;
@@ -123,6 +126,9 @@ async function createWindow() {
 
 app.whenReady().then(async () => {
   await loadAppSettings();
+  telegramController = createBotController({ directory: app.getPath('userData'), secureStorage: safeStorage, getFeed: () => publishedFeed,
+    fetchImpl: net?.fetch ? net.fetch.bind(net) : undefined });
+  await telegramController.initialize();
   console.log('Main process: App is ready.');
   // --- IPC Handlers ---
   ipcMain.handle('sync-published-feed', (event, value) => {
@@ -136,6 +142,7 @@ app.whenReady().then(async () => {
         await fs.rename(filename + '.tmp', filename);
       } else await fs.unlink(filename).catch(error => { if (error.code !== 'ENOENT') throw error; });
       publishedFeed = next;
+      telegramController.feedChanged().catch(() => {});
       return { success: true };
     });
   });
@@ -156,6 +163,12 @@ app.whenReady().then(async () => {
     });
   });
   ipcMain.handle('stop-publication-server', event => { assertPublicationSender(event); return queuePublication(stopPublicationServer); });
+  ipcMain.handle('telegram-bot-status', event => { assertPublicationSender(event); return telegramController.getStatus(); });
+  ipcMain.handle('telegram-bot-save', (event, input) => { assertPublicationSender(event); return telegramController.save(input); });
+  ipcMain.handle('telegram-bot-check', event => { assertPublicationSender(event); return telegramController.check(); });
+  ipcMain.handle('telegram-bot-start', event => { assertPublicationSender(event); return telegramController.start(); });
+  ipcMain.handle('telegram-bot-stop', event => { assertPublicationSender(event); return telegramController.stop(); });
+  ipcMain.handle('telegram-bot-forget', event => { assertPublicationSender(event); return telegramController.forget(); });
 
   // API Key & AI Flag
   ipcMain.handle('get-api-key', () => userApiKey);
@@ -418,9 +431,17 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', function () {
+  telegramController?.stop().catch(() => {});
   stopPublicationServer().catch(() => {});
   console.log('Main process: All windows closed.');
   // Clean up autosave file on normal exit
   fs.unlink(getAutosavePath()).catch(() => { });
   if (process.platform !== 'darwin') app.quit();
+});
+
+let quitting = false;
+app.on('before-quit', event => {
+  if (quitting) return;
+  quitting = true; event.preventDefault();
+  Promise.allSettled([telegramController?.stop(), stopPublicationServer()]).finally(() => app.quit());
 });

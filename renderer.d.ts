@@ -5,7 +5,23 @@
  * Interface for the API exposed from the main process to the renderer process
  * via `preload.js`.
  */
+interface TelegramBotStatus {
+  autoStart: boolean; format: 'html' | 'plain'; layout: 'detailed' | 'compact'; showTeacher: boolean; showRoom: boolean;
+  hasToken: boolean; secureStorageAvailable: boolean; wanted: boolean;
+  phase: 'stopped' | 'waiting' | 'starting' | 'connected' | 'reconnecting' | 'error'; lastError: string;
+  lastConnectedAt: string | null; username: string; name: string; subscribers: number;
+  publicationTitle: string; publicationVersion: number | null;
+}
+interface TelegramBotSettings {
+  token?: string; autoStart: boolean; format: 'html' | 'plain'; layout: 'detailed' | 'compact'; showTeacher: boolean; showRoom: boolean;
+}
 interface IElectronAPI {
+  getTelegramBotStatus?: () => Promise<TelegramBotStatus>;
+  saveTelegramBotSettings?: (settings: TelegramBotSettings) => Promise<TelegramBotStatus>;
+  checkTelegramBotConnection?: () => Promise<TelegramBotStatus>;
+  startTelegramBot?: () => Promise<TelegramBotStatus>;
+  stopTelegramBot?: () => Promise<TelegramBotStatus>;
+  forgetTelegramBotToken?: () => Promise<TelegramBotStatus>;
   syncPublishedFeed?: (feed: unknown) => Promise<{ success: boolean }>;
   getPublicationServerStatus?: () => Promise<{ running: boolean; url?: string; apiToken?: string; calendarToken?: string; publicationFile?: string }>;
   startPublicationServer?: (port: number) => Promise<{ running: boolean; url: string; apiToken: string; calendarToken: string }>;

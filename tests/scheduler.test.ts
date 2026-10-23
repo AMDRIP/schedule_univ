@@ -18,6 +18,7 @@ import './sessionScheduler.test';
 import './trajectories.test';
 import './trajectoryRegression.test';
 import './publication.test';
+import './telegram.test';
 
 test('student migration preserves identity across works and separates names in different groups', () => {
     const first: any = { ...researchWork(), id: 'one' }; const second = { ...first, id: 'two' };

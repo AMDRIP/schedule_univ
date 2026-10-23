@@ -27,6 +27,7 @@ import StudentManager from './StudentManager';
 import TrajectoryWorkspace from './TrajectoryWorkspace';
 import SubstitutionsView from './SubstitutionsView';
 import PublicationView, { PublishedScheduleView } from './PublicationView';
+import TelegramBotPanel from './TelegramBotPanel';
 
 
 interface DashboardProps {
@@ -64,6 +65,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
     if (currentRole === Role.Student || currentRole === Role.Teacher) return <PublishedScheduleView />;
     switch (activeView) {
       case 'Публикация расписания': return <PublicationView />;
+      case 'Telegram-бот': return <TelegramBotPanel />;
       case 'Обучающиеся': return <StudentManager />;
       case 'Личный календарь': return <TrajectoryWorkspace calendar />;
       case 'Оперативные замены': return <SubstitutionsView />;

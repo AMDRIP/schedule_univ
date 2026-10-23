@@ -3,7 +3,7 @@
 import React from 'react';
 import { Role } from '../types';
 import { useStore } from '../hooks/useStore';
-import { CalendarIcon, AcademicCapIcon, CollectionIcon, SparklesIcon, BookmarkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, DocumentTextIcon, BuildingOfficeIcon, BellIcon, BriefcaseIcon, ClipboardListIcon, FlaskIcon, GridIcon, NetworkIcon, SlidersIcon, TableCellsIcon, UserTieIcon, PresentationChartBarIcon } from './icons';
+import { CalendarIcon, AcademicCapIcon, CollectionIcon, SparklesIcon, BookmarkIcon, ShieldCheckIcon, BookOpenIcon, IdentificationIcon, DocumentTextIcon, BuildingOfficeIcon, BellIcon, BriefcaseIcon, ClipboardListIcon, FlaskIcon, GridIcon, NetworkIcon, SlidersIcon, TableCellsIcon, UserTieIcon, PresentationChartBarIcon, TelegramIcon } from './icons';
 
 interface SidebarProps {
   currentRole: Role;
@@ -31,6 +31,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
     const baseItems: NavItem[] = [
       { name: 'Просмотр расписания', icon: <CalendarIcon /> },
       { name: 'Публикация расписания', icon: <ShieldCheckIcon /> },
+      { name: 'Telegram-бот', icon: <TelegramIcon aria-hidden="true" /> },
       { name: 'Академический календарь', icon: <CalendarIcon /> },
       { name: 'Сводное расписание', icon: <TableCellsIcon /> },
       { name: 'Личный календарь', icon: <IdentificationIcon /> },

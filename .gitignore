@@ -16,6 +16,8 @@ dist-ssr
 .env.*
 !.env.example
 .telegram-bot.local.json*
+telegram-state-*.json*
+telegram-settings.json*
 
 # Editor directories and files
 .vscode/*

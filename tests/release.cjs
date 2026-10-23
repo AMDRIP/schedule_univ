@@ -15,10 +15,11 @@ const packed = JSON.parse(asar.extractFile(archive, 'package.json').toString('ut
 assert.equal(packed.version, pkg.version);
 const files = asar.listPackage(archive).map(name => name.replaceAll('\\', '/'));
 assert.ok(files.some(name => name.endsWith('/dist/schedulerBrowserWorker.js')));
-for (const name of ['main.js', 'preload.js', 'integrations/publicSchedule.cjs', 'integrations/readServer.cjs', 'integrations/server.cjs', 'integrations/telegramBot.cjs', 'integrations/.env.example', 'docs/PUBLICATION_API.md']) {
+for (const name of ['main.js', 'preload.js', 'integrations/publicSchedule.cjs', 'integrations/readServer.cjs', 'integrations/server.cjs', 'integrations/telegramBot.cjs', 'integrations/botMessages.cjs', 'integrations/botRuntime.cjs', 'integrations/botController.cjs', 'integrations/.env.example', 'docs/PUBLICATION_API.md']) {
     assert.deepEqual(asar.extractFile(archive, name), fs.readFileSync(name), `Packaged file mismatch: ${name}`);
 }
 assert.ok(!files.some(name => /\.schd$/i.test(name) || /\/\.env(?:$|\.)/.test(name) && !name.endsWith('/.env.example')));
+assert.ok(!files.some(name => /\/(telegram-settings|telegram-state-[^/]+)\.json(?:$|\.)/.test(name)));
 assert.ok(!files.some(name => name.includes('/dist/win-unpacked/') || /\.exe$/i.test(name)));
 assert.ok(asar.extractFile(archive, 'dist/bundle.js').toString('utf8').includes(pkg.version));
 const manifest = yaml.load(fs.readFileSync('dist/latest.yml', 'utf8'));

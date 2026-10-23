@@ -5,6 +5,7 @@ import { planningSignature } from '../services/scheduleRepair';
 import { filterLessons } from '../integrations/publicSchedule.cjs';
 import { CheckCircleIcon, CopyIcon, DocumentDownloadIcon, PlusIcon, UploadIcon, XMarkIcon } from './icons';
 import { getTimeSlotShiftLabel } from '../utils/shiftUtils';
+import TelegramBotPanel from './TelegramBotPanel';
 
 const field = 'w-full min-w-0 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm';
 const button = 'inline-flex items-center justify-center gap-2 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium disabled:opacity-40';
@@ -91,9 +92,9 @@ const PublicationView: React.FC = () => {
     };
     return <div className="min-w-0 space-y-5">
         <header className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="text-2xl font-semibold text-gray-900">Публикация расписания</h1><p className="mt-1 text-sm text-gray-500">{active ? `Действующая версия v${active.number} · ${active.title}` : 'Опубликованных версий нет'}</p></div><button disabled={!window.electronAPI?.saveFile} className={button} onClick={() => action(store.handleSave)}><DocumentDownloadIcon className="h-4 w-4" />Сохранить проект</button></header>
-        <div className="flex flex-wrap border-b border-gray-200" role="tablist">{[['versions', 'Версии и согласование'], ['published', 'Опубликованная сетка'], ['api', 'API и календари']].map(([value, label]) => <button key={value} role="tab" aria-selected={tab === value} className={`border-b-2 px-4 py-3 text-sm font-medium ${tab === value ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-gray-500'}`} onClick={() => setTab(value)}>{label}</button>)}</div>
+        <div className="flex flex-wrap border-b border-gray-200" role="tablist">{[['versions', 'Версии и согласование'], ['published', 'Опубликованная сетка'], ['api', 'API и календари'], ['telegram', 'Telegram-бот']].map(([value, label]) => <button key={value} role="tab" aria-selected={tab === value} className={`border-b-2 px-4 py-3 text-sm font-medium ${tab === value ? 'border-emerald-700 text-emerald-800' : 'border-transparent text-gray-500'}`} onClick={() => setTab(value)}>{label}</button>)}</div>
         {error && <p role="alert" className="whitespace-pre-wrap max-h-64 overflow-y-auto border-l-4 border-red-500 bg-red-50 p-3 text-sm text-red-800">{error}</p>}{message && <p role="status" className="text-sm text-emerald-800">{message}</p>}
-        {tab === 'published' ? <PublishedScheduleView /> : tab === 'api' ? <PublicationAPI /> : <>
+        {tab === 'published' ? <PublishedScheduleView /> : tab === 'api' ? <PublicationAPI /> : tab === 'telegram' ? <TelegramBotPanel /> : <>
             <form aria-label="Новая версия расписания" className="grid gap-3 border-b border-gray-200 pb-5 sm:grid-cols-2 xl:grid-cols-4" onSubmit={event => { event.preventDefault(); action(() => { setSelectedId(store.submitScheduleForReview(title, note, timeZone)); }, 'Версия передана на согласование.'); }}>
                 <label className="text-sm">Название версии<input required maxLength={200} className={field} value={title} onChange={event => setTitle(event.target.value)} /></label>
                 <label className="text-sm">Комментарий<input maxLength={1000} className={field} value={note} onChange={event => setNote(event.target.value)} /></label>

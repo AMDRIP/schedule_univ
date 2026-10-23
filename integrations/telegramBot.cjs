@@ -1,17 +1,15 @@
-const fs = require('node:fs/promises');
-const path = require('node:path');
+const { randomBytes } = require('node:crypto');
+const { DEFAULT_OPTIONS, writer, scheduleMessages, changesMessages } = require('./botMessages.cjs');
+const { validDate } = require('./publicSchedule.cjs');
 
-const HELP = 'Расписание из опубликованной версии ВУЗа.\n/groups [поиск]\n/group название или ID\n/teachers [поиск]\n/teacher имя или ID\n/rooms [поиск]\n/room номер или ID\n/today /tomorrow /week\n/changes\n/subscribe /unsubscribe\n/forget - удалить настройки и подписку';
 const selectionKey = kind => ({ group: 'groupId', teacher: 'teacherId', room: 'classroomId' })[kind];
+const resourceOf = kind => ({ group: 'groups', teacher: 'teachers', room: 'classrooms' })[kind];
+const PAGE_SIZE = 8;
 const chunks = value => {
     const result = []; let part = '';
-    for (const line of value.split('\n')) {
-        if (part.length + line.length + 1 > 3500) { if (part) result.push(part); part = ''; }
-        for (let offset = 0; offset < line.length; offset += 3400) {
-            const piece = line.slice(offset, offset + 3400);
-            if (part.length + piece.length > 3500) { result.push(part); part = ''; }
-            part += piece + '\n';
-        }
+    for (const character of String(value)) {
+        if (part.length + character.length > 3400) { result.push(part); part = ''; }
+        part += character;
     }
     if (part) result.push(part); return result.length ? result : ['Нет занятий.'];
 };
@@ -20,60 +18,106 @@ const dayInZone = (now, timeZone) => {
     return `${parts.year}-${parts.month}-${parts.day}`;
 };
 const addDays = (date, days) => { const value = new Date(date + 'T12:00:00Z'); value.setUTCDate(value.getUTCDate() + days); return value.toISOString().slice(0, 10); };
-const describe = item => `${item.date} ${item.startTime}-${item.endTime}: ${item.subjectName} (${item.classType})\n${item.groupNames.join(', ')}${item.subgroupName ? ' / ' + item.subgroupName : ''}; ${item.teacherNames.join(', ')}; ${item.classroomName}`;
-function formatChanges(changes) {
-    return [`Добавлено: ${changes.added.length}; отменено: ${changes.removed.length}; изменено: ${changes.changed.length}.`,
-        ...changes.added.slice(0, 15).map(item => '+ ' + describe(item)), ...changes.removed.slice(0, 15).map(item => '- ' + describe(item)),
-        ...changes.changed.slice(0, 15).map(item => 'Было: ' + describe(item.before) + '\nСтало: ' + describe(item.after))].join('\n');
-}
+const menuKeyboard = choice => ({ keyboard: [['Сегодня', 'Завтра'], ['На неделю', 'Следующая неделя'], ['Выбрать группу', 'Преподаватель', 'Аудитория'], ['Изменения', choice?.subscribed ? 'Отписаться' : 'Подписаться']], resize_keyboard: true });
+const formatChanges = changes => changesMessages(changes, { name: 'Изменения расписания' }, '', { format: 'plain' }).join('\n\n');
 
-function createBot({ api, send, state = { offset: 0, chats: {} }, persist = async () => {}, now = () => new Date() }) {
+function createBot({ api, send, answer = async (_id) => {}, state = { offset: 0, chats: {} }, persist = async () => {}, now = () => new Date(), getOptions = () => DEFAULT_OPTIONS }) {
     state.chats ||= {};
+    const views = new Map(), pending = new Map();
+    const options = () => ({ ...DEFAULT_OPTIONS, ...getOptions() });
     const read = async (resource, params = {}) => {
         try { return await api(resource, params); }
         catch (problem) { const error = new Error('Published schedule unavailable.'); error.source = 'schedule'; error.status = problem.status; throw error; }
     };
-    const reply = async (id, message) => { for (const text of chunks(message)) await send(id, text); };
-    const filter = choice => ({ [selectionKey(choice.kind)]: choice.id });
+    const reply = async (id, message, markup) => send(id, message, { ...(options().format === 'html' ? { parse_mode: 'HTML' } : {}), ...(markup ? { reply_markup: markup } : {}) });
+    const replyMany = async (id, messages, markup) => { for (let index = 0; index < messages.length; index++) await reply(id, messages[index], index === messages.length - 1 ? markup : undefined); };
+    const filter = choice => ({ [selectionKey(choice.kind)]: choice.id, projectId: choice.projectId });
+    const choosePrompt = async chatId => reply(chatId, 'Выберите группу кнопкой ниже или напишите её название. Можно также выбрать преподавателя или аудиторию.', menuKeyboard());
+    const choose = async (chatId, kind, item, status) => {
+        pending.delete(chatId); views.delete(chatId);
+        const previous = state.chats[chatId];
+        const choice = state.chats[chatId] = { projectId: status.projectId, kind, id: item.id, name: item.name, version: status.version,
+            subscribed: previous?.projectId === status.projectId && previous.kind === kind && previous.id === item.id ? !!previous.subscribed : false };
+        await persist(state);
+        await reply(chatId, `${writer(options()).bold(item.name)}\nВыбрано расписание. Нажмите «Сегодня» или «На неделю».`, menuKeyboard(choice));
+    };
+    const showList = async (chatId, kind, query, status, page = 0, cached) => {
+        const response = cached || await read(resourceOf(kind), { projectId: status.projectId });
+        const exact = response.items.filter(item => item.id === query || item.name.toLocaleLowerCase('ru') === query.toLocaleLowerCase('ru'));
+        const items = query ? exact.length ? exact : response.items.filter(item => item.name.toLocaleLowerCase('ru').includes(query.toLocaleLowerCase('ru'))) : response.items;
+        if (query && items.length === 1) { await choose(chatId, kind, items[0], status); return; }
+        pending.set(chatId, kind);
+        if (!items.length) { await reply(chatId, 'Ничего не найдено в опубликованном расписании. Уточните название.', menuKeyboard(state.chats[chatId])); return; }
+        const pages = Math.ceil(items.length / PAGE_SIZE); page = Math.max(0, Math.min(page, pages - 1));
+        const nonce = randomBytes(6).toString('hex');
+        views.set(chatId, { nonce, kind, query, items, projectId: status.projectId, version: status.version });
+        if (views.size > 2000) views.delete(views.keys().next().value);
+        const keyboard = items.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE).map((item, index) => [{ text: item.name.slice(0, 60), callback_data: `pick:${nonce}:${page * PAGE_SIZE + index}` }]);
+        const navigation = [];
+        if (page > 0) navigation.push({ text: 'Назад', callback_data: `list:${nonce}:${page - 1}` });
+        if (page + 1 < pages) navigation.push({ text: 'Далее', callback_data: `list:${nonce}:${page + 1}` });
+        if (navigation.length) keyboard.push(navigation);
+        const label = { group: 'Группы', teacher: 'Преподаватели', room: 'Аудитории' }[kind];
+        await reply(chatId, `${writer(options()).bold(label)}\nНайдено: ${items.length}. Страница ${page + 1} из ${pages}.\nНажмите на название или введите текст для поиска.`, { inline_keyboard: keyboard });
+    };
     async function handle(update) {
-        const message = update.message;
-        if (!message?.text || message.chat?.type !== 'private') return;
-        const chatId = String(message.chat.id);
-        const [raw, ...args] = message.text.trim().split(/\s+/); const command = raw.split('@')[0].toLowerCase(); const query = args.join(' ');
-        if (command === '/forget') { delete state.chats[chatId]; await persist(state); await reply(chatId, 'Настройки и подписка удалены.'); return; }
-        if (command === '/start' || command === '/help') { await reply(chatId, HELP); return; }
-        if (command === '/unsubscribe') { if (state.chats[chatId]) state.chats[chatId].subscribed = false; await persist(state); await reply(chatId, 'Уведомления отключены.'); return; }
+        const callback = update.callback_query;
+        if (callback) await answer(callback.id);
+        const message = callback?.message || update.message;
+        if (message?.chat?.type !== 'private' || callback && String(callback.from?.id) !== String(message.chat.id)) return;
+        const chatId = String(message.chat.id); const rawText = String(message.text || '').trim();
+        const aliases = { 'Сегодня': '/today', 'Завтра': '/tomorrow', 'На неделю': '/week', 'Следующая неделя': '/nextweek', 'Выбрать группу': '/groups', 'Преподаватель': '/teachers', 'Аудитория': '/rooms', 'Изменения': '/changes', 'Подписаться': '/subscribe', 'Отписаться': '/unsubscribe' };
+        const [raw, ...args] = (aliases[rawText] || rawText).split(/\s+/); let command = raw.split('@')[0].toLowerCase(); const query = args.join(' ');
+        if (!callback && command === '/forget') { delete state.chats[chatId]; views.delete(chatId); pending.delete(chatId); await persist(state); await reply(chatId, 'Настройки и подписка удалены.', menuKeyboard()); return; }
+        if (!callback && command === '/unsubscribe') { if (state.chats[chatId]) state.chats[chatId].subscribed = false; await persist(state); await reply(chatId, 'Уведомления отключены.', menuKeyboard(state.chats[chatId])); return; }
+        if (!callback && ['/start', '/help'].includes(command)) {
+            const choice = state.chats[chatId];
+            await reply(chatId, `${writer(options()).bold('Расписание ВУЗа')}\n${choice ? 'Выбрано: ' + writer(options()).text(choice.name) : 'Нажмите «Выбрать группу» или напишите название группы.'}\nРасписание открывается кнопками ниже.`, menuKeyboard(choice)); return;
+        }
         const status = await read('status');
         let choice = state.chats[chatId];
-        if (choice && choice.projectId !== status.projectId) { delete state.chats[chatId]; choice = undefined; await persist(state); }
-        const resource = { '/groups': 'groups', '/teachers': 'teachers', '/rooms': 'classrooms', '/group': 'groups', '/teacher': 'teachers', '/room': 'classrooms' }[command];
-        if (resource) {
-            const response = await read(resource, { projectId: status.projectId }); const exact = response.items.find(item => item.id === query);
-            const items = exact ? [exact] : response.items.filter(item => item.name.toLocaleLowerCase('ru').includes(query.toLocaleLowerCase('ru')));
-            if (['/group', '/teacher', '/room'].includes(command) && query && items.length === 1) {
-                state.chats[chatId] = { projectId: status.projectId, kind: command.slice(1), id: items[0].id, name: items[0].name, version: status.version, subscribed: false };
-                await persist(state); await reply(chatId, `Выбрано: ${items[0].name}. /today /tomorrow /week; уведомления: /subscribe`); return;
+        if (choice && choice.projectId !== status.projectId) { delete state.chats[chatId]; views.delete(chatId); pending.delete(chatId); choice = undefined; await persist(state); }
+        let explicitDate;
+        if (callback) {
+            const parts = String(callback.data || '').split(':');
+            if (parts[0] === 'pick' || parts[0] === 'list') {
+                const view = views.get(chatId); const index = Number(parts[2]);
+                if (!view || parts.length !== 3 || view.nonce !== parts[1] || view.projectId !== status.projectId || view.version !== status.version || !Number.isSafeInteger(index) || index < 0) { await reply(chatId, 'Список устарел. Выберите объект заново.', menuKeyboard(choice)); return; }
+                if (parts[0] === 'list') { await showList(chatId, view.kind, view.query, status, index, { items: view.items }); return; }
+                if (!view.items[index]) return;
+                await choose(chatId, view.kind, view.items[index], status); return;
             }
-            await reply(chatId, items.length ? items.slice(0, 60).map(item => `${item.name} [${item.id}]`).join('\n') + (items.length > 60 ? '\nУточните поиск.' : '') : 'Не найдено в опубликованном расписании.'); return;
+            if (parts[0] === 'd' || parts[0] === 'w') {
+                if (parts.length !== 2 || !validDate(parts[1])) return;
+                explicitDate = parts[1]; command = parts[0] === 'd' ? '/today' : '/week';
+            } else return;
+        } else {
+            const kind = { '/groups': 'group', '/group': 'group', '/teachers': 'teacher', '/teacher': 'teacher', '/rooms': 'room', '/room': 'room' }[command];
+            if (kind) { await showList(chatId, kind, query, status); return; }
+            if (rawText && !rawText.startsWith('/') && !aliases[rawText]) { await showList(chatId, pending.get(chatId) || 'group', rawText, status); return; }
         }
-        if (!choice) { await reply(chatId, 'Выберите группу, преподавателя или аудиторию: /group, /teacher, /room.'); return; }
+        if (!choice) { await choosePrompt(chatId); return; }
+        pending.delete(chatId);
         if (command === '/subscribe') {
             choice.subscribed = true; choice.version = status.version; await persist(state);
-            await reply(chatId, `Подписка включена: ${choice.name}. Уведомления только об изменениях опубликованного расписания.`); return;
+            await reply(chatId, `Уведомления включены: ${writer(options()).bold(choice.name)}.`, menuKeyboard(choice)); return;
         }
         if (command === '/changes') {
             try {
-                const response = await read('changes', { ...filter(choice), since: choice.version, projectId: choice.projectId });
-                await reply(chatId, `Версия ${response.version}. ${choice.name}\n${formatChanges(response.changes)}`);
-            } catch (error) { if (error.status !== 409) throw error; await reply(chatId, 'Прошлая версия недоступна. Обновите расписание: /week.'); }
+                const response = await read('changes', { ...filter(choice), since: choice.version });
+                await replyMany(chatId, changesMessages(response.changes, choice, response.version, options()), menuKeyboard(choice));
+            } catch (error) { if (error.status !== 409) throw error; await reply(chatId, 'Предыдущая версия недоступна. Откройте актуальное расписание.', menuKeyboard(choice)); }
             choice.version = status.version; await persist(state); return;
         }
-        if (!['/today', '/tomorrow', '/week'].includes(command)) { await reply(chatId, HELP); return; }
-        const today = dayInZone(now(), status.timeZone);
-        const from = command === '/tomorrow' ? addDays(today, 1) : command === '/week' ? addDays(today, -((new Date(today + 'T12:00:00Z').getUTCDay() + 6) % 7)) : today;
-        const to = command === '/week' ? addDays(from, 6) : from;
-        const response = await read('schedule', { ...filter(choice), projectId: choice.projectId, from, to });
-        await reply(chatId, `${choice.name}. Версия ${response.version}\n${from}${from !== to ? ' - ' + to : ''}\n${response.lessons.length ? response.lessons.map(describe).join('\n\n') : 'Занятий нет.'}`);
+        if (!['/today', '/tomorrow', '/week', '/nextweek'].includes(command)) { await choosePrompt(chatId); return; }
+        const today = explicitDate || dayInZone(now(), status.timeZone);
+        let from = command === '/tomorrow' ? addDays(today, 1) : ['/week', '/nextweek'].includes(command) ? addDays(today, -((new Date(today + 'T12:00:00Z').getUTCDay() + 6) % 7)) : today;
+        if (command === '/nextweek') from = addDays(from, 7);
+        const weekly = ['/week', '/nextweek'].includes(command); const to = weekly ? addDays(from, 6) : from;
+        const response = await read('schedule', { ...filter(choice), from, to });
+        const keyboard = [[{ text: weekly ? 'Предыдущая неделя' : 'Предыдущий день', callback_data: `${weekly ? 'w' : 'd'}:${addDays(from, weekly ? -7 : -1)}` }, { text: weekly ? 'Следующая неделя' : 'Следующий день', callback_data: `${weekly ? 'w' : 'd'}:${addDays(from, weekly ? 7 : 1)}` }]];
+        if (!response.lessons.length && status.range?.start && (to < status.range.start || from > status.range.end)) keyboard.push([{ text: 'К началу расписания', callback_data: `w:${status.range.start}` }]);
+        await replyMany(chatId, scheduleMessages(response, choice, { from, to }, options()), { inline_keyboard: keyboard });
     }
     async function notify() {
         if (!Object.values(state.chats).some(choice => choice.subscribed)) return;
@@ -82,13 +126,13 @@ function createBot({ api, send, state = { offset: 0, chats: {} }, persist = asyn
             if (!choice.subscribed) continue;
             try {
                 if (choice.projectId !== status.projectId) {
-                    await reply(chatId, 'Источник расписания сменился. Выберите группу или преподавателя заново. Подписка отключена.'); delete state.chats[chatId];
+                    await reply(chatId, 'Источник расписания сменился. Выберите группу заново. Подписка отключена.', menuKeyboard()); delete state.chats[chatId];
                 } else if (choice.version !== status.version) {
                     try {
-                        const response = await read('changes', { ...filter(choice), since: choice.version, projectId: choice.projectId });
+                        const response = await read('changes', { ...filter(choice), since: choice.version });
                         const changes = response.changes;
-                        if (changes.added.length || changes.removed.length || changes.changed.length) await reply(chatId, `Изменилось расписание: ${choice.name}. Версия ${status.version}\n${formatChanges(changes)}`);
-                    } catch (error) { if (error.status !== 409) throw error; await reply(chatId, 'Вышла новая версия расписания. Сравнение недоступно; проверьте /week.'); }
+                        if (changes.added.length || changes.removed.length || changes.changed.length) await replyMany(chatId, changesMessages(changes, choice, response.version, options()), menuKeyboard(choice));
+                    } catch (error) { if (error.status !== 409) throw error; await reply(chatId, 'Вышла новая версия расписания. Откройте «На неделю».', menuKeyboard(choice)); }
                     choice.version = status.version;
                 }
                 await persist(state);
@@ -102,7 +146,8 @@ function createBot({ api, send, state = { offset: 0, chats: {} }, persist = asyn
         try { await handle(update); }
         catch (error) {
             if (error.source !== 'schedule') throw error;
-            await reply(String(update.message.chat.id), 'Опубликованное расписание временно недоступно. Повторите запрос позднее. /unsubscribe и /forget работают без подключения к расписанию.');
+            const chat = update.callback_query?.message?.chat || update.message?.chat;
+            if (chat?.type === 'private') await reply(String(chat.id), 'Опубликованное расписание временно недоступно. Повторите запрос позднее.', menuKeyboard(state.chats[String(chat.id)]));
         }
     } };
 }
@@ -121,50 +166,14 @@ function createAPI(base, token, fetchImpl = fetch) {
 }
 
 async function run() {
-    const token = process.env.TG_BOT_TOKEN;
-    if (!token || !/^\d+:[\w-]+$/.test(token)) throw new Error('Set TG_BOT_TOKEN.');
+    const { createBotRuntime } = require('./botRuntime.cjs');
     const api = createAPI(process.env.SCHEDULE_API_URL || 'http://127.0.0.1:8597', process.env.SCHEDULE_API_TOKEN);
-    const filename = path.resolve(process.env.SCHEDULE_BOT_STATE || '.telegram-bot.local.json');
-    let state = { offset: 0, chats: {} };
-    try { state = JSON.parse(await fs.readFile(filename, 'utf8')); }
-    catch (error) { if (error.code !== 'ENOENT') throw new Error('Bot state is invalid; preserve it and inspect before restarting.'); }
-    if (!Number.isSafeInteger(state.offset) || state.offset < 0 || !state.chats || typeof state.chats !== 'object' || Array.isArray(state.chats)) throw new Error('Invalid bot state.');
-    if (Object.entries(state.chats).some(([id, choice]) => !/^\d+$/.test(id) || !choice || !selectionKey(choice.kind) || typeof choice.id !== 'string' || typeof choice.projectId !== 'string' || typeof choice.name !== 'string' || !Number.isSafeInteger(choice.version) || choice.version < 1 || typeof choice.subscribed !== 'boolean')) throw new Error('Invalid bot subscription state.');
-    const persist = async value => { const temporary = filename + '.tmp'; await fs.writeFile(temporary, JSON.stringify(value), { mode: 0o600 }); await fs.rename(temporary, filename); };
-    let stopping = false; let controller;
-    const stop = () => { stopping = true; controller?.abort(); };
+    const runtime = createBotRuntime({ token: process.env.TG_BOT_TOKEN, api, stateDirectory: process.cwd(), stateFile: process.env.SCHEDULE_BOT_STATE });
+    runtime.start();
+    const stop = () => runtime.stop();
     process.once('SIGINT', stop); process.once('SIGTERM', stop);
-    const telegram = async (method, body) => {
-        controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 40000);
-        try {
-            const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: controller.signal, redirect: 'error' });
-            const result = await response.json();
-            if (!result.ok) { const error = new Error('Telegram request failed.'); error.status = result.error_code; error.retryAfter = result.parameters?.retry_after; throw error; }
-            return result.result;
-        } finally { clearTimeout(timeout); }
-    };
-    const bot = createBot({ api, state, persist, send: async (chatId, text) => { await telegram('sendMessage', { chat_id: chatId, text }); await new Promise(resolve => setTimeout(resolve, 1050)); } });
     console.log('Telegram bot started. Private chats; published schedules only.');
-    while (!stopping) {
-        try {
-            const updates = await telegram('getUpdates', { offset: state.offset, timeout: 25, allowed_updates: ['message'] });
-            for (const update of updates) {
-                if (stopping) break;
-                try { await bot.handle(update); }
-                catch (error) {
-                    if (error.status === 403) { delete state.chats[String(update.message?.chat?.id)]; }
-                    else throw error;
-                }
-                state.offset = update.update_id + 1; await persist(state);
-            }
-            await bot.notify();
-        } catch (error) {
-            if (stopping) break;
-            console.error('Bot service temporarily unavailable; retrying without logging tokens or message contents.');
-            await new Promise(resolve => setTimeout(resolve, Math.min(60000, Math.max(3000, Number(error.retryAfter || 0) * 1000))));
-        }
-    }
-    await persist(state);
+    await runtime.finished();
 }
 if (require.main === module) run().catch(() => { console.error('Cannot start bot. Check environment, Node.js version and state file. Tokens are never logged.'); process.exitCode = 1; });
 module.exports = { createBot, createAPI, chunks, formatChanges, dayInZone, run };

@@ -38,6 +38,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPublicationServerStatus: () => ipcRenderer.invoke('publication-server-status'),
   startPublicationServer: (port) => ipcRenderer.invoke('start-publication-server', port),
   stopPublicationServer: () => ipcRenderer.invoke('stop-publication-server'),
+  getTelegramBotStatus: () => ipcRenderer.invoke('telegram-bot-status'),
+  saveTelegramBotSettings: (settings) => ipcRenderer.invoke('telegram-bot-save', settings),
+  checkTelegramBotConnection: () => ipcRenderer.invoke('telegram-bot-check'),
+  startTelegramBot: () => ipcRenderer.invoke('telegram-bot-start'),
+  stopTelegramBot: () => ipcRenderer.invoke('telegram-bot-stop'),
+  forgetTelegramBotToken: () => ipcRenderer.invoke('telegram-bot-forget'),
 
   // --- File System and Window API ---
   setWindowTitle: (title) => ipcRenderer.invoke('set-window-title', title),

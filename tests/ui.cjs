@@ -19,10 +19,10 @@ async function run() {
         res.setHeader('Content-Type', filename.endsWith('.css') ? 'text/css' : 'text/javascript'); fs.createReadStream(filename).pipe(res);
     });
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    let app;
+    let app; const errors = [];
     try {
         app = await _electron.launch({ executablePath: require('electron'), args: [path.join(__dirname, 'ui-main.cjs')], env: { ...process.env, UNIV_TEST_URL: `http://127.0.0.1:${server.address().port}/` }, timeout: 30000 });
-        const page = await app.firstWindow(); const errors = []; page.on('pageerror', error => errors.push(error.message));
+        const page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
         await page.waitForFunction(() => !!window.__store);
         const version = require('../package.json').version;
         await page.getByText(`Версия ${version}`, { exact: true }).waitFor();
@@ -296,8 +296,71 @@ async function run() {
         await page.waitForFunction(() => window.__store.publications.revisions[0]?.status === 'published');
         assert.equal(await page.evaluate(() => window.__store.getFullState().projectId), originalPublication.projectId);
         await page.evaluate(() => window.__setRole('Администратор'));
+        await page.evaluate(() => {
+            window.__botCalls = [];
+            window.__botStatus = { autoStart: false, format: 'html', layout: 'detailed', showTeacher: true, showRoom: true, hasToken: false, secureStorageAvailable: true, wanted: false, phase: 'stopped', lastError: '', lastConnectedAt: null, username: '', name: '', subscribers: 0, publicationTitle: 'Осенний семестр', publicationVersion: 1 };
+            const status = () => ({ ...window.__botStatus });
+            window.electronAPI = {
+                autosave: async () => {}, setWindowTitle: () => {}, onRestoreAutosaveRequest: () => {},
+                getTelegramBotStatus: async () => status(),
+                saveTelegramBotSettings: async input => {
+                    window.__botCalls.push('save');
+                    const { token, ...options } = input;
+                    Object.assign(window.__botStatus, options, { hasToken: !!token || window.__botStatus.hasToken }); return status();
+                },
+                checkTelegramBotConnection: async () => { window.__botCalls.push('check'); Object.assign(window.__botStatus, { username: 'automated_fixture_bot', name: 'Тестовый бот' }); return status(); },
+                startTelegramBot: async () => { window.__botCalls.push('start'); Object.assign(window.__botStatus, { wanted: true, phase: 'connected', lastConnectedAt: new Date().toISOString() }); return status(); },
+                stopTelegramBot: async () => { window.__botCalls.push('stop'); Object.assign(window.__botStatus, { wanted: false, phase: 'stopped' }); return status(); },
+                forgetTelegramBotToken: async () => { window.__botCalls.push('forget'); Object.assign(window.__botStatus, { wanted: false, phase: 'stopped', hasToken: false, autoStart: false }); return status(); },
+            };
+        });
+        await page.getByRole('link', { name: 'Telegram-бот', exact: true }).click();
+        const botForm = page.getByRole('form', { name: 'Настройки Telegram-бота', exact: true });
+        await page.getByText('Остановлен', { exact: true }).waitFor();
+        assert.equal(await botForm.getByRole('button', { name: 'Запустить бота', exact: true }).isDisabled(), true);
+        const fakeToken = '12345:synthetic_ui_fixture_not_a_real_token';
+        await botForm.getByLabel('Токен BotFather', { exact: true }).fill(fakeToken);
+        assert.equal(await botForm.getByLabel('Токен BotFather', { exact: true }).getAttribute('type'), 'password');
+        await botForm.getByLabel('Автозапуск вместе с приложением', { exact: true }).check();
+        await botForm.getByLabel('Вид ответа', { exact: true }).selectOption('compact');
+        await botForm.getByRole('button', { name: 'Сохранить настройки', exact: true }).click();
+        await page.getByText('Настройки сохранены.', { exact: true }).waitFor();
+        assert.equal(await botForm.getByLabel('Токен BotFather', { exact: true }).inputValue(), '');
+        assert.equal(await page.evaluate(() => window.__botStatus.autoStart), true);
+        assert.equal(await page.evaluate(() => JSON.stringify(window.__store.getFullState()).includes('synthetic_ui_fixture')), false);
+        await botForm.getByRole('button', { name: 'Проверить подключение', exact: true }).click();
+        await page.getByRole('link', { name: '@automated_fixture_bot', exact: true }).waitFor();
+        await botForm.getByRole('button', { name: 'Запустить бота', exact: true }).click();
+        await page.getByText('Подключён', { exact: true }).waitFor();
+        assert.ok(await page.getByLabel('Предпросмотр ответа бота', { exact: true }).locator('b').count() > 0);
+        await botForm.getByLabel('Оформление ответов', { exact: true }).selectOption('plain');
+        assert.equal(await page.getByLabel('Предпросмотр ответа бота', { exact: true }).locator('b').count(), 0);
+        assert.equal(await botForm.getByRole('button', { name: 'Проверить подключение', exact: true }).isDisabled(), true);
+        await botForm.getByRole('button', { name: 'Сохранить настройки', exact: true }).click();
+        await page.getByText('Настройки сохранены.', { exact: true }).waitFor();
+        await page.evaluate(() => Object.assign(window.__botStatus, { phase: 'reconnecting', lastError: 'Тест: связь с Telegram временно потеряна.' }));
+        await page.getByText('Переподключение', { exact: true }).waitFor();
+        await page.getByRole('alert').filter({ hasText: 'Тест: связь с Telegram временно потеряна.' }).waitFor();
+        await page.setViewportSize({ width: 760, height: 1000 });
+        const botBounds = await botForm.boundingBox();
+        assert.ok(botBounds.x >= 0 && botBounds.x + botBounds.width <= 761);
+        await page.screenshot({ path: '.test-output/telegram-5510-compact.png', fullPage: true });
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await botForm.getByRole('button', { name: 'Остановить бота', exact: true }).click();
+        await page.getByText('Бот остановлен.', { exact: true }).waitFor();
+        page.once('dialog', dialog => dialog.accept());
+        await botForm.getByRole('button', { name: 'Удалить токен', exact: true }).click();
+        await page.getByText('Сохранённый токен удалён.', { exact: true }).waitFor();
+        assert.equal(await botForm.getByLabel('Автозапуск вместе с приложением', { exact: true }).isChecked(), false);
+        assert.deepEqual(await page.evaluate(() => window.__botCalls), ['save', 'check', 'start', 'save', 'stop', 'forget']);
+        await page.getByRole('link', { name: 'Публикация расписания', exact: true }).click();
+        await page.getByRole('tab', { name: 'Telegram-бот', exact: true }).click();
+        await page.getByRole('form', { name: 'Настройки Telegram-бота', exact: true }).waitFor();
         assert.deepEqual(errors, []);
-        console.log('Electron UI: version, coursework/student CRUD, migration, cross-group enrollment/generation/personal calendar, campus routes/accessibility/audit, bulk subject-room links, SCHD round trip, mobile modal bounds, individual defense, plan versions, balance, repair/undo/stale rejection, substitutions, session completion/report/stale rejection, isolated what-if trial, concurrent and nested workers, shared shifts, publication/diff/stale review, read-only published view, publication round trip and compact layout passed.');
+        console.log('Electron UI: existing scheduling/publication regressions and Telegram token input/save/check/start/stop/delete, autostart, formatting preview, reconnection status, project secrecy, compact bounds and both navigation paths passed.');
+    } catch (error) {
+        if (app) console.error('UI diagnostics:', { errors, navigation: await (await app.firstWindow()).getByRole('link').allTextContents() });
+        throw error;
     } finally {
         if (app) await app.close();
         await new Promise(resolve => server.close(resolve));
