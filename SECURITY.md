@@ -1,7 +1,7 @@
 # Security policy
 
-This repository currently produces a release candidate, not a security-certified product.
-Only the current release candidate and latest stable application release receive fixes.
+A stable release is not a security-certified product.
+Only the latest stable application release and current release candidate receive fixes.
 
 Do not publish projects, student records, bot tokens, API keys, or crash dumps in public issues.
 Report vulnerabilities through GitHub private vulnerability reporting when enabled; otherwise

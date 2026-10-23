@@ -1,8 +1,8 @@
 !include nsDialogs.nsh
 
 !macro customWelcomePage
-  !define MUI_WELCOMEPAGE_TITLE "Расписание ВУЗ: кандидат в релиз"
-  !define MUI_WELCOMEPAGE_TEXT "Версия 6000.2310.2026rc1$\r$\n$\r$\nМастер установит приложение и зарегистрирует файлы .schd.$\r$\n$\r$\nЭто предварительная версия для пилотной эксплуатации. Перед обновлением сохраните проекты и отдельную копию важных данных."
+  !define MUI_WELCOMEPAGE_TITLE "Установка приложения Расписание ВУЗ"
+  !define MUI_WELCOMEPAGE_TEXT "Версия 6001.2310.2026$\r$\n$\r$\nМастер установит приложение и зарегистрирует файлы .schd.$\r$\n$\r$\nПеред обновлением сохраните проекты и отдельную копию важных данных."
   !insertmacro MUI_PAGE_WELCOME
 !macroend
 
@@ -19,7 +19,7 @@ Function ScheduleReviewPage
   ${If} $0 == error
     Abort
   ${EndIf}
-  ${NSD_CreateLabel} 0 0 100% 18u "Расписание ВУЗ 6000.2310.2026rc1"
+  ${NSD_CreateLabel} 0 0 100% 18u "Расписание ВУЗ 6001.2310.2026"
   Pop $0
   ${NSD_CreateLabel} 0 24u 100% 28u "Папка приложения:$\r$\n$INSTDIR"
   Pop $0

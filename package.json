@@ -1,8 +1,8 @@
 {
   "name": "schedule-system-app",
-  "version": "6000.2310.2026-rc.1",
-  "displayVersion": "6000.2310.2026rc1",
-  "releaseType": "кандидат в релиз",
+  "version": "6001.2310.2026",
+  "displayVersion": "6001.2310.2026",
+  "releaseType": "стабильный релиз",
   "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
   "main": "main.js",
   "scripts": {
@@ -66,8 +66,8 @@
         "provider": "github",
         "owner": "AMDRIP",
         "repo": "schedule_univ",
-        "channel": "rc",
-        "releaseType": "prerelease"
+        "channel": "latest",
+        "releaseType": "release"
       }
     ],
     "files": [

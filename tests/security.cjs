@@ -23,7 +23,8 @@ async function run() {
         const preferences = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
         assert.equal(preferences.sandbox, true); assert.equal(preferences.contextIsolation, true); assert.equal(preferences.nodeIntegration, false); assert.equal(preferences.webSecurity, true);
         const updates = await app.evaluate(() => { const updater = globalThis.__univTestRequire('electron-updater').autoUpdater; return { channel: updater.channel, allowPrerelease: updater.allowPrerelease, allowDowngrade: updater.allowDowngrade }; });
-        assert.deepEqual(updates, { channel: 'rc', allowPrerelease: true, allowDowngrade: false });
+        const isPrerelease = !!require('semver').prerelease(require('../package.json').version);
+        assert.deepEqual(updates, { channel: isPrerelease ? 'rc' : 'latest', allowPrerelease: isPrerelease, allowDowngrade: false });
         const injected = await page.evaluate(() => { const script = document.createElement('script'); script.textContent = 'window.__injected = 1'; document.body.append(script); return window.__injected; });
         assert.equal(injected, undefined);
         assert.equal((await page.evaluate(() => window.electronAPI.saveFile('C:\\Windows\\unsafe.txt', '{"schedule":[]}'))).success, false);

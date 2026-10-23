@@ -45,7 +45,7 @@ const listen = (channel, callback) => ipcMain.on(channel, (event, ...args) => { 
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
 autoUpdater.allowPrerelease = !!prerelease(require('./package.json').version);
-if (autoUpdater.allowPrerelease) autoUpdater.channel = 'rc';
+autoUpdater.channel = autoUpdater.allowPrerelease ? 'rc' : 'latest';
 autoUpdater.allowDowngrade = false;
 
 // --- App Settings Management ---

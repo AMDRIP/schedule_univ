@@ -13,6 +13,8 @@ assert.ok(fs.readFileSync('CHANGELOG.md', 'utf8').includes(`## [${pkg.version}]`
 const archive = path.resolve('dist/win-unpacked/resources/app.asar');
 const packed = JSON.parse(asar.extractFile(archive, 'package.json').toString('utf8'));
 assert.equal(packed.version, pkg.version);
+assert.equal(packed.displayVersion, pkg.displayVersion);
+assert.equal(packed.releaseType, pkg.releaseType);
 const files = asar.listPackage(archive).map(name => name.replaceAll('\\', '/'));
 assert.ok(files.some(name => name.endsWith('/dist/schedulerBrowserWorker.js')));
 for (const name of ['main.js', 'preload.js', 'integrations/publicSchedule.cjs', 'integrations/readServer.cjs', 'integrations/server.cjs', 'integrations/telegramBot.cjs', 'integrations/botMessages.cjs', 'integrations/botRuntime.cjs', 'integrations/botController.cjs', 'integrations/projectStorage.cjs', 'integrations/projectValidation.cjs', 'integrations/desktopSecurity.cjs', 'integrations/printWindow.cjs', 'integrations/.env.example', 'docs/PUBLICATION_API.md', 'docs/STABILITY.md', 'SECURITY.md']) {
@@ -29,6 +31,8 @@ assert.equal(pkg.build.nsis.deleteAppDataOnUninstall, false);
 assert.ok(fs.readFileSync('build/installer.nsh', 'utf8').includes(pkg.displayVersion));
 assert.ok(fs.readFileSync('index.html', 'utf8').includes('Content-Security-Policy'));
 const channel = require('semver').prerelease(pkg.version) ? 'rc' : 'latest';
+assert.equal(pkg.build.publish[0].channel, channel);
+assert.equal(pkg.build.publish[0].releaseType, channel === 'rc' ? 'prerelease' : 'release');
 const manifest = yaml.load(fs.readFileSync(`dist/${channel}.yml`, 'utf8'));
 assert.equal(manifest.version, pkg.version);
 const filename = path.join('dist', `schedule-system-app-setup-${pkg.version}.exe`);
