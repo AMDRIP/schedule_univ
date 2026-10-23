@@ -11,19 +11,22 @@ export const prepareLearningGroupUpdate = (data: GenerationData, draft: Elective
     const elective = { ...draft, name: draft.name.trim(), groupId: participants.groupIds[0], groupIds: participants.groupIds, studentIds: participants.studentIds.length ? participants.studentIds : undefined };
     const electives = data.electives.some(item => item.id === elective.id) ? data.electives.map(item => item.id === elective.id ? elective : item) : [...data.electives, elective];
     const affected = data.schedule.filter(entry => matchesElectiveUid(entry.unscheduledUid, elective.id) && (!entry.date || entry.date >= data.settings.semesterStart && entry.date <= data.settings.semesterEnd));
-    if (affected.length > Math.ceil(elective.hoursPerSemester / 2)) throw new Error('В расписании больше занятий, чем в новом объёме часов. Сначала снимите лишние занятия.');
+    const period = { start: data.settings.semesterStart, end: data.settings.semesterEnd };
+    if (expandScheduleOccurrences(data, affected, period).length > Math.ceil(elective.hoursPerSemester / 2)) throw new Error('В расписании больше занятий, чем в новом объёме часов. Сначала снимите лишние занятия.');
     const demand = electiveDemand(elective, data.students || [], data.groups)[0];
     const schedule = data.schedule.map(entry => {
         if (!affected.includes(entry)) return entry;
         const { uid, studentCount, teacherCandidates, ...changes } = demand;
         const next: ScheduleEntry = { ...entry, ...changes };
-        const identity = (value: ScheduleEntry) => JSON.stringify([value.subjectId, value.teacherId, value.classType, value.deliveryMode, [...(value.studentIds || [])].sort(), [...(value.groupIds?.length ? value.groupIds : [value.groupId])].sort(), value.classroomTypeIds, value.requiredClassroomTagIds, value.pinnedClassroomId, value.preferredTimeSlotIds]);
+        const identity = (value: ScheduleEntry) => JSON.stringify([value.subjectId, value.teacherId, value.classType, value.deliveryMode, value.semester, [...(value.studentIds || [])].sort(), [...(value.groupIds?.length ? value.groupIds : [value.groupId])].sort(), value.classroomTypeIds, value.requiredClassroomTagIds, value.pinnedClassroomId, value.preferredTimeSlotIds]);
         if (entry.locked && identity(entry) !== identity(next)) throw new Error('Состав закреплённого занятия нельзя изменить. Сначала снимите закрепление.');
         return next;
     });
     const validate = createScheduleValidator({ ...data, electives, schedule }, undefined, { finalValidation: false });
-    for (const entry of expandScheduleOccurrences({ ...data, schedule }, schedule.filter(item => affected.some(old => old.id === item.id)), { start: data.settings.semesterStart, end: data.settings.semesterEnd })) {
-        const result = validate(entry, schedule);
+    const occurrences = expandScheduleOccurrences({ ...data, schedule }, schedule, period);
+    const affectedIds = new Set(expandScheduleOccurrences({ ...data, schedule }, schedule.filter(item => affected.some(old => old.id === item.id)), period).map(entry => entry.id));
+    for (const entry of occurrences.filter(item => affectedIds.has(item.id))) {
+        const result = validate(entry, occurrences);
         if (!result.valid) throw new Error(`Новый состав не помещается в существующее расписание (${entry.date}): ${result.issues.join(' ')}`);
     }
     return { elective, electives, schedule };

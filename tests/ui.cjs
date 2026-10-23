@@ -9,7 +9,9 @@ async function run() {
     const root = path.resolve(__dirname, '..');
     esbuild.buildSync({ entryPoints: ['tests/uiHarness.tsx'], bundle: true, outfile: '.test-output/ui-harness.js', platform: 'browser', external: ['bindings', 'fs', 'path', 'node-addon-api'] });
     esbuild.buildSync({ entryPoints: ['tests/fixtures.ts'], bundle: true, outfile: '.test-output/fixtures.cjs', platform: 'node', format: 'cjs' });
+    esbuild.buildSync({ entryPoints: ['services/heuristicScheduler.ts'], bundle: true, outfile: '.test-output/validator.cjs', platform: 'node', format: 'cjs', external: ['bindings', 'fs', 'path', 'node-addon-api'] });
     const { makeFixture, config } = require('../.test-output/fixtures.cjs');
+    const { createScheduleValidator } = require('../.test-output/validator.cjs');
     const server = http.createServer((req, res) => {
         if (req.url === '/') { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.end('<html><head><meta charset="utf-8"><link rel="stylesheet" href="/TWD/output.css"></head><body><div id="root"></div><script src="/.test-output/ui-harness.js"></script></body></html>'); return; }
         const filename = path.resolve(root, '.' + decodeURIComponent(req.url.split('?')[0]));
@@ -121,6 +123,13 @@ async function run() {
         assert.equal(trajectoryResult.scheduled, 1); assert.equal(trajectoryResult.unscheduled, 0);
         await page.waitForFunction(() => window.__store.schedule[0]?.studentIds?.length === 2);
         await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+        await page.evaluate(() => { const data = window.__store.getFullState(); data.schedule = data.schedule.map(entry => ({ ...entry, date: undefined, day: 'Понедельник' })); window.__store.loadFullState(data); });
+        await page.waitForFunction(() => window.__store.schedule.length === 1 && !window.__store.schedule[0].date);
+        await page.getByRole('button', { name: 'Редактировать объединение Межгрупповой семинар', exact: true }).click();
+        await enrollmentForm.getByLabel('Название объединения', { exact: true }).fill('Межгрупповой семинар — шаблон');
+        await enrollmentForm.getByRole('button', { name: 'Сохранить объединение', exact: true }).click();
+        await page.waitForFunction(() => window.__store.electives[0]?.name === 'Межгрупповой семинар — шаблон');
+        assert.equal(await page.evaluate(() => window.__store.schedule[0].date), undefined);
         await page.getByRole('link', { name: 'Личный календарь', exact: true }).click();
         await page.getByLabel('Обучающийся траектории', { exact: true }).selectOption('b');
         await page.getByRole('cell', { name: 'Индивидуальная запись', exact: true }).waitFor();
@@ -231,10 +240,21 @@ async function run() {
         assert.equal(pool.peak, 2); assert.equal(pool.active, 0);
         const innerData = makeFixture();
         innerData.classrooms = Array.from({ length: 24 }, (_, i) => ({ ...innerData.classrooms[0], id: `inner-room-${i}` }));
+        innerData.students = [{ id: 'inner-student-a', name: 'Анна worker', groupId: 'group', extraTransitionMinutes: 5 }, { id: 'inner-student-b', name: 'Борис worker', groupId: 'group' }];
+        innerData.buildingPlans = [{ id: 'north', name: 'Северный', floors: [], travelMinutesTo: { south: 25 }, updatedAt: '' }, { id: 'south', name: 'Южный', floors: [], travelMinutesTo: { north: 25 }, updatedAt: '' }];
+        innerData.classrooms.forEach((room, index) => { room.roomMetadata = { buildingPlanId: index < 12 ? 'north' : 'south', floorNumber: 1 }; });
+        innerData.settings.travelPolicy = { enabled: true, sameBuildingMinutes: 3, perFloorMinutes: 2, betweenBuildingsMinutes: 25 };
+        innerData.subjects[0].classroomTypeRequirements['Факультатив'] = ['type'];
+        innerData.electives = [{ id: 'inner-elective', name: 'Worker-семинар', subjectId: 'subject', teacherId: 'teacher', groupId: 'group', studentIds: ['inner-student-a'], hoursPerSemester: 2 }];
         await page.evaluate(data => window.__store.loadFullState(data), innerData);
         await page.waitForFunction(() => window.__store.schedule.length === 0);
         const oneIteration = await page.evaluate(async configuration => window.__store.runScheduler('heuristic', configuration), { ...config, iterations: 1, parallelWorkers: 4 });
-        assert.equal(oneIteration.scheduled, 5); assert.equal(oneIteration.unscheduled, 0);
+        assert.equal(oneIteration.scheduled, 6); assert.equal(oneIteration.unscheduled, 0);
+        await page.waitForFunction(() => window.__store.schedule.length === 6);
+        const workerSnapshot = await page.evaluate(() => window.__store.getFullState());
+        assert.ok(workerSnapshot.schedule.some(entry => entry.studentIds?.includes('inner-student-a')));
+        const validateWorkerResult = createScheduleValidator(workerSnapshot);
+        assert.ok(workerSnapshot.schedule.every(entry => validateWorkerResult(entry).valid));
         const inner = await page.evaluate(() => window.__candidateMetrics);
         assert.equal(inner.workers, 3); assert.ok(inner.candidates > 0); assert.equal(inner.fallbacks, 0);
         assert.equal(await page.evaluate(() => window.__poolStats.active), 0);

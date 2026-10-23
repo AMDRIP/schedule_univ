@@ -1,7 +1,7 @@
 import { AcademicWork, ScheduleEntry, Student, UnscheduledEntry } from '../types';
 
 type Entry = Pick<ScheduleEntry, 'groupId' | 'groupIds' | 'studentIds' | 'academicWorkId' | 'teacherId' | 'additionalTeacherIds' | 'classroomId'>;
-export const groupIdsOf = (entry: Pick<Entry, 'groupId' | 'groupIds'>) => entry.groupIds?.length ? entry.groupIds : entry.groupId ? [entry.groupId] : [];
+export const groupIdsOf = (entry: Pick<Entry, 'groupId' | 'groupIds'>) => [...new Set((entry.groupIds?.length ? entry.groupIds : entry.groupId ? [entry.groupId] : []).filter(Boolean))];
 export const isIndividualEntry = (entry: Pick<Entry, 'studentIds' | 'academicWorkId'>) => !!(entry.academicWorkId || entry.studentIds?.length);
 export const studentIdentity = (name: string, groupId: string) => `student-${encodeURIComponent(groupId)}-${encodeURIComponent(name.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU'))}`;
 export const migrateStudents = (students: Student[] = [], works: AcademicWork[] = [], schedule: ScheduleEntry[] = []) => {
@@ -19,7 +19,7 @@ export const migrateStudents = (students: Student[] = [], works: AcademicWork[] 
         return work?.studentId && !entry.studentIds?.length ? { ...entry, studentIds: [work.studentId] } : entry;
     }) };
 };
-export const studentIdsOf = (entry: Pick<Entry, 'studentIds' | 'academicWorkId'>) => entry.studentIds?.length ? entry.studentIds : entry.academicWorkId ? [`work:${entry.academicWorkId}`] : [];
+export const studentIdsOf = (entry: Pick<Entry, 'studentIds' | 'academicWorkId'>) => [...new Set(entry.studentIds?.length ? entry.studentIds : entry.academicWorkId ? [`work:${entry.academicWorkId}`] : [])];
 export const resolveParticipantEntry = (entry: ScheduleEntry, works: AcademicWork[] = []) => {
     const work = works.find(work => work.id === entry.academicWorkId);
     return work && !entry.studentIds?.length ? { ...entry, studentIds: [work.studentId || studentIdentity(work.studentName, work.groupId)] } : entry;

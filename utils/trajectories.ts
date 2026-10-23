@@ -1,6 +1,8 @@
 import { Elective, Group, ScheduleEntry, Student, UnscheduledEntry, DeliveryMode, ClassType, Subject } from '../types';
 import { groupIdsOf } from './participants';
 
+export const electiveIdOf = (uid?: string) => uid?.match(/^unsched-elective-(.+)-\d+$/)?.[1];
+
 export const matchesElectiveUid = (uid: string | undefined, id: string) => {
     const prefix = `unsched-elective-${id}-`;
     return !!uid?.startsWith(prefix) && /^\d+$/.test(uid.slice(prefix.length));

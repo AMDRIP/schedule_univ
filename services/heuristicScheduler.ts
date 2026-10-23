@@ -9,9 +9,9 @@ import { getWeekNumber, getWeekType, toYYYYMMDD } from '../utils/dateUtils';
 import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
 import { getPlanContactActivities, getPlanContactHours, matchesSemesterParity, getRequiredClassroomTypes, getPlanForGroup as resolvePlanForGroup } from '../utils/educationUtils';
-import { bookedResourceKeys, groupsShareParticipants, isIndividualEntry, studentIdsOf, resolveParticipantEntry, studentIdentity } from '../utils/participants';
-import { electiveDemand, electiveParticipants, matchesElectiveUid } from '../utils/trajectories';
-import { campusPlacementIssues } from './campusTravel';
+import { bookedResourceKeys, groupIdsOf, groupsShareParticipants, isIndividualEntry, studentIdsOf, resolveParticipantEntry, studentIdentity, sharesResource } from '../utils/participants';
+import { electiveDemand, electiveParticipants, electiveIdOf } from '../utils/trajectories';
+import { campusPlacementIssues, slotInterval } from './campusTravel';
 
 export interface GenerationData {
     buildingPlans?: BuildingPlan[];
@@ -77,6 +77,7 @@ export interface LocalOptimizerResult {
 }
 
 interface SchedulerIndex {
+    electivesById: Map<string, Elective>;
     studentsById: Map<string, Student>;
     studentsByGroup: Map<string, Student[]>;
     scoringContext?: {
@@ -173,6 +174,7 @@ const createSchedulerIndex = (data: GenerationData): SchedulerIndex => {
     });
 
     return {
+        electivesById: mapById(data.electives),
         studentsById: mapById(data.students || []),
         studentsByGroup: (data.students || []).reduce((map, student) => { const list = map.get(student.groupId) || []; list.push(student); map.set(student.groupId, list); return map; }, new Map<string, Student[]>()),
         teachersById: mapById(data.teachers),
@@ -227,7 +229,7 @@ const SCHEDULER_YIELD_INTERVAL = 20;
 const MAX_PRIMARY_CLASSROOM_CANDIDATES = 24;
 const MAX_PRIMARY_WORK_DAYS = 10;
 const GOOD_ENOUGH_SLOT_COST = 0;
-const DOMAIN_CACHE_VERSION = 'domain-cache-v8';
+const DOMAIN_CACHE_VERSION = 'domain-cache-v9';
 const DOMAIN_PRECOMPUTE_BATCH_SIZE = 24;
 const TABU_TENURE = 24;
 
@@ -263,8 +265,7 @@ const markUnscheduled = (
     unschedulable.push({ ...entry, explanation });
 };
 
-const getEntryGroupIds = (entry: Pick<ScheduleEntry, 'groupId' | 'groupIds'> | Pick<UnscheduledEntry, 'groupId' | 'groupIds'>) =>
-    entry.groupIds || (entry.groupId ? [entry.groupId] : []);
+const getEntryGroupIds = groupIdsOf;
 
 const domainCache = new Map<string, PlacementDomain>();
 
@@ -367,7 +368,7 @@ const getSeriesGroupKey = (entry: Pick<ScheduleEntry, 'groupId' | 'groupIds' | '
     `${getEntryGroupIds(entry).slice().sort().join(',')}::${entry.subgroupId || ''}`;
 
 type SeriesEntry = Pick<ScheduleEntry, 'subjectId' | 'classType' | 'groupId' | 'groupIds' | 'subgroupId' | 'studentIds' | 'academicWorkId' | 'unscheduledUid' | 'semester'> & { uid?: string };
-const electiveSeriesOf = (entry: SeriesEntry) => (entry.uid || entry.unscheduledUid)?.match(/^unsched-elective-(.+)-\d+$/)?.[1];
+const electiveSeriesOf = (entry: SeriesEntry) => electiveIdOf(entry.uid || entry.unscheduledUid);
 const entriesBelongToSameSeries = (
     first: SeriesEntry,
     second: SeriesEntry
@@ -499,6 +500,7 @@ const isEntryInOptimizationScope = (entry: ScheduleEntry, config: HeuristicConfi
     const startDate = new Date(config.timeFrame.start + 'T00:00:00');
     const endDate = new Date(config.timeFrame.end + 'T00:00:00');
     if (entryDate < startDate || entryDate > endDate) return false;
+    if (config.targetGroupIds?.length && !getEntryGroupIds(entry).some(id => config.targetGroupIds!.includes(id))) return false;
     if (!config.target) return true;
     if (config.target.type === 'group') {
         return entry.groupId === config.target.id || !!entry.groupIds?.includes(config.target.id);
@@ -2315,7 +2317,7 @@ const getPlacementIssues = (
     }
     const attendingStudents = dated.studentIds?.length ? dated.studentIds.flatMap(id => index.studentsById.get(id) || []) : involvedGroups.flatMap(group => index.studentsByGroup.get(group.id) || []);
     if (!dated.studentIds?.length && attendingStudents.some(student => student.availabilityGrid?.[day]?.[timeSlotId] === AvailabilityType.Forbidden)) issues.push('Запрещённое время обучающегося группы.');
-    issues.push(...campusPlacementIssues({ ...dated, classroomId: classroom.id }, classroom, slot, nearby, data, [...activeTimeSlots, ...data.timeSlots, ...data.timeSlotsShortened, ...(data.bellScheduleProfiles || []).flatMap(profile => profile.slots)], attendingStudents));
+    issues.push(...campusPlacementIssues({ ...dated, date: dateStr, day, timeSlotId, classroomId: classroom.id }, classroom, slot, nearby, data, [...activeTimeSlots, ...data.timeSlots, ...data.timeSlotsShortened, ...(data.bellScheduleProfiles || []).flatMap(profile => profile.slots)], attendingStudents, index.classroomsById));
     for (const id of participants) {
         const person = index.teachersById.get(id);
         if (!person) issues.push('Участник комиссии не найден.');
@@ -2334,26 +2336,26 @@ const getPlacementIssues = (
     if (bookings.get(`classroom-${classroom.id}`)?.has(`${dateStr}-${timeSlotId}`)) issues.push('Аудитория занята.');
     if (involvedGroups.some(group => bookings.get(`group-${group.id}`)?.has(`${dateStr}-${timeSlotId}`))) issues.push('Группа или участники потока заняты.');
     if (!isIndividualEntry(dated) && involvedGroups.some(group => bookings.get(`individual-group-${group.id}`)?.has(`${dateStr}-${timeSlotId}`))) issues.push('Обучающийся группы занят на индивидуальном событии.');
-    const interval = (value?: TimeSlot) => {
-        const match = value?.time.match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/);
-        return match ? [Number(match[1]) * 60 + Number(match[2]), Number(match[3]) * 60 + Number(match[4])] : null;
-    };
-    const currentInterval = interval(slot);
+    const currentInterval = slotInterval(slot);
     for (const other of nearby) {
         if (other.timeSlotId === timeSlotId) continue;
         const otherTeachers = [other.teacherId, ...(other.additionalTeacherIds || [])];
         const sharesResource = other.classroomId === classroom.id || participants.some(id => otherTeachers.includes(id)) || groupsShareParticipants({ ...dated, classroomId: classroom.id }, other);
         if (!sharesResource) continue;
         const otherSlot = activeTimeSlots.find(item => item.id === other.timeSlotId) || [...data.timeSlots, ...data.timeSlotsShortened, ...(data.bellScheduleProfiles || []).flatMap(profile => profile.slots)].find(item => item.id === other.timeSlotId);
-        const range = interval(otherSlot);
-        if (!range || !currentInterval || range[0] >= currentInterval[1] || currentInterval[0] >= range[1]) continue;
+        const range = slotInterval(otherSlot);
+        if (!range || !currentInterval || range.start >= currentInterval.end || currentInterval.start >= range.end) continue;
         issues.push('Пересечение ресурсов по времени разных слотов звонков.'); break;
     }
     const individualWork = dated.academicWorkId && data.academicWorks?.find(work => work.id === dated.academicWorkId && work.subjectId === entry.subjectId && work.groupId === involvedGroups[0]?.id && work.supervisorId === entry.teacherId);
     if (dated.academicWorkId && !individualWork) issues.push('Индивидуальное событие не соответствует работе, группе или руководителю.');
     if (individualWork && dated.studentIds?.length && (dated.studentIds.length !== 1 || dated.studentIds[0] !== (individualWork.studentId || studentIdentity(individualWork.studentName, individualWork.groupId)))) issues.push('Участник события не совпадает с обучающимся научной работы.');
-    const elective = data.electives.find(item => matchesElectiveUid(entry.uid, item.id) && item.teacherId === entry.teacherId && item.subjectId === entry.subjectId);
+    const elective = index.electivesById.get(electiveIdOf(entry.uid) || '');
+    if (entry.uid.startsWith('unsched-elective-') && !elective) issues.push('Учебное объединение занятия не найдено.');
     if (elective) {
+        if (elective.teacherId !== entry.teacherId) issues.push('Преподаватель не совпадает с назначением учебного объединения.');
+        if (elective.subjectId !== entry.subjectId || (elective.classType || ClassType.Elective) !== entry.classType || (elective.deliveryMode || DeliveryMode.Offline) !== (entry.deliveryMode || DeliveryMode.Offline)) issues.push('Дисциплина, тип или формат занятия не совпадает с учебным объединением.');
+        if (elective.classroomTypeIds?.length && !elective.classroomTypeIds.includes(classroom.typeId) || elective.requiredClassroomTagIds?.some(id => !classroom.tagIds?.includes(id))) issues.push('Не выполнены требования аудитории учебного объединения.');
         const selected = electiveParticipants(elective, data.students || [], data.groups);
         issues.push(...selected.issues);
         if (JSON.stringify([...(dated.studentIds || [])].sort()) !== JSON.stringify([...selected.studentIds].sort()) || !sameGroupSet(getEntryGroupIds(entry), selected.groupIds)) issues.push('Состав занятия не совпадает с записью в учебное объединение.');
@@ -2364,6 +2366,46 @@ const getPlacementIssues = (
 };
 
 export interface PlacementValidation { valid: boolean; issues: string[]; softPenalty: number }
+
+export const validateResourceNeighborhood = (data: GenerationData, before: ScheduleEntry[], after: ScheduleEntry[], config: HeuristicConfig, index = createSchedulerIndex(data)): string[] => {
+    const previousById = mapById(before);
+    if (after.length !== before.length || new Set(after.map(entry => entry.id)).size !== before.length || after.some(entry => !previousById.has(entry.id))) return ['Локальное изменение не должно удалять или дублировать занятия.'];
+    const changes = after.filter(entry => previousById.get(entry.id) !== entry);
+    if (changes.some(entry => previousById.get(entry.id)?.locked)) return ['Закреплённое занятие нельзя переносить.'];
+    if (!changes.length) return [];
+    const changedIds = new Set(changes.map(entry => entry.id));
+    const anchors = changes.flatMap(entry => [entry, previousById.get(entry.id)].filter((item): item is ScheduleEntry => !!item));
+    const dates = new Set(anchors.map(entry => entry.date));
+    const retained = data.schedule.some(entry => !entry.date) ? expandScheduleOccurrences(data, data.schedule, config.timeFrame) : data.schedule;
+    const oldSchedule = [...retained, ...before].filter(entry => dates.has(entry.date));
+    const nextSchedule = [...retained, ...after].filter(entry => dates.has(entry.date));
+    const oldById = mapById(oldSchedule);
+    const oldBookings = createResourceBookings(data.teachers, data.groups, data.classrooms, oldSchedule);
+    const nextBookings = createResourceBookings(data.teachers, data.groups, data.classrooms, nextSchedule);
+    const issuesFor = (entry: ScheduleEntry, schedule: ScheduleEntry[], bookings: Map<string, Set<string>>) => {
+        const room = index.classroomsById.get(entry.classroomId);
+        if (!room || !entry.date) return ['Не найдена аудитория или дата занятия.'];
+        const groups = getInvolvedGroups(entry, index);
+        const subgroup = entry.subgroupId && index.subgroupsById.get(entry.subgroupId);
+        const studentCount = isIndividualEntry(entry) ? Math.max(1, studentIdsOf(entry).length) + (entry.academicWorkId ? new Set([entry.teacherId, ...(entry.additionalTeacherIds || [])]).size : 0) : subgroup ? subgroup.studentCount : groups.reduce((sum, group) => sum + group.studentCount, 0);
+        const key = `${entry.date}-${entry.timeSlotId}`;
+        bookedResourceKeys(entry).forEach(resource => removeBooking(bookings, resource, key));
+        const issues = getPlacementIssues({ ...entry, uid: entry.unscheduledUid || entry.id, studentCount }, new Date(entry.date + 'T00:00:00'), entry.timeSlotId, room, groups, bookings, data, config, getActiveTimeSlotsForDate(data, entry.date, index), index, schedule.filter(other => other.date === entry.date && other.id !== entry.id));
+        bookedResourceKeys(entry).forEach(resource => addBooking(bookings, resource, key));
+        return issues;
+    };
+    // Removing an intermediate lesson can break a neighbour's route even if its new placement is valid.
+    for (const entry of nextSchedule) {
+        if (!changedIds.has(entry.id) && !anchors.some(anchor => anchor.date === entry.date && sharesResource(anchor, entry))) continue;
+        const nextIssues = issuesFor(entry, nextSchedule, nextBookings);
+        if (!nextIssues.length) continue;
+        if (changedIds.has(entry.id)) return nextIssues;
+        const previous = oldById.get(entry.id);
+        const baseline = previous ? issuesFor(previous, oldSchedule, oldBookings) : [];
+        if (nextIssues.length > baseline.length || nextIssues.some(issue => !baseline.includes(issue))) return nextIssues;
+    }
+    return [];
+};
 
 export const createScheduleValidator = (data: GenerationData, config?: HeuristicConfig, options: { finalValidation?: boolean } = {}) => {
     const index = createSchedulerIndex(data);
@@ -2873,6 +2915,7 @@ const toUnscheduledForOptimization = (entry: ScheduleEntry, index: SchedulerInde
     const involvedGroups = getInvolvedGroups(entry, index);
     const subGroup = entry.subgroupId ? index.subgroupsById.get(entry.subgroupId) : undefined;
     const studentCount = isIndividualEntry(entry) ? Math.max(1, studentIdsOf(entry).length) + (entry.academicWorkId ? 1 + (entry.additionalTeacherIds?.length || 0) : 0) : subGroup ? subGroup.studentCount : involvedGroups.reduce((sum, group) => sum + group.studentCount, 0);
+    const elective = index.electivesById.get(electiveIdOf(entry.unscheduledUid) || '');
     return {
         uid: entry.unscheduledUid || entry.id,
         studentIds: entry.studentIds,
@@ -2886,7 +2929,7 @@ const toUnscheduledForOptimization = (entry: ScheduleEntry, index: SchedulerInde
         streamId: entry.streamId,
         classType: entry.classType,
         teacherId: entry.teacherId,
-        teacherCandidates: config.target?.type === 'teacher' ? [config.target.id] : getTeacherCandidates(entry.subjectId, entry.classType, index, entry.teacherId, involvedGroups, entry.streamId),
+        teacherCandidates: config.target?.type === 'teacher' ? [config.target.id] : elective ? [elective.teacherId] : getTeacherCandidates(entry.subjectId, entry.classType, index, entry.teacherId, involvedGroups, entry.streamId),
         studentCount,
         deliveryMode: entry.deliveryMode,
         classroomTypeIds: entry.classroomTypeIds,
@@ -3128,6 +3171,10 @@ const annealAndTabuRefinement = async (
             temperature *= cooling;
             continue;
         }
+        if (validateResourceNeighborhood(data, current, neighbor, config, index).length) {
+            temperature *= cooling;
+            continue;
+        }
 
         const tabuKey = makeScheduleTabuKey(neighbor);
         if (tabu.has(tabuKey)) {
@@ -3265,7 +3312,7 @@ async function refineSchedule(
                 continue;
             }
             const suitableClassrooms = getSuitableClassrooms(unscheduledVersion, subject, index) || [];
-            const teacherCandidates = config.target?.type === 'teacher' ? [config.target.id] : getTeacherCandidates(unscheduledVersion.subjectId, unscheduledVersion.classType, index, unscheduledVersion.teacherId, involvedGroups, unscheduledVersion.streamId);
+            const teacherCandidates = toUnscheduledForOptimization(entryToMove, index, config).teacherCandidates!;
             const primaryClassrooms = getPrimaryClassroomCandidates(unscheduledVersion, subject, suitableClassrooms, involvedGroups, teacherCandidates, data, config, index);
             const primaryWorkDays = getPrimaryWorkDaysForEntry(unscheduledVersion, workDays, config.distributeEvenly);
 
@@ -3326,6 +3373,10 @@ async function refineSchedule(
                     bestAlternativeSlot.timeSlotId, bestAlternativeSlot.classroom, involvedGroups, resourceBookings, data, config.strictness / 5,
                     refinedSchedule, config, getActiveTimeSlotsForDate(data, bestAlternativeSlot.date, index), index, entryToMove.id)
                     + (bestAlternativeSlot.teacherId !== entryToMove.teacherId ? 35 * config.strictness / 5 : 0);
+            }
+            if (bestAlternativeSlot && bestAlternativeSlot.cost < currentCost) {
+                const replacement = updateEntryPlacement(currentEntryInSchedule, toYYYYMMDD(bestAlternativeSlot.date), bestAlternativeSlot.timeSlotId, bestAlternativeSlot.classroom.id, bestAlternativeSlot.teacherId);
+                if (validateResourceNeighborhood(data, refinedSchedule, replaceEntries(refinedSchedule, [replacement]), config, index).length) bestAlternativeSlot = null;
             }
             if (bestAlternativeSlot && bestAlternativeSlot.cost < currentCost) {
                 improvementsThisPass++;
