@@ -13,6 +13,7 @@ import { migrateStudents } from '../utils/participants';
 import { chooseWorkerCount, runWorkerPool } from '../services/parallelScheduler';
 import { buildWhatIfScenario } from '../services/whatIfTrial';
 import { affectedByAbsence, previewSubstitution, validateSubstitution } from '../services/substitutions';
+import './generatorRegression.test';
 
 test('student migration preserves identity across works and separates names in different groups', () => {
     const first: any = { ...researchWork(), id: 'one' }; const second = { ...first, id: 'two' };

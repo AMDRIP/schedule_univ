@@ -718,7 +718,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const getSchedulingData = () => ({ teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings, teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes, subgroups, electives, schedule, academicWorks, students, resourceAbsences });
   const assertPlacement = (entry: ScheduleEntry, current = schedule) => {
     const validate = createScheduleValidator(getSchedulingData());
-    const result = validate(entry, current);
+    const result = createScheduleValidator(getSchedulingData(), undefined, { finalValidation: false })(entry, current);
     if (!result.valid) throw new Error(result.issues.join('\n') || 'Нарушены ограничения расписания.');
     const next = [...current.filter(item => item.id !== entry.id), entry];
     for (const previous of current) if (previous.date && previous.id !== entry.id && validate(previous, current).valid) {
@@ -1147,7 +1147,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       });
 
       const suitableClassroom = classroomCandidates.find(c => {
-        if (!createScheduleValidator(getSchedulingData())({ ...item, id: `manual-${item.uid}`, date, day, timeSlotId, classroomId: c.id, weekType: 'every', deliveryMode: item.deliveryMode || DeliveryMode.Offline }).valid) return false;
+        if (!createScheduleValidator(getSchedulingData(), undefined, { finalValidation: false })({ ...item, id: `manual-${item.uid}`, date, day, timeSlotId, classroomId: c.id, weekType: 'every', deliveryMode: item.deliveryMode || DeliveryMode.Offline }).valid) return false;
         const targetWeekType = getWeekType(new Date(date + 'T00:00:00'), new Date(settings.semesterStart));
         const effectiveTargetWeekType = settings.useEvenOddWeekSeparation ? targetWeekType : 'every';
         
@@ -1301,7 +1301,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     let minCapacityDiff = Infinity;
 
     for (const c of classrooms) {
-        if (!createScheduleValidator(getSchedulingData())({ ...item, id: 'id' in item ? item.id : `manual-${item.uid}`, groupIds: placementGroupIds, day, date, timeSlotId, classroomId: c.id, weekType: 'every', deliveryMode: item.deliveryMode || DeliveryMode.Offline }).valid) continue;
+        if (!createScheduleValidator(getSchedulingData(), undefined, { finalValidation: false })({ ...item, id: 'id' in item ? item.id : `manual-${item.uid}`, groupIds: placementGroupIds, day, date, timeSlotId, classroomId: c.id, weekType: 'every', deliveryMode: item.deliveryMode || DeliveryMode.Offline }).valid) continue;
         if (occupiedClassroomIds.has(c.id)) continue;
         if (c.capacity < studentCount) continue;
         if (!requiredClassroomTypes.includes(c.typeId)) continue;

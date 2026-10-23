@@ -83,6 +83,7 @@ export const previewScheduleRepair = async (data: GenerationData, entryId: strin
     if (!target?.date || target.locked) return { ...base, message: target?.locked ? 'Занятие закреплено.' : 'Для ремонта требуется календарная дата.' };
     const validate = createScheduleValidator(data);
     if (validate(target).valid) return { ...base, message: 'Занятие уже проходит общую проверку ограничений.' };
+    const validatePlacement = createScheduleValidator(data, undefined, { finalValidation: false });
     const alternatives: RepairAlternative[] = []; const signatures = new Set<string>(); let probes = 0; let nodes = 0;
     const maxChanges = Math.min(4, Math.max(2, Math.floor(data.schedule.length * 0.05)));
     const candidates = function* (entry: ScheduleEntry, preferred?: ScheduleEntry) {
@@ -121,7 +122,7 @@ export const previewScheduleRepair = async (data: GenerationData, entryId: strin
             if (++probes % 16 === 0) await new Promise(resolve => setTimeout(resolve, 0));
             const blockers = resourceConflicts(candidate, current, data);
             if (blockers.length > 2 || blockers.some(blocker => blocker.locked || moving.has(blocker.id) || !current.some(item => item.id === blocker.id))) continue;
-            if (!validate(candidate, current.filter(item => !blockers.some(blocker => blocker.id === item.id))).valid) continue;
+            if (!validatePlacement(candidate, current.filter(item => !blockers.some(blocker => blocker.id === item.id))).valid) continue;
             let proposed = current.map(item => item.id === candidate.id ? candidate : item);
             let result = [...changes.filter(change => change.before.id !== entry.id), { before: data.schedule.find(item => item.id === entry.id)!, after: candidate }];
             let failed = false;
@@ -131,7 +132,7 @@ export const previewScheduleRepair = async (data: GenerationData, entryId: strin
                 result = resolved; proposed = data.schedule.map(item => result.find(change => change.before.id === item.id)?.after || item);
             }
             if (failed) continue;
-            if (!validate(candidate, proposed).valid) continue;
+            if (!validatePlacement(candidate, proposed).valid) continue;
             if (entry.id === target.id) {
                 remember(result);
                 if (alternatives.length >= 8) break;

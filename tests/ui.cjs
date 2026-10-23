@@ -126,7 +126,7 @@ async function run() {
         await page.evaluate(() => {
             const OriginalWorker = window.Worker; window.__poolStats = { active: 0, peak: 0, created: 0 };
             window.Worker = class extends OriginalWorker {
-                constructor(...args) { super(...args); this.finished = false; window.__poolStats.active++; window.__poolStats.created++; window.__poolStats.peak = Math.max(window.__poolStats.peak, window.__poolStats.active); }
+                constructor(...args) { super(...args); this.finished = false; window.__poolStats.active++; window.__poolStats.created++; window.__poolStats.peak = Math.max(window.__poolStats.peak, window.__poolStats.active); this.addEventListener('message', event => { if (event.data.candidateMetrics) window.__candidateMetrics = event.data.candidateMetrics; }); }
                 terminate() { if (!this.finished) { this.finished = true; window.__poolStats.active--; } return super.terminate(); }
             };
         });
@@ -134,10 +134,19 @@ async function run() {
         assert.equal(result.scheduled, 5); assert.equal(result.unscheduled, 0);
         const pool = await page.evaluate(() => window.__poolStats);
         assert.equal(pool.peak, 2); assert.equal(pool.active, 0);
+        const innerData = makeFixture();
+        innerData.classrooms = Array.from({ length: 24 }, (_, i) => ({ ...innerData.classrooms[0], id: `inner-room-${i}` }));
+        await page.evaluate(data => window.__store.loadFullState(data), innerData);
+        await page.waitForFunction(() => window.__store.schedule.length === 0);
+        const oneIteration = await page.evaluate(async configuration => window.__store.runScheduler('heuristic', configuration), { ...config, iterations: 1, parallelWorkers: 4 });
+        assert.equal(oneIteration.scheduled, 5); assert.equal(oneIteration.unscheduled, 0);
+        const inner = await page.evaluate(() => window.__candidateMetrics);
+        assert.equal(inner.workers, 3); assert.ok(inner.candidates > 0); assert.equal(inner.fallbacks, 0);
+        assert.equal(await page.evaluate(() => window.__poolStats.active), 0);
         await page.getByText('Генерация завершена.', { exact: true }).waitFor();
         await page.screenshot({ path: '.test-output/generation-desktop.png', fullPage: true });
         assert.deepEqual(errors, []);
-        console.log('Electron UI: version, coursework/student CRUD, migration, individual defense, plan versions, balance, ranked repair/apply/undo/stale rejection, substitutions and persisted journal, isolated what-if trial, 2 concurrent workers for 4 iterations, automatic worker cleanup passed.');
+        console.log('Electron UI: version, coursework/student CRUD, migration, individual defense, plan versions, balance, ranked repair/apply/undo/stale rejection, substitutions and persisted journal, isolated what-if trial, 2 concurrent workers for 4 iterations, 3 real nested candidate workers for one iteration, automatic worker cleanup passed.');
     } finally {
         if (app) await app.close();
         await new Promise(resolve => server.close(resolve));

@@ -1,6 +1,6 @@
 {
   "name": "schedule-system-app",
-  "version": "5003.2310.2026",
+  "version": "5004.2310.2026",
   "releaseType": "функциональный релиз",
   "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
   "main": "main.js",
@@ -8,6 +8,8 @@
     "test": "node tests/run.cjs",
     "test:ui": "node tests/ui.cjs",
     "test:performance": "node tests/parallelBenchmark.cjs",
+    "test:iteration": "node tests/oneIterationBenchmark.cjs",
+    "test:packaged": "node tests/packagedWorker.cjs",
     "typecheck": "tsc --noEmit --pretty false",
     "start": "electron .",
     "prestart": "npm run build:js && npm run build:css",

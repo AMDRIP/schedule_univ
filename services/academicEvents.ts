@@ -20,7 +20,7 @@ export const planAcademicEvent = async (data: GenerationData, request: AcademicE
     const studentId = work.studentId || studentIdentity(work.studentName, work.groupId);
     if (work.studentId && !data.students?.some(student => student.id === work.studentId && student.groupId === work.groupId)) return { issues: ['Обучающийся научной работы не найден в реестре или относится к другой группе.'] };
     const students = data.students?.some(student => student.id === studentId) ? data.students : [...(data.students || []), { id: studentId, name: work.studentName, groupId: work.groupId }];
-    const validate = createScheduleValidator({ ...data, students });
+    const validate = createScheduleValidator({ ...data, students }, undefined, { finalValidation: false });
     const issues = new Map<string, number>();
     const start = new Date(request.start + 'T00:00:00');
     if (!Number.isFinite(start.getTime()) || toYYYYMMDD(start) !== request.start) return { issues: ['Некорректная дата.'] };

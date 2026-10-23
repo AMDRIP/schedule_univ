@@ -1,5 +1,6 @@
 import { HeuristicConfig } from '../types';
 import { GenerationData, SchedulerResult, SchedulerRunOptions } from './heuristicScheduler';
+import { candidateWorkerBudget } from './candidatePool';
 
 export const chooseWorkerCount = (iterations: number, requested = 0, logicalCores = 2, memoryGiB?: number) => {
     const safe = memoryGiB && memoryGiB <= 4 ? 2 : 4;
@@ -11,6 +12,7 @@ export const runWorkerPool = (data: GenerationData, config: HeuristicConfig, onI
     const hardware = typeof navigator === 'undefined' ? 2 : navigator.hardwareConcurrency || 2;
     const memory = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
     const size = chooseWorkerCount(iterations, config.parallelWorkers, hardware, memory);
+    const candidateWorkers = candidateWorkerBudget(chooseWorkerCount(8, config.parallelWorkers, hardware, memory), size);
     const workers: Worker[] = []; const frames = new Map<Worker, Parameters<NonNullable<SchedulerRunOptions['onProgress']>>[0]>();
     let next = 1; let completed = 0; let active = 0; let stopped = false; let settled = false;
     let best: SchedulerResult | undefined; let failure: Error | undefined; let stopTimer: ReturnType<typeof setInterval>;
@@ -26,7 +28,7 @@ export const runWorkerPool = (data: GenerationData, config: HeuristicConfig, onI
     const startJob = (worker: Worker) => {
         if (stopped || next > iterations) { finish(); return; }
         const job = next++; active++; frames.delete(worker);
-        worker.postMessage({ type: 'start-iteration', data, config: { ...config, iterations: 1, seed: `${seed}-${job}`, stochasticity: config.stochasticity ?? 0.35 } });
+        worker.postMessage({ type: 'start-iteration', data, candidateWorkers, config: { ...config, iterations: 1, seed: `${seed}-${job}`, stochasticity: config.stochasticity ?? 0.35 } });
     };
     const requestStop = () => {
         if (stopped || settled) return;
@@ -52,7 +54,7 @@ export const runWorkerPool = (data: GenerationData, config: HeuristicConfig, onI
                 if (message.type === 'progress') {
                     frames.set(worker, message.progress);
                     const measured = [...frames.values()].sort((a, b) => a.penalty - b.penalty)[0];
-                    if (measured) options.onProgress?.({ ...measured, phase: stopped ? 'stopping' : measured.phase === 'completed' ? 'refining' : measured.phase, timeMs: Date.now() - start, label: `Потоков: ${size}. Завершено итераций: ${completed}/${iterations}. ${measured.label}` });
+                    if (measured) options.onProgress?.({ ...measured, phase: stopped ? 'stopping' : measured.phase === 'completed' ? 'refining' : measured.phase, timeMs: Date.now() - start, label: `Итераций параллельно: ${size}. Исполнителей оценки на итерацию: ${candidateWorkers || 1}. Завершено: ${completed}/${iterations}. ${measured.label}` });
                 }
                 if (message.type === 'error') { failed(new Error(message.error)); return; }
                 if (message.type === 'result') {

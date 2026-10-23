@@ -46,6 +46,16 @@ async function build() {
             outfile: path.join(distDir, 'schedulerBrowserWorker.js'), platform: 'browser', format: 'iife',
             external: ['bindings', 'fs', 'path', 'node-addon-api'], logLevel: 'info',
         });
+        await esbuild.build({
+            entryPoints: ['services/schedulerCandidateBrowserWorker.ts'], bundle: true,
+            outfile: path.join(distDir, 'schedulerCandidateBrowserWorker.js'), platform: 'browser', format: 'iife',
+            external: ['bindings', 'fs', 'path', 'node-addon-api'], logLevel: 'info',
+        });
+        await esbuild.build({
+            entryPoints: ['services/schedulerCandidateNodeWorker.ts'], bundle: true,
+            outfile: path.join(distDir, 'schedulerCandidateNodeWorker.js'), platform: 'node', format: 'cjs',
+            external: ['bindings', 'fs', 'path', 'node-addon-api'], logLevel: 'info',
+        });
         console.log('JavaScript build finished successfully.');
     } catch (e) {
         console.error('Build failed:', e);

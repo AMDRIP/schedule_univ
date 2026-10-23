@@ -125,6 +125,8 @@ app.whenReady().then(async () => {
     const iterations = Math.max(1, Number(config?.iterations || 1));
     const cpuCount = Math.max(1, (os.cpus()?.length || 2) - 1);
     const concurrency = Math.max(1, Math.min(iterations, cpuCount, 4));
+    const spare = Math.floor(Math.min(cpuCount, 4) / concurrency) - 1;
+    const candidateWorkers = spare >= 2 ? spare : 0;
     const baseSeed = config?.seed ?? Date.now();
     const workerPath = path.join(__dirname, 'dist', 'schedulerWorker.js');
     const batches = Array.from({ length: concurrency }, () => []);
@@ -139,7 +141,7 @@ app.whenReady().then(async () => {
         stochasticity: config?.stochasticity ?? 0.35,
       };
       const worker = new Worker(workerPath, {
-        workerData: { data, config: workerConfig, seeds },
+        workerData: { data, config: workerConfig, seeds, candidateWorkers },
       });
 
       worker.once('message', message => {

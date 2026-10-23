@@ -263,7 +263,7 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
     });
 
     const validationData: GenerationData = { ...data, timeSlotsShortened: data.timeSlotsShortened || data.timeSlots, bellScheduleProfiles: data.bellScheduleProfiles || [], schedulingRules: data.schedulingRules || [], electives: data.electives || [], ugs: [] };
-    const validate = createScheduleValidator(validationData, { timeFrame, clearExisting: false, iterations: 1, strictness: 5, enforceLectureOrder: true, distributeEvenly: true });
+    const validate = createScheduleValidator(validationData, { timeFrame, clearExisting: false, iterations: 1, strictness: 5, enforceLectureOrder: true, distributeEvenly: true }, { finalValidation: false });
     const allows = (event: SessionEvent, date: Date, timeSlotId: string, room: Classroom) => validate(placeEvent(event, date, timeSlotId, room, new Map()), [...existingSchedule, ...newSchedule]).valid;
     const slotsForDate = (date: Date) => getActiveTimeSlotsForDate(validationData, date);
     const workDays: Date[] = [];
