@@ -53,6 +53,7 @@ export const runIterativeScheduler = async (
     let bestResult: SchedulerResult | null = null;
     let lowestScore = Infinity;
     const baseSeed = config.seed ?? Date.now();
+    const startedAt = Date.now();
 
     for (let i = 1; i <= config.iterations; i++) {
         if (options.shouldStop?.() && bestResult) return { ...bestResult, interrupted: true };
@@ -66,7 +67,7 @@ export const runIterativeScheduler = async (
             seed: `${baseSeed}-${i}`,
             stochasticity: config.stochasticity ?? 0.35,
         };
-        const currentResult = await generateScheduleWithHeuristics(data, currentConfig, options);
+        const currentResult = await generateScheduleWithHeuristics(data, currentConfig, { ...options, onProgress: options.onProgress ? progress => options.onProgress!({ ...progress, phase: progress.phase === 'completed' ? 'refining' : progress.phase, timeMs: Date.now() - startedAt, label: `Итерация ${i}/${config.iterations}. ${progress.label}` }) : undefined });
         const currentScore = currentResult.score ?? calculateScheduleScore(data, currentResult, currentConfig);
         
         if (currentScore.total < lowestScore) {

@@ -171,6 +171,8 @@ export interface Group extends BaseItem {
   pinnedClassroomId?: string;
   curatorTeacherId?: string;
   admissionYear?: number;
+  profile?: string;
+  educationalPlanId?: string;
   notes?: string;
 }
 export type StreamType = 'lecture' | 'practice' | 'elective' | 'exam' | 'project' | 'custom';
@@ -336,6 +338,9 @@ export interface PlanBlock extends BaseItem {
 export interface EducationalPlan extends BaseItem {
   specialtyId: string;
   formOfStudy?: FormOfStudy;
+  version?: string;
+  admissionYear?: number;
+  profile?: string;
   blocks?: PlanBlock[];
   entries: PlanEntry[];
 }
@@ -626,6 +631,9 @@ export interface LessonPlan {
 }
 
 export interface ScheduleEntry extends BaseItem {
+  academicWorkId?: string;
+  academicEventKind?: 'consultation' | 'predefense' | 'defense';
+  additionalTeacherIds?: string[];
   classroomTypeIds?: string[];
   requiredClassroomTagIds?: string[];
   pinnedClassroomId?: string;

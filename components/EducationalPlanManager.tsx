@@ -267,6 +267,9 @@ const EducationalPlanManager: React.FC = () => {
     } = useStore();
     const [selectedSpecialtyId, setSelectedSpecialtyId] = useState<string>(specialties[0]?.id || '');
     const [selectedFormOfStudy, setSelectedFormOfStudy] = useState<FormOfStudy>(FormOfStudy.FullTime);
+    const [selectedPlanId, setSelectedPlanId] = useState('');
+    const [versionDraft, setVersionDraft] = useState<{ version: string; admissionYear: number; profile: string } | null>(null);
+    const [versionError, setVersionError] = useState('');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [currentEntry, setCurrentEntry] = useState<PlanEntry | null>(null);
     const [copyDialog, setCopyDialog] = useState<CopyDialogState>(null);
@@ -281,9 +284,9 @@ const EducationalPlanManager: React.FC = () => {
     const [templateDialogDescription, setTemplateDialogDescription] = useState('');
 
     const activePlan = useMemo(() => {
-        return educationalPlans.find(p => p.specialtyId === selectedSpecialtyId && p.formOfStudy === selectedFormOfStudy) ||
-            educationalPlans.find(p => p.specialtyId === selectedSpecialtyId && !p.formOfStudy);
-    }, [selectedSpecialtyId, selectedFormOfStudy, educationalPlans]);
+        const plans = educationalPlans.filter(p => p.specialtyId === selectedSpecialtyId && (!p.formOfStudy || p.formOfStudy === selectedFormOfStudy));
+        return plans.find(plan => plan.id === selectedPlanId) || plans.find(plan => !plan.admissionYear && !plan.profile) || plans[0];
+    }, [selectedSpecialtyId, selectedFormOfStudy, selectedPlanId, educationalPlans]);
 
     const activeBlocks = activePlan?.blocks || [];
     const availableCopyTargets = useMemo(() => specialties.filter(s => s.id !== selectedSpecialtyId), [specialties, selectedSpecialtyId]);
@@ -517,8 +520,7 @@ const EducationalPlanManager: React.FC = () => {
         let createdPlans = 0;
         let updatedPlans = 0;
         targetSpecialtyIds.forEach(targetSpecialtyId => {
-            const targetPlan = educationalPlans.find(plan => plan.specialtyId === targetSpecialtyId && plan.formOfStudy === selectedFormOfStudy) ||
-                educationalPlans.find(plan => plan.specialtyId === targetSpecialtyId && !plan.formOfStudy);
+            const targetPlan = educationalPlans.find(plan => plan.specialtyId === targetSpecialtyId && plan.formOfStudy === selectedFormOfStudy && plan.admissionYear === activePlan?.admissionYear && (plan.profile || '') === (activePlan?.profile || ''));
             if (targetPlan) {
                 const nextBlocks = copyDialog.mode === 'plan' && replaceTargetPlan ? blocks : mergeBlocks(targetPlan.blocks || [], blocks);
                 const nextEntries = copyDialog.mode === 'plan' && replaceTargetPlan ? sortPlanEntries(entries) : mergePlanEntries(targetPlan.entries, entries);
@@ -528,6 +530,9 @@ const EducationalPlanManager: React.FC = () => {
                 addItem('educationalPlans', {
                     specialtyId: targetSpecialtyId,
                     formOfStudy: selectedFormOfStudy,
+                    admissionYear: activePlan?.admissionYear,
+                    profile: activePlan?.profile,
+                    version: activePlan?.version,
                     blocks,
                     entries: sortPlanEntries(entries),
                 });
@@ -647,6 +652,25 @@ const EducationalPlanManager: React.FC = () => {
                 </div>
             </div>
 
+            <div className="flex flex-wrap items-end gap-3 border-b pb-4">
+                <label className="text-sm">Версия учебного плана<select aria-label="Версия учебного плана" value={activePlan?.id || ''} onChange={event => setSelectedPlanId(event.target.value)} className="ml-2 rounded border p-2">
+                    {!activePlan && <option value="">План не создан</option>}
+                    {educationalPlans.filter(plan => plan.specialtyId === selectedSpecialtyId && (!plan.formOfStudy || plan.formOfStudy === selectedFormOfStudy)).map(plan => <option key={plan.id} value={plan.id}>{plan.version || 'Базовый'} · {plan.admissionYear || 'Все наборы'} · {plan.profile || 'Все профили'}</option>)}
+                </select></label>
+                <button onClick={() => { setVersionError(''); setVersionDraft({ version: '', admissionYear: new Date().getFullYear(), profile: '' }); }} className="flex items-center gap-2 rounded border px-3 py-2 text-sm"><CopyIcon className="h-4 w-4" />Новая версия</button>
+            </div>
+            {versionDraft && <form aria-label="Новая версия плана" className="flex flex-wrap items-end gap-3 border-b pb-4" onSubmit={event => {
+                event.preventDefault();
+                if (educationalPlans.some(plan => plan.specialtyId === selectedSpecialtyId && plan.formOfStudy === selectedFormOfStudy && plan.admissionYear === versionDraft.admissionYear && (plan.profile || '') === versionDraft.profile.trim())) { setVersionError('Для этого набора, профиля и формы уже существует версия.'); return; }
+                const created = addItem('educationalPlans', { ...createPlanPayload(), ...(activePlan ? JSON.parse(JSON.stringify(activePlan)) : {}), specialtyId: selectedSpecialtyId, formOfStudy: selectedFormOfStudy, version: versionDraft.version.trim(), admissionYear: versionDraft.admissionYear, profile: versionDraft.profile.trim() || undefined });
+                setSelectedPlanId(created.id); setVersionDraft(null);
+            }}>
+                <label className="text-sm">Название версии<input required value={versionDraft.version} onChange={event => setVersionDraft({ ...versionDraft, version: event.target.value })} className="block rounded border p-2" /></label>
+                <label className="text-sm">Набор<input type="number" min="1900" max="2200" required value={versionDraft.admissionYear} onChange={event => setVersionDraft({ ...versionDraft, admissionYear: Number(event.target.value) })} className="block w-28 rounded border p-2" /></label>
+                <label className="text-sm">Профиль<input list="plan-profiles" value={versionDraft.profile} onChange={event => setVersionDraft({ ...versionDraft, profile: event.target.value })} className="block rounded border p-2" /><datalist id="plan-profiles">{specialties.find(item => item.id === selectedSpecialtyId)?.profiles?.map(profile => <option key={profile} value={profile} />)}</datalist></label>
+                <button className="rounded bg-blue-700 px-3 py-2 text-sm text-white">Создать версию</button><button type="button" onClick={() => setVersionDraft(null)} className="rounded border px-3 py-2 text-sm">Отмена</button>
+                {versionError && <p role="alert" className="w-full text-sm text-red-700">{versionError}</p>}
+            </form>}
             <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-6">
                 <div className="space-y-6">
                     {Object.keys(groupedBySemesterAndBlock).length > 0 ? Object.keys(groupedBySemesterAndBlock).sort((a, b) => Number(a) - Number(b)).map(semester => {

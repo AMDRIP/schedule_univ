@@ -35,7 +35,7 @@ const getWeekKey = (dateStr: string) => {
 };
 
 const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable, colorBy, cellDate }) => {
-  const { subjects, teachers, classrooms, groups, subgroups, streams, electives, schedule, teacherSubjectLinks, updateScheduleEntry, deleteScheduleEntry, removeScheduleEntries, quickRepairScheduleEntry, settings, classroomTags } = useStore();
+  const { subjects, teachers, classrooms, groups, subgroups, streams, electives, academicWorks, schedule, teacherSubjectLinks, updateScheduleEntry, deleteScheduleEntry, removeScheduleEntries, quickRepairScheduleEntry, settings, classroomTags } = useStore();
   const [isEditingClassroom, setIsEditingClassroom] = useState(false);
   const [isEditingDate, setIsEditingDate] = useState(false);
   const [isEditingDelivery, setIsEditingDelivery] = useState(false);
@@ -114,7 +114,7 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   }, [classrooms, schedule, entry, subject, studentCount]);
 
   const handleClassroomChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    updateScheduleEntry({ ...entry, classroomId: e.target.value });
+    try { updateScheduleEntry({ ...entry, classroomId: e.target.value }); } catch (error) { alert(error.message); return; }
     setIsEditingClassroom(false);
   };
 
@@ -122,12 +122,12 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
     const newDate = new Date(e.target.value + 'T00:00:00');
     const dayOfWeek = newDate.getDay();
     const dayName = DAYS_OF_WEEK[dayOfWeek === 0 ? 6 : dayOfWeek - 1];
-    updateScheduleEntry({ ...entry, date: e.target.value, day: dayName });
+    try { updateScheduleEntry({ ...entry, date: e.target.value, day: dayName }); } catch (error) { alert(error.message); return; }
     setIsEditingDate(false);
   };
 
   const handleDeliveryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    updateScheduleEntry({ ...entry, deliveryMode: e.target.value as DeliveryMode });
+    try { updateScheduleEntry({ ...entry, deliveryMode: e.target.value as DeliveryMode }); } catch (error) { alert(error.message); return; }
     setIsEditingDelivery(false);
   };
 
@@ -336,7 +336,7 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
   const handleQuickRepair = async () => {
     setContextMenu(null);
     const result = await quickRepairScheduleEntry(entry.id);
-    alert(result.message);
+    if (!result.message.startsWith('Предпросмотр')) alert(result.message);
   };
 
 
@@ -454,6 +454,8 @@ const ScheduleEntryCard: React.FC<ScheduleEntryCardProps> = ({ entry, isEditable
             {elective && <span className="font-normal text-gray-600"> ({elective.name})</span>}
           </p>
           <p>{entry.classType}</p>
+          {entry.academicWorkId && <p className="font-medium text-teal-800">{entry.academicEventKind === 'predefense' ? 'Предзащита' : entry.academicEventKind === 'defense' ? 'Защита' : 'Консультация'} · {academicWorks.find(work => work.id === entry.academicWorkId)?.studentName || 'Индивидуальная работа'}</p>}
+          {!!entry.additionalTeacherIds?.length && <p className="text-gray-600">Комиссия: {entry.additionalTeacherIds.map(id => teachers.find(teacher => teacher.id === id)?.name || id).join(', ')}</p>}
           <p className="font-medium text-gray-700 truncate">{groupName}</p>
           {entry.date && (
             <div className="mt-1 text-gray-600 flex items-center">

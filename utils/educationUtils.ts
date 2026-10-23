@@ -16,9 +16,17 @@ export const getEducationLevel = (specialty?: Specialty): EducationLevel => {
     return 'bachelor';
 };
 
-export const getPlanForGroup = (group: Group, plans: EducationalPlan[]) =>
-    plans.find(plan => plan.specialtyId === group.specialtyId && plan.formOfStudy === group.formOfStudy) ||
-    plans.find(plan => plan.specialtyId === group.specialtyId && !plan.formOfStudy);
+export const getPlanForGroup = (group: Pick<Group, 'specialtyId' | 'formOfStudy' | 'admissionYear' | 'profile' | 'educationalPlanId'>, plans: EducationalPlan[]) => {
+    const compatible = plans.filter(plan => plan.specialtyId === group.specialtyId &&
+        (!plan.formOfStudy || plan.formOfStudy === group.formOfStudy) &&
+        (!plan.profile || plan.profile === group.profile) &&
+        (!plan.admissionYear || plan.admissionYear === group.admissionYear));
+    if (group.educationalPlanId) return compatible.find(plan => plan.id === group.educationalPlanId);
+    return compatible.sort((a, b) =>
+        Number(!!b.admissionYear) - Number(!!a.admissionYear) ||
+        Number(!!b.profile) - Number(!!a.profile) ||
+        Number(!!b.formOfStudy) - Number(!!a.formOfStudy) || a.id.localeCompare(b.id))[0];
+};
 
 export const getPlanContactActivities = (entry: PlanEntry) => [
     { type: ClassType.Lecture, hours: entry.lectureHours || 0 },

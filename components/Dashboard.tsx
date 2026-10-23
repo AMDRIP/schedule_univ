@@ -22,6 +22,7 @@ import RoomResourcesManager from './RoomResourcesManager';
 import BellScheduleManager from './BellScheduleManager';
 import AnalyticsView from './AnalyticsView';
 import AcademicWorkManager from './AcademicWorkManager';
+import RepairPreviewModal from './RepairPreviewModal';
 
 
 interface DashboardProps {
@@ -130,6 +131,7 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
       <Sidebar currentRole={currentRole} activeView={activeView} setActiveView={handleSidebarNavigate} />
       <main className="min-w-0 flex-1 p-6 overflow-y-auto bg-gray-50">
         {renderContent()}
+        <RepairPreviewModal />
       </main>
     </div>
   );

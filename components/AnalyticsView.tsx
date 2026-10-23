@@ -2,7 +2,8 @@ import React, { useMemo, useState } from 'react';
 import { useStore } from '../hooks/useStore';
 import { ClassType, Classroom, Department, EducationalPlan, FormOfStudy, Group, ScheduleEntry, Specialty, Subject, Teacher } from '../types';
 import { isSemesterInCourse } from '../utils/semesterUtils';
-import { getPlanContactActivities } from '../utils/educationUtils';
+import { getPlanContactActivities, getPlanForGroup } from '../utils/educationUtils';
+import PlanBalanceView from './PlanBalanceView';
 
 type ResourceStat = {
   id: string;
@@ -150,7 +151,7 @@ const AnalyticsView: React.FC = () => {
     educationalPlans,
     settings,
   } = useStore();
-  const [activeTab, setActiveTab] = useState<'overview' | 'departments' | 'teachers' | 'groups' | 'classrooms' | 'whatif' | 'advice'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'departments' | 'teachers' | 'groups' | 'classrooms' | 'whatif' | 'advice' | 'balance'>('overview');
   const [whatIf, setWhatIf] = useState<WhatIfScenario>({
     specialtyId: '',
     formOfStudy: '',
@@ -338,7 +339,7 @@ const AnalyticsView: React.FC = () => {
 
     educationalPlans.forEach(plan => {
       const specialtyName = specialtyById.get(plan.specialtyId)?.name || plan.specialtyId;
-      const planGroups = groups.filter(group => group.specialtyId === plan.specialtyId && (!plan.formOfStudy || group.formOfStudy === plan.formOfStudy));
+      const planGroups = groups.filter(group => getPlanForGroup(group, educationalPlans)?.id === plan.id);
       plan.entries.forEach(entry => {
         const classHours: Array<[ClassType, number]> = [
           ...getPlanContactActivities(entry).map(activity => [activity.type, activity.hours] as [ClassType, number]),
@@ -535,6 +536,9 @@ const AnalyticsView: React.FC = () => {
         formOfStudy: group.formOfStudy,
         course: group.course,
         studentCount: group.studentCount,
+        admissionYear: group.admissionYear,
+        profile: group.profile,
+        educationalPlanId: group.educationalPlanId,
       }));
     const plannedScenarioGroups = whatIf.plannedGroups.filter(group =>
       (!whatIf.specialtyId || group.specialtyId === whatIf.specialtyId) &&
@@ -542,10 +546,7 @@ const AnalyticsView: React.FC = () => {
       (!whatIf.course || group.course === whatIf.course)
     );
     const scenarioGroups = [...selectedExistingGroups, ...plannedScenarioGroups];
-    const findPlanForScenarioGroup = (group: typeof scenarioGroups[number]) =>
-      educationalPlans.find(plan => plan.specialtyId === group.specialtyId && plan.formOfStudy === group.formOfStudy) ||
-      educationalPlans.find(plan => plan.specialtyId === group.specialtyId && !plan.formOfStudy) ||
-      educationalPlans.find(plan => plan.specialtyId === group.specialtyId);
+    const findPlanForScenarioGroup = (group: typeof scenarioGroups[number]) => getPlanForGroup(group, educationalPlans);
     const subjectById = new Map<string, Subject>(subjects.map(subject => [subject.id, subject]));
     const addedPlanNeeds: WhatIfNeed[] = [];
 
@@ -791,6 +792,7 @@ const AnalyticsView: React.FC = () => {
     ['classrooms', 'Аудитории'],
     ['whatif', 'Что, если?'],
     ['advice', 'Советы'],
+    ['balance', 'Баланс часов'],
   ] as const;
 
   const updateWhatIf = <K extends keyof WhatIfScenario>(key: K, value: WhatIfScenario[K]) => {
@@ -987,6 +989,7 @@ const AnalyticsView: React.FC = () => {
         ))}
       </div>
 
+      {activeTab === 'balance' && <PlanBalanceView />}
       {activeTab === 'overview' && (
         <div className="grid gap-5 xl:grid-cols-3">
           <div className="xl:col-span-2 space-y-5">

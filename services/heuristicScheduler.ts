@@ -2,15 +2,16 @@ import {
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, BellScheduleProfile,
     SchedulingSettings, TeacherSubjectLink, SchedulingRule, ProductionCalendarEvent, UGS,
     Specialty, EducationalPlan, UnscheduledEntry, AvailabilityType, WeekType, DeliveryMode, ClassroomType, Subgroup, Elective, HeuristicConfig,
-    RuleSeverity, RuleAction, RuleCondition, ProductionCalendarEventType, SchedulingExplanation, SchedulingBottleneck, SchedulingProgressPoint
+    RuleSeverity, RuleAction, RuleCondition, ProductionCalendarEventType, SchedulingExplanation, SchedulingBottleneck, SchedulingProgressPoint, AcademicWork
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
-import { getWeekNumber, toYYYYMMDD } from '../utils/dateUtils';
+import { getWeekNumber, getWeekType, toYYYYMMDD } from '../utils/dateUtils';
 import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
-import { getPlanContactActivities, getPlanContactHours, matchesSemesterParity, getRequiredClassroomTypes } from '../utils/educationUtils';
+import { getPlanContactActivities, getPlanContactHours, matchesSemesterParity, getRequiredClassroomTypes, getPlanForGroup as resolvePlanForGroup } from '../utils/educationUtils';
 
-interface GenerationData {
+export interface GenerationData {
+    academicWorks?: AcademicWork[];
     teachers: Teacher[];
     groups: Group[];
     classrooms: Classroom[];
@@ -66,6 +67,7 @@ interface SchedulerIndex {
         retained: ScheduleEntry[]; generated: ScheduleEntry[]; count: number; all: ScheduleEntry[];
         teacher: Map<string, ScheduleEntry[]>; teacherDay: Map<string, ScheduleEntry[]>;
         groupDay: Map<string, ScheduleEntry[]>; subject: Map<string, ScheduleEntry[]>;
+        day: Map<string, ScheduleEntry[]>;
     };
     teachersById: Map<string, Teacher>;
     groupsById: Map<string, Group>;
@@ -357,8 +359,18 @@ const entriesBelongToSameSeries = (
     first.classType === second.classType &&
     getSeriesGroupKey(first) === getSeriesGroupKey(second);
 
+class CountedBookingSet extends Set<string> {
+    private counts = new Map<string, number>();
+    add(key: string) { this.counts.set(key, (this.counts.get(key) || 0) + 1); return super.add(key); }
+    delete(key: string) {
+        const count = this.counts.get(key) || 0;
+        if (count > 1) { this.counts.set(key, count - 1); return true; }
+        this.counts.delete(key); return super.delete(key);
+    }
+}
+
 const addBooking = (bookings: Map<string, Set<string>>, resourceKey: string, bookingKey: string) => {
-    if (!bookings.has(resourceKey)) bookings.set(resourceKey, new Set());
+    if (!bookings.has(resourceKey)) bookings.set(resourceKey, new CountedBookingSet());
     bookings.get(resourceKey)!.add(bookingKey);
 };
 
@@ -373,14 +385,15 @@ const createResourceBookings = (
     schedule: ScheduleEntry[]
 ) => {
     const resourceBookings = new Map<string, Set<string>>();
-    teachers.forEach(item => resourceBookings.set(`teacher-${item.id}`, new Set()));
-    groups.forEach(item => resourceBookings.set(`group-${item.id}`, new Set()));
-    classrooms.forEach(item => resourceBookings.set(`classroom-${item.id}`, new Set()));
+    teachers.forEach(item => resourceBookings.set(`teacher-${item.id}`, new CountedBookingSet()));
+    groups.forEach(item => resourceBookings.set(`group-${item.id}`, new CountedBookingSet()));
+    classrooms.forEach(item => resourceBookings.set(`classroom-${item.id}`, new CountedBookingSet()));
 
     schedule.forEach(entry => {
         if (!entry.date) return;
         const bookingKey = `${entry.date}-${entry.timeSlotId}`;
         addBooking(resourceBookings, `teacher-${entry.teacherId}`, bookingKey);
+        entry.additionalTeacherIds?.forEach(id => addBooking(resourceBookings, `teacher-${id}`, bookingKey));
         getEntryGroupIds(entry).forEach(gid => addBooking(resourceBookings, `group-${gid}`, bookingKey));
         addBooking(resourceBookings, `classroom-${entry.classroomId}`, bookingKey);
     });
@@ -444,6 +457,21 @@ const getRetainedExistingSchedule = (schedule: ScheduleEntry[], config: Heuristi
     });
 };
 
+export const expandScheduleOccurrences = (data: GenerationData, schedule: ScheduleEntry[], period: { start: string; end: string }): ScheduleEntry[] => {
+    const resolve = (entry: ScheduleEntry) => !entry.groupId && !entry.groupIds?.length && entry.streamId ? { ...entry, groupIds: data.streams.find(stream => stream.id === entry.streamId)?.groupIds || [] } : entry;
+    return schedule.flatMap(original => {
+        const entry = resolve(original);
+        if (entry.date) return [entry];
+        const occurrences: ScheduleEntry[] = [];
+        for (const date = new Date(period.start + 'T00:00:00'); toYYYYMMDD(date) <= period.end; date.setDate(date.getDate() + 1)) {
+            const day = DAYS_OF_WEEK[(date.getDay() + 6) % 7];
+            const parity = data.settings.useEvenOddWeekSeparation ? getWeekType(date, new Date(data.settings.semesterStart + 'T00:00:00')) : 'every';
+            if (entry.day === day && (entry.weekType === 'every' || entry.weekType === parity)) occurrences.push({ ...entry, id: `${entry.id}@${toYYYYMMDD(date)}`, date: toYYYYMMDD(date) });
+        }
+        return occurrences;
+    });
+};
+
 const isEntryInOptimizationScope = (entry: ScheduleEntry, config: HeuristicConfig) => {
     if (!entry.date) return false;
     const entryDate = new Date(entry.date + 'T00:00:00');
@@ -476,7 +504,7 @@ const createWorkDays = (data: GenerationData, config: HeuristicConfig, index: Sc
     return workDays;
 };
 
-const getActiveTimeSlotsForDate = (data: GenerationData, date: Date | string, index: SchedulerIndex) => {
+export const getActiveTimeSlotsForDate = (data: GenerationData, date: Date | string, index = createSchedulerIndex(data)) => {
     const dateStr = typeof date === 'string' ? date : toYYYYMMDD(date);
     const actualDate = typeof date === 'string' ? new Date(date + 'T00:00:00') : date;
     const weekday = actualDate.getDay() === 0 ? 6 : actualDate.getDay() - 1;
@@ -549,8 +577,7 @@ const streamCanScheduleLecture = (stream: Stream, subjectId: string) => {
 
 const getPlanForGroup = (group: Group, index: SchedulerIndex) => {
     const plans = index.plansBySpecialty.get(group.specialtyId) || [];
-    return plans.find(plan => plan.formOfStudy === group.formOfStudy) ||
-        plans.find(plan => !plan.formOfStudy);
+    return resolvePlanForGroup(group, plans);
 };
 
 const groupHasLecture = (group: Group, subjectId: string, semester: number, index: SchedulerIndex) => {
@@ -1115,13 +1142,12 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
         label: string
     ) => {
         if (!options.onProgress) return;
-        if (phase === 'placing' && Date.now() - lastProgressAt < 200) return;
+        if (phase === 'placing' && Date.now() - lastProgressAt < 2_000) return;
         lastProgressAt = Date.now();
         const remaining = Math.max(0, total - processed);
-        const hardViolations = failedSnapshot.length + remaining;
-        const softPenalty = Math.max(0, Math.round((remaining * 38_000) + (failedSnapshot.length * 120_000) + Math.max(0, total - scheduleSnapshot.length) * 3_000));
-        const penalty = hardViolations * 1_000_000 + softPenalty;
-        const readiness = total > 0 ? Math.max(0, Math.min(99.9, (scheduleSnapshot.length / total) * 100)) : 100;
+        const score = calculateScheduleScore(data, { schedule: scheduleSnapshot, unschedulable: [...failedSnapshot, ...new Array(remaining)] }, config, index);
+        const { hardViolations, softPenalty, total: penalty } = score;
+        const readiness = total > 0 ? (scheduleSnapshot.length / total) * 100 : 100;
         options.onProgress({
             phase,
             timeMs: Date.now() - runStartedAt,
@@ -1130,7 +1156,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             placed: scheduleSnapshot.length,
             processed,
             total,
-            unscheduled: failedSnapshot.length,
+            unscheduled: failedSnapshot.length + remaining,
             hardViolations,
             softPenalty,
             label,
@@ -1175,7 +1201,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
                 return { ...entry, explanation };
             });
 
-            const retainedExistingSchedule = getRetainedExistingSchedule(data.schedule, config);
+            const retainedExistingSchedule = expandScheduleOccurrences(data, getRetainedExistingSchedule(data.schedule, config), config.timeFrame);
             const nativeBookings = createResourceBookings(
                 data.teachers,
                 data.groups,
@@ -1191,7 +1217,9 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
             );
 
             const result = { schedule: refinedNativeSchedule, unschedulable, explanations };
-            return { ...result, score: calculateScheduleScore(data, result, config) };
+            const score = calculateScheduleScore(data, result, config);
+            if (score.hardViolations) throw new Error('Нативный результат не прошёл общую валидацию.');
+            return { ...result, score };
         } catch (e) {
             console.error("Native scheduler failed, falling back to JS implementation:", e);
         }
@@ -1206,7 +1234,7 @@ export const generateScheduleWithHeuristics = async (data: GenerationData, confi
     const softPenaltyMultiplier = strictness / 5.0; // Scale strictness from 1-10 to a multiplier
 
     // Populate with existing schedule entries that are NOT being cleared
-    const existingSchedule = getRetainedExistingSchedule(data.schedule, config);
+    const existingSchedule = expandScheduleOccurrences(data, getRetainedExistingSchedule(data.schedule, config), config.timeFrame);
     const schedulingData = { ...data, schedule: existingSchedule };
 
     const resourceBookings = createResourceBookings(teachers, groups, classrooms, existingSchedule);
@@ -1674,6 +1702,7 @@ const conditionMatchesContext = (condition: RuleCondition, context: RuleEvaluati
     switch (condition.entityType) {
         case 'teacher':
             return condition.entityIds.includes(entry.teacherId) ||
+                ('additionalTeacherIds' in entry && (entry.additionalTeacherIds || []).some(id => condition.entityIds.includes(id))) ||
                 ('teacherCandidates' in entry && (entry.teacherCandidates || []).some(teacherId => condition.entityIds.includes(teacherId)));
         case 'group':
             return groupIds.some(gid => condition.entityIds.includes(gid));
@@ -2216,14 +2245,103 @@ const getScoringContext = (data: GenerationData, generated: ScheduleEntry[], ind
         put(context!.teacherDay, `${entry.teacherId}-${entry.date}`);
         getEntryGroupIds(entry).forEach(id => put(context!.groupDay, `${id}-${entry.date}`));
         put(context!.subject, entry.subjectId);
+        if (entry.date) put(context!.day, entry.date);
     };
     if (!context || context.retained !== data.schedule || context.generated !== generated || context.count > generated.length) {
-        context = { retained: data.schedule, generated, count: 0, all: [], teacher: new Map(), teacherDay: new Map(), groupDay: new Map(), subject: new Map() };
+        context = { retained: data.schedule, generated, count: 0, all: [], teacher: new Map(), teacherDay: new Map(), groupDay: new Map(), subject: new Map(), day: new Map() };
         index.scoringContext = context;
         data.schedule.forEach(append);
     }
     while (context.count < generated.length) append(generated[context.count++]);
     return context;
+};
+
+const getPlacementIssues = (
+    entry: UnscheduledEntry, date: Date, timeSlotId: string, classroom: Classroom,
+    involvedGroups: Group[], bookings: Map<string, Set<string>>, data: GenerationData,
+    config: HeuristicConfig, activeTimeSlots: TimeSlot[], index: SchedulerIndex, nearby: ScheduleEntry[] = []
+): string[] => {
+    const issues: string[] = [];
+    const dated = entry as unknown as ScheduleEntry;
+    const dateStr = toYYYYMMDD(date);
+    const day = DAYS_OF_WEEK[(date.getDay() + 6) % 7];
+    const teacher = index.teachersById.get(entry.teacherId);
+    const subject = index.subjectsById.get(entry.subjectId);
+    const slot = activeTimeSlots.find(item => item.id === timeSlotId);
+    if (!teacher || !subject) issues.push('Преподаватель или дисциплина не найдены.');
+    if (!slot) issues.push('Слот не входит в действующие звонки этой даты.');
+    if (dateStr < config.timeFrame.start || dateStr > config.timeFrame.end) issues.push('Дата вне выбранного периода.');
+    if (data.settings.respectProductionCalendar && index.productionByDate.get(dateStr)?.isWorkDay === false) issues.push('Нерабочий день производственного календаря.');
+    if (!involvedGroups.length || involvedGroups.length !== getEntryGroupIds(entry).length) issues.push('Не найдены все группы занятия.');
+    const participants = [...new Set([entry.teacherId, ...(dated.additionalTeacherIds || [])])];
+    for (const id of participants) {
+        const person = index.teachersById.get(id);
+        if (!person) issues.push('Участник комиссии не найден.');
+        if (person?.availabilityGrid?.[day]?.[timeSlotId] === AvailabilityType.Forbidden) issues.push(`Запрещённое время: ${person.name}.`);
+        if (bookings.get(`teacher-${id}`)?.has(`${dateStr}-${timeSlotId}`)) issues.push(`Преподаватель занят: ${person?.name || id}.`);
+    }
+    if (involvedGroups.some(group => group.availabilityGrid?.[day]?.[timeSlotId] === AvailabilityType.Forbidden)) issues.push('Запрещённое время группы.');
+    if (!areGroupsCompatibleWithTimeSlot(slot, involvedGroups)) issues.push('Смена группы не совпадает со слотом.');
+    if (classroom.status === 'closed' || classroom.status === 'repair') issues.push('Аудитория закрыта или ремонтируется.');
+    if (classroom.capacity < entry.studentCount) issues.push('Недостаточная вместимость аудитории.');
+    if (classroom.availabilityGrid?.[day]?.[timeSlotId] === AvailabilityType.Forbidden) issues.push('Запрещённое время аудитории.');
+    if (classroom.allowedClassTypes?.length && !classroom.allowedClassTypes.includes(entry.classType)) issues.push('Аудитория не допускает этот тип занятия.');
+    const required = entry.classroomTypeIds?.length ? entry.classroomTypeIds : getRequiredClassroomTypes(subject, entry.classType);
+    if (!required?.includes(classroom.typeId)) issues.push('Не подходит тип аудитории или требования не заданы.');
+    if ((entry.requiredClassroomTagIds || subject?.requiredClassroomTagIds || []).some(tag => !classroom.tagIds?.includes(tag))) issues.push('Не хватает оборудования аудитории.');
+    if (bookings.get(`classroom-${classroom.id}`)?.has(`${dateStr}-${timeSlotId}`)) issues.push('Аудитория занята.');
+    if (involvedGroups.some(group => bookings.get(`group-${group.id}`)?.has(`${dateStr}-${timeSlotId}`))) issues.push('Группа или участники потока заняты.');
+    const interval = (value?: TimeSlot) => {
+        const match = value?.time.match(/(\d{1,2}):(\d{2})\s*[-–—]\s*(\d{1,2}):(\d{2})/);
+        return match ? [Number(match[1]) * 60 + Number(match[2]), Number(match[3]) * 60 + Number(match[4])] : null;
+    };
+    const currentInterval = interval(slot);
+    for (const other of nearby) {
+        if (other.timeSlotId === timeSlotId) continue;
+        const otherTeachers = [other.teacherId, ...(other.additionalTeacherIds || [])];
+        const sharesResource = other.classroomId === classroom.id || participants.some(id => otherTeachers.includes(id)) || getEntryGroupIds(other).some(id => involvedGroups.some(group => group.id === id));
+        if (!sharesResource) continue;
+        const otherSlot = activeTimeSlots.find(item => item.id === other.timeSlotId) || [...data.timeSlots, ...data.timeSlotsShortened, ...(data.bellScheduleProfiles || []).flatMap(profile => profile.slots)].find(item => item.id === other.timeSlotId);
+        const range = interval(otherSlot);
+        if (!range || !currentInterval || range[0] >= currentInterval[1] || currentInterval[0] >= range[1]) continue;
+        issues.push('Пересечение ресурсов по времени разных слотов звонков.'); break;
+    }
+    const individualWork = dated.academicWorkId && data.academicWorks?.find(work => work.id === dated.academicWorkId && work.subjectId === entry.subjectId && work.groupId === involvedGroups[0]?.id && work.supervisorId === entry.teacherId);
+    if (dated.academicWorkId && !individualWork) issues.push('Индивидуальное событие не соответствует работе, группе или руководителю.');
+    const elective = data.electives.some(item => entry.uid.startsWith(`unsched-elective-${item.id}-`) && item.teacherId === entry.teacherId && item.subjectId === entry.subjectId);
+    const links = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(entry.subjectId, entry.classType)) || [];
+    if (!individualWork && !elective && !links.some(link => link.teacherId === entry.teacherId && teacherLinkMatchesContext(link, involvedGroups, entry.streamId))) issues.push('Нет допустимой привязки преподавателя к дисциплине и типу занятия.');
+    return issues;
+};
+
+export interface PlacementValidation { valid: boolean; issues: string[]; softPenalty: number }
+
+export const createScheduleValidator = (data: GenerationData, config?: HeuristicConfig) => {
+    const index = createSchedulerIndex(data);
+    const configuration: HeuristicConfig = config || { strictness: 5, iterations: 1, clearExisting: false, enforceLectureOrder: true, distributeEvenly: true, timeFrame: { start: data.settings.semesterStart, end: data.settings.semesterEnd } };
+    return (entry: ScheduleEntry, schedule = data.schedule): PlacementValidation => {
+        const resolveGroups = (item: ScheduleEntry) => !item.groupId && !item.groupIds?.length && item.streamId ? { ...item, groupIds: data.streams.find(stream => stream.id === item.streamId)?.groupIds || [] } : item;
+        entry = resolveGroups(entry);
+        if (!entry.date || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) return { valid: false, issues: ['Для проверки требуется календарная дата.'], softPenalty: 0 };
+        const date = new Date(entry.date + 'T00:00:00');
+        if (!Number.isFinite(date.getTime()) || toYYYYMMDD(date) !== entry.date) return { valid: false, issues: ['Некорректная дата.'], softPenalty: 0 };
+        const day = DAYS_OF_WEEK[(date.getDay() + 6) % 7];
+        const parity = data.settings.useEvenOddWeekSeparation ? getWeekType(date, new Date(data.settings.semesterStart + 'T00:00:00')) : 'every';
+        const other = schedule.filter(item => item.id !== entry.id).map(resolveGroups).flatMap(item => item.date ? [item] : item.day === day && (item.weekType === 'every' || item.weekType === parity) ? [{ ...item, date: entry.date }] : []);
+        const groups = getInvolvedGroups(entry, index);
+        const subgroup = entry.subgroupId && index.subgroupsById.get(entry.subgroupId);
+        const demand = { ...entry, uid: entry.unscheduledUid || entry.id, studentCount: subgroup ? subgroup.studentCount : groups.reduce((sum, group) => sum + group.studentCount, 0) } as unknown as UnscheduledEntry;
+        const classroom = index.classroomsById.get(entry.classroomId);
+        if (!classroom) return { valid: false, issues: ['Аудитория не найдена.'], softPenalty: 0 };
+        const slots = getActiveTimeSlotsForDate(data, date, index);
+        const bookings = createResourceBookings(data.teachers, data.groups, data.classrooms, other);
+        const issues = getPlacementIssues(demand, date, entry.timeSlotId, classroom, groups, bookings, data, configuration, slots, index, other.filter(item => item.date === entry.date));
+        if (entry.day !== day) issues.push('День недели не совпадает с датой.');
+        const context: RuleEvaluationContext = { entry: demand, classroom, involvedGroups: groups, teacher: index.teachersById.get(entry.teacherId), dateStr: entry.date, dayName: day, timeSlotId: entry.timeSlotId, activeTimeSlots: slots, schedule: other, index, penaltyMultiplier: configuration.strictness / 5 };
+        for (const rule of data.schedulingRules) if (applySchedulingRules(context, [rule]) === Infinity) issues.push(`Нарушено правило: ${rule.description || rule.id}.`);
+        const penalty = issues.length ? 0 : calculateSlotCost(demand, date, entry.timeSlotId, classroom, groups, bookings, { ...data, schedule: other }, configuration.strictness / 5, [], configuration, slots, index);
+        return { valid: !issues.length && Number.isFinite(penalty), issues, softPenalty: Number.isFinite(penalty) ? penalty : 0 };
+    };
 };
 
 const calculateSlotCost = (
@@ -2250,24 +2368,7 @@ const calculateSlotCost = (
     const scoring = getScoringContext(data, newSchedule, index);
     const allScheduleForScoring = scoring.all;
     const candidateTimeSlot = activeTimeSlots.find(slot => slot.id === timeSlotId);
-    if (!teacher || !subject || !candidateTimeSlot || dateStr < config.timeFrame.start || dateStr > config.timeFrame.end) return Infinity;
-    if (teacher.availabilityGrid?.[dayName]?.[timeSlotId] === AvailabilityType.Forbidden) return Infinity;
-    if (involvedGroups.some(group => group.availabilityGrid?.[dayName]?.[timeSlotId] === AvailabilityType.Forbidden)) return Infinity;
-    if (classroom.status === 'closed' || classroom.status === 'repair' || classroom.capacity < entry.studentCount) return Infinity;
-    if (classroom.availabilityGrid?.[dayName]?.[timeSlotId] === AvailabilityType.Forbidden) return Infinity;
-    if (classroom.allowedClassTypes?.length && !classroom.allowedClassTypes.includes(entry.classType)) return Infinity;
-    const requiredTypes = entry.classroomTypeIds?.length ? entry.classroomTypeIds : getRequiredClassroomTypes(subject, entry.classType);
-    if (!requiredTypes?.includes(classroom.typeId)) return Infinity;
-    if ((entry.requiredClassroomTagIds || subject.requiredClassroomTagIds || []).some(tag => !classroom.tagIds?.includes(tag))) return Infinity;
-    const teacherLinks = index.teacherLinksBySubjectType.get(makeSubjectTypeKey(entry.subjectId, entry.classType)) || [];
-    const explicitlyAssignedElective = data.electives.some(elective => entry.uid.startsWith(`unsched-elective-${elective.id}-`) && elective.teacherId === entry.teacherId && elective.subjectId === entry.subjectId);
-    if (!explicitlyAssignedElective && !teacherLinks.some(link => link.teacherId === entry.teacherId && teacherLinkMatchesContext(link, involvedGroups, entry.streamId))) return Infinity;
-    if (!areGroupsCompatibleWithTimeSlot(candidateTimeSlot, involvedGroups)) {
-        return Infinity;
-    }
-    if (hasResourceBookingConflict(bookings, entry, classroom.id, involvedGroups.map(group => group.id), dateStr, timeSlotId)) {
-        return Infinity;
-    }
+    if (getPlacementIssues(entry, date, timeSlotId, classroom, involvedGroups, bookings, data, config, activeTimeSlots, index, scoring.day.get(dateStr) || []).length) return Infinity;
 
     const allBookingsTodayForGroups = Array.from(new Set(involvedGroups.flatMap(group => scoring.groupDay.get(`${group.id}-${dateStr}`) || [])));
 
@@ -2483,13 +2584,10 @@ export const calculateScheduleScore = (
     index = createSchedulerIndex(data)
 ): ScheduleScore => {
     const generatedSchedule = result.schedule.filter(entry => entry.date);
-    const retainedExistingSchedule = getRetainedExistingSchedule(data.schedule, config);
+    const retainedExistingSchedule = expandScheduleOccurrences(data, getRetainedExistingSchedule(data.schedule, config), config.timeFrame);
     const bookings = createResourceBookings(data.teachers, data.groups, data.classrooms, [...retainedExistingSchedule, ...generatedSchedule]);
     let softPenalty = 0;
-    let hardViolations = Math.max(
-        0,
-        countResourceCollisions([...retainedExistingSchedule, ...generatedSchedule]) - countResourceCollisions(retainedExistingSchedule)
-    );
+    let hardViolations = result.schedule.length - generatedSchedule.length;
 
     generatedSchedule.forEach(entry => {
         const bookingKey = `${entry.date}-${entry.timeSlotId}`;
@@ -2505,6 +2603,7 @@ export const calculateScheduleScore = (
 
         const activeTimeSlots = getActiveTimeSlotsForDate(data, entry.date, index);
         removeBooking(bookings, `teacher-${entry.teacherId}`, bookingKey);
+        entry.additionalTeacherIds?.forEach(id => removeBooking(bookings, `teacher-${id}`, bookingKey));
         removeBooking(bookings, `classroom-${entry.classroomId}`, bookingKey);
         getEntryGroupIds(entry).forEach(groupId => removeBooking(bookings, `group-${groupId}`, bookingKey));
 
@@ -2526,6 +2625,7 @@ export const calculateScheduleScore = (
         else softPenalty += cost;
 
         addBooking(bookings, `teacher-${entry.teacherId}`, bookingKey);
+        entry.additionalTeacherIds?.forEach(id => addBooking(bookings, `teacher-${id}`, bookingKey));
         addBooking(bookings, `classroom-${entry.classroomId}`, bookingKey);
         getEntryGroupIds(entry).forEach(groupId => addBooking(bookings, `group-${groupId}`, bookingKey));
     });
@@ -2546,7 +2646,7 @@ export const optimizeScheduleLocally = async (
 ): Promise<LocalOptimizerResult> => {
     const index = createSchedulerIndex(data);
     const candidates = data.schedule.filter(entry => isEntryInOptimizationScope(entry, config));
-    const retainedSchedule = data.schedule.filter(entry => !isEntryInOptimizationScope(entry, config));
+    const retainedSchedule = expandScheduleOccurrences(data, data.schedule.filter(entry => !isEntryInOptimizationScope(entry, config)), config.timeFrame);
     const scopedData = { ...data, schedule: retainedSchedule };
 
     const beforeScore = calculateScheduleScore(
@@ -2566,7 +2666,7 @@ export const optimizeScheduleLocally = async (
         };
     }
 
-    const bookings = createResourceBookings(data.teachers, data.groups, data.classrooms, data.schedule);
+    const bookings = createResourceBookings(data.teachers, data.groups, data.classrooms, [...retainedSchedule, ...candidates]);
     const optimizedCandidates = await refineSchedule(
         candidates,
         scopedData,

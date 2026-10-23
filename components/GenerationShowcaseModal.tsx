@@ -20,16 +20,16 @@ const PenaltyChart: React.FC<{ points: NonNullable<ReturnType<typeof useStore>['
     const width = 760;
     const height = 260;
     const padding = 28;
-    const visible = points.length > 1 ? points : [
-      { timeMs: 0, penalty: 1, readiness: 0, placed: 0, processed: 0, total: 1, unscheduled: 0, hardViolations: 0, softPenalty: 0, label: 'Старт' },
-      { timeMs: 1, penalty: 1, readiness: 0, placed: 0, processed: 0, total: 1, unscheduled: 0, hardViolations: 0, softPenalty: 0, label: 'Старт' },
-    ];
-    const maxPenalty = Math.max(...visible.map(point => point.penalty), 1);
-    const minPenalty = Math.min(...visible.map(point => point.penalty), 0);
+    const visible = points;
+    const maxPenalty = visible.length ? Math.max(...visible.map(point => point.penalty)) : 0;
+    const minPenalty = visible.length ? Math.min(...visible.map(point => point.penalty)) : 0;
     const range = Math.max(1, maxPenalty - minPenalty);
+    let best = Infinity;
+    const duration = Math.max(1, ...visible.map(point => point.timeMs));
     const path = visible.map((point, index) => {
-      const x = padding + (index / Math.max(1, visible.length - 1)) * (width - padding * 2);
-      const y = padding + ((point.penalty - minPenalty) / range) * (height - padding * 2);
+      best = Math.min(best, point.penalty);
+      const x = padding + (point.timeMs / duration) * (width - padding * 2);
+      const y = padding + ((best - minPenalty) / range) * (height - padding * 2);
       const invertedY = height - y;
       return `${index === 0 ? 'M' : 'L'} ${x.toFixed(1)} ${invertedY.toFixed(1)}`;
     }).join(' ');
@@ -40,8 +40,7 @@ const PenaltyChart: React.FC<{ points: NonNullable<ReturnType<typeof useStore>['
     <div className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="mb-3 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Падение штрафов</h3>
-          <p className="text-xs text-slate-500">Красная зона сверху, зелёная внизу. Чем ниже линия, тем спокойнее расписание.</p>
+          <h3 className="text-sm font-semibold text-slate-900">Лучший измеренный штраф</h3>
         </div>
         <div className="text-right text-xs text-slate-500">
           <div>Пик: {formatPenalty(chart.maxPenalty)}</div>
@@ -68,7 +67,7 @@ const PenaltyChart: React.FC<{ points: NonNullable<ReturnType<typeof useStore>['
         <path d={chart.path} fill="none" stroke="url(#penalty-line)" strokeWidth="5" strokeLinecap="round" strokeLinejoin="round" />
         {points.slice(-1).map(point => (
           <g key={`${point.timeMs}-${point.penalty}`}>
-            <circle cx={chart.width - 28} cy={chart.height - 28 - ((point.penalty - chart.minPenalty) / Math.max(1, chart.maxPenalty - chart.minPenalty)) * (chart.height - 56)} r="6" fill="#0f172a" />
+            <circle cx={chart.width - 28} cy={chart.height - 28 - ((Math.min(...points.map(item => item.penalty)) - chart.minPenalty) / Math.max(1, chart.maxPenalty - chart.minPenalty)) * (chart.height - 56)} r="6" fill="#0f172a" />
           </g>
         ))}
       </svg>
@@ -125,7 +124,7 @@ const GenerationShowcaseModal: React.FC = () => {
           <div className="min-h-0 flex-1 overflow-auto p-6">
             <div className="mb-5 grid grid-cols-1 gap-4 lg:grid-cols-4">
               <div className="rounded-lg border border-slate-200 bg-white p-4">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Готовность</p>
+                <p className="text-xs uppercase tracking-wide text-slate-500">Заполнение</p>
                 <p className={`mt-2 text-4xl font-bold ${readiness >= 98 ? 'text-emerald-600' : readiness >= 80 ? 'text-amber-600' : 'text-red-600'}`}>{readiness}%</p>
                 <div className="mt-3 h-2 rounded-full bg-slate-100">
                   <div className="h-2 rounded-full bg-emerald-500 transition-all" style={{ width: `${Math.min(100, readiness)}%` }} />
@@ -144,7 +143,7 @@ const GenerationShowcaseModal: React.FC = () => {
               <div className="rounded-lg border border-slate-200 bg-white p-4">
                 <p className="text-xs uppercase tracking-wide text-slate-500">Не распределено</p>
                 <p className="mt-2 text-3xl font-bold text-red-600">{schedulingShowcase.failedEntries.length}</p>
-                <p className="mt-1 text-xs text-slate-500">Можно разобрать в триаже ниже</p>
+                <p className="mt-1 text-xs text-slate-500">Ожидают обработки: {Math.max(0, (current?.total || 0) - (current?.processed || 0))}</p>
               </div>
             </div>
 

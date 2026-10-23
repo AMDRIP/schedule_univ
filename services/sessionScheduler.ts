@@ -1,15 +1,20 @@
 import { 
     ScheduleEntry, Teacher, Group, Classroom, Subject, Stream, TimeSlot, ClassType, 
     SchedulingSettings, TeacherSubjectLink, ProductionCalendarEvent, Specialty, EducationalPlan, 
-    AvailabilityType, DeliveryMode, ClassroomType, Subgroup, SessionSchedulerConfig, AttestationType
+    AvailabilityType, DeliveryMode, ClassroomType, Subgroup, SessionSchedulerConfig, AttestationType, SchedulingRule, BellScheduleProfile, Elective
 } from '../types';
 import { DAYS_OF_WEEK } from '../constants';
 import { toYYYYMMDD } from '../utils/dateUtils';
 import { areGroupsCompatibleWithTimeSlot } from '../utils/shiftUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
 import { getPlanForGroup, matchesSemesterParity, getRequiredClassroomTypes } from '../utils/educationUtils';
+import { createScheduleValidator, getActiveTimeSlotsForDate, GenerationData } from './heuristicScheduler';
 
 interface SessionGenerationData {
+  timeSlotsShortened?: TimeSlot[];
+  bellScheduleProfiles?: BellScheduleProfile[];
+  schedulingRules?: SchedulingRule[];
+  electives?: Elective[];
   teachers: Teacher[];
   groups: Group[];
   classrooms: Classroom[];
@@ -253,9 +258,14 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
 
         bookingSet.add(`classroom-${entry.classroomId}`);
         bookingSet.add(`teacher-${entry.teacherId}`);
+        entry.additionalTeacherIds?.forEach(id => bookingSet.add(`teacher-${id}`));
         (entry.groupIds || [entry.groupId]).forEach(gid => gid && bookingSet.add(`group-${gid}`));
     });
 
+    const validationData: GenerationData = { ...data, timeSlotsShortened: data.timeSlotsShortened || data.timeSlots, bellScheduleProfiles: data.bellScheduleProfiles || [], schedulingRules: data.schedulingRules || [], electives: data.electives || [], ugs: [] };
+    const validate = createScheduleValidator(validationData, { timeFrame, clearExisting: false, iterations: 1, strictness: 5, enforceLectureOrder: true, distributeEvenly: true });
+    const allows = (event: SessionEvent, date: Date, timeSlotId: string, room: Classroom) => validate(placeEvent(event, date, timeSlotId, room, new Map()), [...existingSchedule, ...newSchedule]).valid;
+    const slotsForDate = (date: Date) => getActiveTimeSlotsForDate(validationData, date);
     const workDays: Date[] = [];
     let currentDate = new Date(timeFrame.start + 'T00:00:00');
     const lastDate = new Date(timeFrame.end + 'T00:00:00');
@@ -286,14 +296,15 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
 
         const findSlotInClassrooms = (roomList: Classroom[]) => {
             for (const date of workDays) {
-                for (const timeSlot of timeSlots) {
+                for (const timeSlot of slotsForDate(date)) {
                     const involvedGroups = groups.filter(group => event.groupIds.includes(group.id));
                     if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroups)) continue;
-                    if (!isSlotFreeForAttestation(date, timeSlot.id, event, resourceBookings, placements, config, data)) continue;
+                    if (!isSlotFreeForAttestation(date, timeSlot.id, event, resourceBookings, placements, config, validationData)) continue;
 
                     for (const classroom of roomList) {
                         const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
                         if (resourceBookings.get(bookingKey)?.has(`classroom-${classroom.id}`)) continue;
+                        if (!allows(event, date, timeSlot.id, classroom)) continue;
                         
                         return { date, timeSlotId: timeSlot.id, classroom };
                     }
@@ -343,16 +354,17 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
      // --- 3. PLACE CONSULTATIONS ---
     const placeFlexibleEvent = (event: SessionEvent, candidateDates: Date[]) => {
         for (const date of candidateDates) {
-            for (const timeSlot of timeSlots) {
+            for (const timeSlot of slotsForDate(date)) {
                 const involvedGroups = groups.filter(group => event.groupIds.includes(group.id));
                 if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroups)) continue;
-                if (!isSlotFreeForAttestation(date, timeSlot.id, event, resourceBookings, placements, config, data)) continue;
+                if (!isSlotFreeForAttestation(date, timeSlot.id, event, resourceBookings, placements, config, validationData)) continue;
 
                 const bookingKey = `${toYYYYMMDD(date)}-${timeSlot.id}`;
                 const subject = subjects.find(s => s.id === event.subjectId);
                 const requiredTypes = getRequiredClassroomTypes(subject, event.classType);
 
                 const suitableClassroom = classrooms.find(c => {
+                    if (!allows(event, date, timeSlot.id, c)) return false;
                     if (c.status === 'repair' || c.status === 'closed') return false;
                     if (c.allowedClassTypes?.length && !c.allowedClassTypes.includes(event.classType)) return false;
                     const day = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
@@ -393,33 +405,7 @@ export const generateSessionSchedule = async (data: SessionGenerationData, confi
         const consultDate = new Date(examDate);
         consultDate.setDate(examDate.getDate() - config.consultationOffset);
         
-        let placed = false;
-        for (const timeSlot of timeSlots) {
-             const involvedGroups = groups.filter(group => consult.groupIds.includes(group.id));
-             if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroups)) continue;
-             const bookingKey = `${toYYYYMMDD(consultDate)}-${timeSlot.id}`;
-             if(resourceBookings.get(bookingKey)?.has(`teacher-${consult.teacherId}`)) continue;
-             if(consult.groupIds.some(gid => resourceBookings.get(bookingKey)?.has(`group-${gid}`))) continue;
-             
-             const subject = subjects.find(s => s.id === consult.subjectId);
-             const requiredTypes = subject?.classroomTypeRequirements?.[consult.classType];
-
-             const suitableClassroom = classrooms.find(c => {
-                 if (c.capacity < consult.studentCount) return false;
-                 if (requiredTypes && requiredTypes.length > 0) {
-                    if (!requiredTypes.includes(c.typeId)) return false;
-                 }
-                 if (resourceBookings.get(bookingKey)?.has(`classroom-${c.id}`)) return false;
-                 return true;
-             });
-
-             if (suitableClassroom) {
-                 const newEntry = placeEvent(consult, consultDate, timeSlot.id, suitableClassroom, resourceBookings);
-                 newSchedule.push(newEntry);
-                 placed = true;
-                 break;
-             }
-        }
+        const placed = placeFlexibleEvent(consult, [consultDate]);
         if(!placed) {
             unschedulable.push(consult);
         }
@@ -447,7 +433,7 @@ const isSlotFreeForAttestation = (
     const dateStr = toYYYYMMDD(date);
     const bookingKey = `${dateStr}-${timeSlotId}`;
     const dayBookingSet = bookings.get(bookingKey);
-    const timeSlot = data.timeSlots.find(slot => slot.id === timeSlotId);
+    const timeSlot = getActiveTimeSlotsForDate(data as GenerationData, date).find(slot => slot.id === timeSlotId);
     const involvedGroupsForShift = data.groups.filter(group => event.groupIds.includes(group.id));
     if (!areGroupsCompatibleWithTimeSlot(timeSlot, involvedGroupsForShift)) return false;
 

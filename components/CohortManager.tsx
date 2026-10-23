@@ -22,7 +22,7 @@ import {
 } from './icons';
 import AvailabilityGridEditor from './AvailabilityGridEditor';
 import { formatSemesterCourse } from '../utils/semesterUtils';
-import { EDUCATION_LEVEL_LABELS, getEducationLevel } from '../utils/educationUtils';
+import { EDUCATION_LEVEL_LABELS, getEducationLevel, getPlanForGroup as resolvePlanForGroup } from '../utils/educationUtils';
 
 type TabId = 'overview' | 'groups' | 'subgroups' | 'streams' | 'quality';
 
@@ -153,10 +153,7 @@ const CohortManager: React.FC = () => {
     return groupCount + subgroupCount;
   };
 
-  const getPlanForGroup = (group: Group) =>
-    educationalPlans.find(item => item.specialtyId === group.specialtyId && item.formOfStudy === group.formOfStudy) ||
-    educationalPlans.find(item => item.specialtyId === group.specialtyId && !item.formOfStudy) ||
-    educationalPlans.find(item => item.specialtyId === group.specialtyId);
+  const getPlanForGroup = (group: Group) => resolvePlanForGroup(group, educationalPlans);
 
   const qualityIssues = useMemo(() => {
     const issues: { title: string; detail: string; severity: 'critical' | 'warning' | 'info'; groupId?: string }[] = [];
@@ -466,6 +463,8 @@ const CohortManager: React.FC = () => {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Input label="Год набора" type="number" value={groupDraft.admissionYear || ''} onChange={value => setGroupDraft(prev => ({ ...prev, admissionYear: Number(value) || undefined }))} />
+                <Input label="Профиль подготовки" value={groupDraft.profile || ''} onChange={value => setGroupDraft(prev => ({ ...prev, profile: value, educationalPlanId: undefined }))} />
+                <label className="text-sm">Учебный план<select aria-label="Учебный план группы" value={groupDraft.educationalPlanId || ''} onChange={event => setGroupDraft(prev => ({ ...prev, educationalPlanId: event.target.value || undefined }))} className="mt-1 w-full rounded border p-2"><option value="">Автоматически по набору и профилю</option>{educationalPlans.filter(plan => plan.specialtyId === groupDraft.specialtyId && (!plan.formOfStudy || plan.formOfStudy === groupDraft.formOfStudy) && (!plan.admissionYear || plan.admissionYear === groupDraft.admissionYear) && (!plan.profile || plan.profile === groupDraft.profile)).map(plan => <option key={plan.id} value={plan.id}>{plan.version || 'Базовый'} · {plan.admissionYear || 'Все наборы'} · {plan.profile || 'Все профили'}</option>)}</select></label>
                 <Select label="Закреплённая аудитория" value={groupDraft.pinnedClassroomId || ''} onChange={value => setGroupDraft(prev => ({ ...prev, pinnedClassroomId: value }))} options={[{ value: '', label: 'Не задана' }, ...classrooms.map(item => ({ value: item.id, label: `${item.number} · ${item.capacity} мест` }))]} />
               </div>
               <Select label="Куратор" value={groupDraft.curatorTeacherId || ''} onChange={value => setGroupDraft(prev => ({ ...prev, curatorTeacherId: value }))} options={[{ value: '', label: 'Не задан' }, ...teachers.map(item => ({ value: item.id, label: item.name }))]} />

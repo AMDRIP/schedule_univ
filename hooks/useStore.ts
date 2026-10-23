@@ -9,14 +9,15 @@ import {
 } from '../types';
 import { getWeekType, toYYYYMMDD, getWeekDays } from '../utils/dateUtils';
 import { DAYS_OF_WEEK } from '../constants';
-import { generateScheduleWithHeuristics, generateClassPool, optimizeScheduleLocally, SchedulerResult, SchedulerRunOptions } from '../services/heuristicScheduler';
+import { generateScheduleWithHeuristics, generateClassPool, optimizeScheduleLocally, createScheduleValidator, SchedulerResult, SchedulerRunOptions } from '../services/heuristicScheduler';
+import { RepairPreview, previewScheduleRepair, scheduleSignature, validateRepair } from '../services/scheduleRepair';
 import { generateScheduleWithGemini } from '../services/geminiService';
 import { generateScheduleWithOpenRouter } from '../services/openRouterService';
 import { runIterativeScheduler } from '../services/iterativeScheduler';
 import { generateSessionSchedule, getSessionClassTypesToClear } from '../services/sessionScheduler';
 import { areGroupsCompatibleWithTimeSlot, getGroupsShiftMismatchText, getTimeSlotShiftLabel } from '../utils/shiftUtils';
 import { isSemesterInCourse } from '../utils/semesterUtils';
-import { getPlanContactActivities, getPlanContactHours, getRequiredClassroomTypes } from '../utils/educationUtils';
+import { getPlanContactActivities, getPlanContactHours, getRequiredClassroomTypes, getPlanForGroup } from '../utils/educationUtils';
 
 // MOCK DATA (Initial State)
 const initialFaculties: Faculty[] = [{
@@ -173,10 +174,7 @@ const streamCanScheduleLecture = (stream: Stream, subjectId: string) => {
     return isLectureStream && matchesSubject;
 };
 
-const findEducationalPlanForGroup = (educationalPlans: EducationalPlan[], group: Pick<Group, 'specialtyId' | 'formOfStudy'>) =>
-    educationalPlans.find(plan => plan.specialtyId === group.specialtyId && plan.formOfStudy === group.formOfStudy) ||
-    educationalPlans.find(plan => plan.specialtyId === group.specialtyId && !plan.formOfStudy) ||
-    educationalPlans.find(plan => plan.specialtyId === group.specialtyId);
+const findEducationalPlanForGroup = (educationalPlans: EducationalPlan[], group: Group) => getPlanForGroup(group, educationalPlans);
 
 const groupHasLectureInSemester = (
     group: Group,
@@ -446,6 +444,11 @@ interface StoreState {
   requestSchedulingStop: () => void;
   dismissSchedulingShowcase: () => void;
   quickRepairScheduleEntry: (entryId: string) => Promise<{ changed: boolean; message: string }>;
+  repairPreview: RepairPreview | null;
+  dismissRepairPreview: () => void;
+  applyScheduleRepair: () => void;
+  undoScheduleRepair: () => void;
+  canUndoRepair: boolean;
   runSessionScheduler: (config: SessionSchedulerConfig) => Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }>;
   clearSchedule: () => void;
   resetSchedule: () => void;
@@ -537,6 +540,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [timeSlotsShortened, setTimeSlotsShortened] = useState(initialTimeSlotsShortened);
   const [bellScheduleProfiles, setBellScheduleProfiles] = useState(initialBellScheduleProfiles);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>(initialSchedule);
+  const [repairPreview, setRepairPreview] = useState<RepairPreview | null>(null);
+  const [repairUndo, setRepairUndo] = useState<{ before: ScheduleEntry[]; afterSignature: string } | null>(null);
+  const repairRunning = useRef(false);
   const [unscheduledEntries, setUnscheduledEntries] = useState<UnscheduledEntry[]>([]);
   const [ugs, setUgs] = useState(initialUGS);
   const [specialties, setSpecialties] = useState(initialSpecialties);
@@ -697,6 +703,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     initializeApiKeys();
   }, []);
   
+  const getSchedulingData = () => ({ teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings, teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes, subgroups, electives, schedule, academicWorks });
+  const assertPlacement = (entry: ScheduleEntry, current = schedule) => {
+    const validate = createScheduleValidator(getSchedulingData());
+    const result = validate(entry, current);
+    if (!result.valid) throw new Error(result.issues.join('\n') || 'Нарушены ограничения расписания.');
+    const next = [...current.filter(item => item.id !== entry.id), entry];
+    for (const previous of current) if (previous.date && previous.id !== entry.id && validate(previous, current).valid) {
+      const check = validate(previous, next);
+      if (!check.valid) throw new Error(check.issues.join('\n'));
+    }
+  };
   const getFullState = () => ({
     schemaVersion: 2, academicWorks,
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, bellScheduleProfiles, schedule, unscheduledEntries,
@@ -711,6 +728,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
   
   const loadFullState = (data: any) => {
+    setRepairPreview(null); setRepairUndo(null);
     setAcademicWorks(Array.isArray(data.academicWorks) ? data.academicWorks : []);
     setFaculties(data.faculties || []);
     setDepartments(data.departments || []);
@@ -1109,6 +1127,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       });
 
       const suitableClassroom = classroomCandidates.find(c => {
+        if (!createScheduleValidator(getSchedulingData())({ ...item, id: `manual-${item.uid}`, date, day, timeSlotId, classroomId: c.id, weekType: 'every', deliveryMode: item.deliveryMode || DeliveryMode.Offline }).valid) return false;
         const targetWeekType = getWeekType(new Date(date + 'T00:00:00'), new Date(settings.semesterStart));
         const effectiveTargetWeekType = settings.useEvenOddWeekSeparation ? targetWeekType : 'every';
         
@@ -1150,6 +1169,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       const isStreamPlacement = itemGroupIds.length > 1 || !!item.streamId;
       const newEntry: ScheduleEntry = {
+          classroomTypeIds: item.classroomTypeIds, requiredClassroomTagIds: item.requiredClassroomTagIds,
+          pinnedClassroomId: item.pinnedClassroomId, preferredTimeSlotIds: item.preferredTimeSlotIds,
           id: `sched-${Date.now()}-${Math.random()}`,
           day, 
           timeSlotId, 
@@ -1166,6 +1187,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           deliveryMode: item.deliveryMode || DeliveryMode.Offline,
           unscheduledUid: item.uid,
       };
+      assertPlacement(newEntry);
       setSchedule(prev => [...prev, newEntry]);
   };
 
@@ -1258,6 +1280,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     let minCapacityDiff = Infinity;
 
     for (const c of classrooms) {
+        if (!createScheduleValidator(getSchedulingData())({ ...item, id: 'id' in item ? item.id : `manual-${item.uid}`, groupIds: placementGroupIds, day, date, timeSlotId, classroomId: c.id, weekType: 'every', deliveryMode: item.deliveryMode || DeliveryMode.Offline }).valid) continue;
         if (occupiedClassroomIds.has(c.id)) continue;
         if (c.capacity < studentCount) continue;
         if (!requiredClassroomTypes.includes(c.typeId)) continue;
@@ -1285,6 +1308,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if ('uid' in item) { // UnscheduledEntry
         const isStreamPlacement = placementGroupIds.length > 1 || !!item.streamId;
         const newEntry: Omit<ScheduleEntry, 'id'> = {
+            classroomTypeIds: item.classroomTypeIds, requiredClassroomTagIds: item.requiredClassroomTagIds,
+            pinnedClassroomId: item.pinnedClassroomId, preferredTimeSlotIds: item.preferredTimeSlotIds,
             day, timeSlotId, date, classroomId: bestFit.id, classType: item.classType, deliveryMode: item.deliveryMode || DeliveryMode.Offline,
             subjectId: item.subjectId, teacherId: item.teacherId, unscheduledUid: item.uid, weekType: 'every',
             groupId: isStreamPlacement ? undefined : targetGroupId,
@@ -1308,10 +1333,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const addScheduleEntry = (entry: Omit<ScheduleEntry, 'id'>) => {
     const newEntry = { ...entry, id: `manual-${Date.now()}-${Math.random()}` };
+    assertPlacement(newEntry);
     setSchedule(prev => [...prev, newEntry]);
   };
 
   const updateScheduleEntry = (updatedEntry: ScheduleEntry) => {
+      const previous = schedule.find(entry => entry.id === updatedEntry.id);
+      const placementFields = (entry: ScheduleEntry) => { const { lessonPlan, ...rest } = entry; return JSON.stringify(rest); };
+      if (!previous || placementFields(previous) !== placementFields(updatedEntry)) assertPlacement(updatedEntry);
       setSchedule(prev => prev.map(e => e.id === updatedEntry.id ? updatedEntry : e));
   };
   
@@ -1529,6 +1558,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
   
   const clearAllData = () => {
+    setRepairPreview(null); setRepairUndo(null);
     setAcademicWorks([]);
     setFaculties([]); setDepartments([]); setTeachers([]); setGroups([]); setStreams([]);
     setClassrooms([]); setSubjects([]); setCabinets([]); setTimeSlots([]); setTimeSlotsShortened([]); setBellScheduleProfiles([]); setSchedule([]);
@@ -1572,18 +1602,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const buildHumanSchedulingSummary = (point: SchedulingProgressPoint | undefined, failedEntries: UnscheduledEntry[], explanations: Record<string, SchedulingExplanation>) => {
     const readiness = point ? Math.round(point.readiness) : 0;
     const penalty = point ? Math.round(point.penalty).toLocaleString('ru-RU') : '0';
-    const windowCount = Object.values(explanations).filter(explanation =>
-      explanation.conflicts.some(conflict => conflict.toLowerCase().includes('окн'))
-    ).length;
     const failedCount = failedEntries.length;
-    const teacherWindow = Object.values(explanations).find(explanation =>
-      explanation.resource.toLowerCase().includes('преподав') && explanation.conflicts.some(conflict => conflict.toLowerCase().includes('окн'))
-    );
-    const humanProblems = [
-      failedCount > 0 ? `я не смогла поставить ${failedCount} ${failedCount === 1 ? 'пару' : failedCount < 5 ? 'пары' : 'пар'}` : '',
-      windowCount > 0 ? `допустила ${windowCount} ${windowCount === 1 ? 'окно' : windowCount < 5 ? 'окна' : 'окон'}${teacherWindow ? ` у ресурса "${teacherWindow.resource}"` : ''}` : '',
-    ].filter(Boolean).join(' и ');
-    return `Я сделала ${readiness}% работы. Осталось ${penalty} штрафных баллов. На человеческом это значит, что ${humanProblems || 'жёстких нерешённых проблем почти не осталось, смотрите мягкие штрафы качества.'}`;
+    const pending = Math.max(0, (point?.total || 0) - (point?.processed || 0));
+    return `Заполнение: ${readiness}%. Не размещено: ${failedCount}. Ожидают обработки: ${pending}. Жёстких нарушений в размещённых занятиях: ${point?.hardViolations || 0}. Мягкий штраф: ${Math.round(point?.softPenalty || 0).toLocaleString('ru-RU')}. Общая оценка: ${penalty}.`;
   };
 
   const buildSchedulingTriage = (failedEntries: UnscheduledEntry[], explanations: Record<string, SchedulingExplanation>): SchedulingTriageItem[] => {
@@ -1700,7 +1721,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
-        subgroups, electives, schedule, classroomTags, faculties, departments
+        subgroups, electives, schedule, classroomTags, faculties, departments, academicWorks
     };
 
     let result: SchedulerResult | null = null;
@@ -1772,7 +1793,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setSchedule(nextSchedule);
         const finalPoint: SchedulingProgressPoint = {
             timeMs: 0,
-            penalty: result.score?.total || result.unschedulable.length * 1_000_000,
+            penalty: result.score?.total ?? result.unschedulable.length * 1_000_000,
             readiness: result.schedule.length + result.unschedulable.length > 0
                 ? (result.schedule.length / (result.schedule.length + result.unschedulable.length)) * 100
                 : 100,
@@ -1839,6 +1860,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             throw new Error("Алгоритм вернул некорректный формат расписания.");
         }
         const validatedSchedule: ScheduleEntry[] = newSchedule.map((entry: any, index: number) => ({ ...entry, id: `gen-${Date.now()}-${index}` }));
+        const validator = createScheduleValidator(generationData);
+        const invalid = validatedSchedule.flatMap(entry => validator(entry, validatedSchedule).issues);
+        if (invalid.length) throw new Error(`Результат AI не прошёл общую валидацию:\n${[...new Set(invalid)].slice(0, 10).join('\n')}`);
         if (window.confirm(`Сгенерировано ${validatedSchedule.length} занятий. Заменить текущее расписание?`)) {
             setSchedulingExplanations({});
             setLastSchedulingRunSummary(`Последний AI-прогон: расписание заменено, размещено ${validatedSchedule.length}, осталось нераспределенных ${unschedulable.length}.`);
@@ -1854,7 +1878,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
-        subgroups, electives, schedule, classroomTags, faculties, departments
+        subgroups, electives, schedule, classroomTags, faculties, departments, academicWorks
     };
 
     const result = await optimizeScheduleLocally(generationData, config);
@@ -1869,94 +1893,37 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const quickRepairScheduleEntry = async (entryId: string): Promise<{ changed: boolean; message: string }> => {
-    const entry = schedule.find(item => item.id === entryId);
-    if (!entry || !entry.date) return { changed: false, message: 'Не нашла занятие для быстрого исправления.' };
+    if (repairRunning.current) return { changed: false, message: 'Локальный ремонт уже выполняется.' };
+    repairRunning.current = true;
+    try {
+      const preview = await previewScheduleRepair(getSchedulingData(), entryId);
+      if (!preview.changes.length) return { changed: false, message: preview.message };
+      setRepairPreview(preview);
+      return { changed: false, message: 'Предпросмотр исправления готов.' };
+    } finally { repairRunning.current = false; }
+  };
 
-    const getEntryGroups = (item: Pick<ScheduleEntry, 'groupId' | 'groupIds' | 'streamId'>) => {
-      const ids = item.groupIds?.length ? item.groupIds : item.groupId ? [item.groupId] : item.streamId ? streams.find(stream => stream.id === item.streamId)?.groupIds || [] : [];
-      return groups.filter(group => ids.includes(group.id));
-    };
-    const involvedGroups = getEntryGroups(entry);
-    const subject = subjects.find(item => item.id === entry.subjectId);
-    const requiredTypes = getRequiredClassroomTypes(subject, entry.classType) || [];
-    const studentCount = involvedGroups.reduce((sum, group) => sum + group.studentCount, 0);
-    const suitableClassrooms = classrooms.filter(classroom =>
-      (requiredTypes.length === 0 || requiredTypes.includes(classroom.typeId)) &&
-      classroom.capacity >= Math.max(1, studentCount)
-    );
-    const slots = Array.from(new Map([...timeSlots, ...timeSlotsShortened].map(slot => [slot.id, slot])).values());
+  const applyScheduleRepair = () => {
+    if (!repairPreview || repairPreview.baseSignature !== scheduleSignature(schedule)) throw new Error('Расписание изменилось. Повторите поиск исправления.');
+    const issues = validateRepair(getSchedulingData(), repairPreview.changes);
+    if (issues.length) throw new Error(issues.join('\n'));
+    const replacements = new Map(repairPreview.changes.map(change => [change.before.id, change.after]));
+    const next = schedule.map(entry => replacements.get(entry.id) || entry);
+    setRepairUndo({ before: schedule, afterSignature: scheduleSignature(next) });
+    setSchedule(next); setRepairPreview(null);
+  };
 
-    const conflictsAt = (candidate: ScheduleEntry, currentSchedule: ScheduleEntry[]) => {
-      const candidateGroups = new Set(getEntryGroups(candidate).map(group => group.id));
-      return currentSchedule.filter(other => {
-        if (other.id === candidate.id) return false;
-        if (other.date !== candidate.date || other.timeSlotId !== candidate.timeSlotId) return false;
-        if (other.teacherId === candidate.teacherId) return true;
-        if (other.classroomId === candidate.classroomId) return true;
-        return getEntryGroups(other).some(group => candidateGroups.has(group.id));
-      });
-    };
-
-    const isAllowed = (candidate: ScheduleEntry) => {
-      const dayName = new Date(candidate.date + 'T00:00:00').getDay();
-      const day = DAYS_OF_WEEK[dayName === 0 ? 6 : dayName - 1];
-      const teacher = teachers.find(item => item.id === candidate.teacherId);
-      if (teacher?.availabilityGrid?.[day]?.[candidate.timeSlotId] === AvailabilityType.Forbidden) return false;
-      if (getEntryGroups(candidate).some(group => group.availabilityGrid?.[day]?.[candidate.timeSlotId] === AvailabilityType.Forbidden)) return false;
-      const targetSlot = slots.find(slot => slot.id === candidate.timeSlotId);
-      if (!areGroupsCompatibleWithTimeSlot(targetSlot, getEntryGroups(candidate))) return false;
-      return true;
-    };
-
-    const findFreePlacement = (target: ScheduleEntry, currentSchedule: ScheduleEntry[]) => {
-      const baseDate = new Date(target.date + 'T00:00:00');
-      const offsets = [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6, 7, -7];
-      for (const offset of offsets) {
-        const date = new Date(baseDate);
-        date.setDate(baseDate.getDate() + offset);
-        if (date.getDay() === 0) continue;
-        const dateStr = toYYYYMMDD(date);
-        const day = DAYS_OF_WEEK[date.getDay() === 0 ? 6 : date.getDay() - 1];
-        for (const slot of slots) {
-          for (const classroom of suitableClassrooms.length ? suitableClassrooms : classrooms) {
-            const candidate = { ...target, date: dateStr, day, timeSlotId: slot.id, classroomId: classroom.id };
-            if (!isAllowed(candidate)) continue;
-            if (conflictsAt(candidate, currentSchedule).length === 0) return candidate;
-          }
-        }
-      }
-      return null;
-    };
-
-    const currentConflicts = conflictsAt(entry, schedule);
-    const movedTarget = findFreePlacement(entry, schedule);
-    if (movedTarget) {
-      const classroom = classrooms.find(item => item.id === movedTarget.classroomId)?.number || movedTarget.classroomId;
-      const confirmed = window.confirm(`Я могу исправить коллизию без полного перезапуска: перенести эту пару на ${movedTarget.date}, слот ${movedTarget.timeSlotId}, ауд. ${classroom}. Согласны?`);
-      if (!confirmed) return { changed: false, message: 'Исправление отменено пользователем.' };
-      setSchedule(prev => prev.map(item => item.id === entry.id ? movedTarget : item));
-      return { changed: true, message: `Я перенесла эту пару на ${movedTarget.date}, слот ${movedTarget.timeSlotId}.` };
-    }
-
-    for (const blocker of currentConflicts) {
-      const scheduleWithoutBlocker = schedule.filter(item => item.id !== blocker.id);
-      const movedBlocker = findFreePlacement(blocker, scheduleWithoutBlocker);
-      if (movedBlocker && conflictsAt(entry, scheduleWithoutBlocker).length === 0) {
-        const confirmed = window.confirm(`Быстрое исправление: оставляю выбранную пару на месте, а мешающее занятие сдвигаю на ${movedBlocker.date}, слот ${movedBlocker.timeSlotId}. Согласны?`);
-        if (!confirmed) return { changed: false, message: 'Исправление отменено пользователем.' };
-        setSchedule(prev => prev.map(item => item.id === movedBlocker.id ? movedBlocker : item));
-        return { changed: true, message: `Я оставила выбранную пару на месте, а мешающее занятие перенесла на ${movedBlocker.date}.` };
-      }
-    }
-
-    return { changed: false, message: 'Быстрый ремонт не нашёл безопасный ход за локальные 3 секунды. Нужен локальный оптимизатор по группе/преподавателю.' };
+  const undoScheduleRepair = () => {
+    if (!repairUndo || repairUndo.afterSignature !== scheduleSignature(schedule)) throw new Error('После ремонта расписание изменилось. Автоматическая отмена недоступна.');
+    // Undo restores the original state, including the original collision.
+    setSchedule(repairUndo.before); setRepairUndo(null);
   };
 
   const runSessionScheduler = async (config: SessionSchedulerConfig): Promise<{ scheduled: number; unscheduled: number; failedEntries: any[] }> => {
     const generationData = {
         teachers, groups, classrooms, subjects, streams, timeSlots, timeSlotsShortened, bellScheduleProfiles, settings,
         teacherSubjectLinks, schedulingRules, productionCalendar, ugs, specialties, educationalPlans, classroomTypes,
-        subgroups, schedule
+        subgroups, schedule, electives, academicWorks
     };
 
     const result = await generateSessionSchedule(generationData, config);
@@ -2062,7 +2029,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     schedulingProgress, schedulingExplanations, lastSchedulingRunSummary, schedulingShowcase, viewDate,
     addItem, updateItem, deleteItem, setSchedule, placeUnscheduledItem, placeItemInGrid, updateScheduleEntry, updateSettings, updateApiKey, updateOpenRouterApiKey,
     deleteScheduleEntry, addScheduleEntry, propagateWeekSchedule, saveCurrentScheduleAsTemplate, loadScheduleFromTemplate,
-    runScheduler, runLocalOptimizer, requestSchedulingStop, dismissSchedulingShowcase, quickRepairScheduleEntry, runSessionScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,
+    runScheduler, runLocalOptimizer, requestSchedulingStop, dismissSchedulingShowcase, quickRepairScheduleEntry, repairPreview, dismissRepairPreview: () => setRepairPreview(null), applyScheduleRepair, undoScheduleRepair, canUndoRepair: !!repairUndo && repairUndo.afterSignature === scheduleSignature(schedule), runSessionScheduler, clearSchedule, resetSchedule, removeScheduleEntries, setUnscheduledTimeHorizon, setViewDate,
     startNewProject, handleOpen, openRecentProject, handleSave, handleSaveAs,
     getFullState, loadFullState, clearAllData, mergeFullState, setBuildingPlans, syncBuildingPlanRooms
   };
