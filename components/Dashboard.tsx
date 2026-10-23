@@ -26,6 +26,7 @@ import RepairPreviewModal from './RepairPreviewModal';
 import StudentManager from './StudentManager';
 import TrajectoryWorkspace from './TrajectoryWorkspace';
 import SubstitutionsView from './SubstitutionsView';
+import PublicationView, { PublishedScheduleView } from './PublicationView';
 
 
 interface DashboardProps {
@@ -60,7 +61,9 @@ const Dashboard: React.FC<DashboardProps> = ({ currentRole }) => {
   }, []);
 
   const renderContent = () => {
+    if (currentRole === Role.Student || currentRole === Role.Teacher) return <PublishedScheduleView />;
     switch (activeView) {
+      case 'Публикация расписания': return <PublicationView />;
       case 'Обучающиеся': return <StudentManager />;
       case 'Личный календарь': return <TrajectoryWorkspace calendar />;
       case 'Оперативные замены': return <SubstitutionsView />;

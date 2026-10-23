@@ -190,12 +190,14 @@ interface ScheduleViewProps {
 }
 
 const getTimeSlotHeaderClass = (shift?: TimeSlot['shift']) => {
+  if (shift === 'both') return 'bg-emerald-50 border-l-4 border-l-emerald-500';
   if (shift === 'second') return 'bg-amber-50 border-l-4 border-l-amber-500';
   if (shift === 'first') return 'bg-sky-50 border-l-4 border-l-sky-500';
   return 'bg-white border-l-4 border-l-gray-300';
 };
 
 const getTimeSlotBadgeClass = (shift?: TimeSlot['shift']) => {
+  if (shift === 'both') return 'bg-emerald-100 text-emerald-800 border border-emerald-200';
   if (shift === 'second') return 'bg-amber-100 text-amber-800 border border-amber-200';
   if (shift === 'first') return 'bg-sky-100 text-sky-800 border border-sky-200';
   return 'bg-gray-100 text-gray-700 border border-gray-200';
@@ -638,7 +640,7 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
     <div className="space-y-6">
       <div className="bg-white p-6 rounded-lg shadow-lg">
         <div className="flex flex-wrap justify-between items-center mb-6 gap-4">
-          <h2 className="text-2xl font-bold text-gray-800">Просмотр расписания</h2>
+          <div><h2 className="text-2xl font-bold text-gray-800">Просмотр расписания</h2><p className="mt-1 text-sm text-amber-800">Черновик · {store.publications.revisions.some(item => item.status === 'published') ? `Опубликована v${store.publications.revisions.find(item => item.status === 'published').number}` : 'Не опубликован'}</p></div>
           <div className="flex items-center flex-wrap gap-2 sm:gap-4">
             <div className="flex items-center gap-1">
                 <button onClick={handlePrevWeek} title="Предыдущая неделя" className="p-2 rounded-md border border-gray-300 bg-white hover:bg-gray-100 text-gray-600 transition-colors">

@@ -6,6 +6,10 @@
  * via `preload.js`.
  */
 interface IElectronAPI {
+  syncPublishedFeed?: (feed: unknown) => Promise<{ success: boolean }>;
+  getPublicationServerStatus?: () => Promise<{ running: boolean; url?: string; apiToken?: string; calendarToken?: string; publicationFile?: string }>;
+  startPublicationServer?: (port: number) => Promise<{ running: boolean; url: string; apiToken: string; calendarToken: string }>;
+  stopPublicationServer?: () => Promise<void>;
   getApiKey: () => Promise<string | undefined>;
   setApiKey: (key: string) => Promise<{ success: boolean }>;
   getOpenRouterApiKey: () => Promise<string | undefined>;

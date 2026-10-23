@@ -229,7 +229,7 @@ const SCHEDULER_YIELD_INTERVAL = 20;
 const MAX_PRIMARY_CLASSROOM_CANDIDATES = 24;
 const MAX_PRIMARY_WORK_DAYS = 10;
 const GOOD_ENOUGH_SLOT_COST = 0;
-const DOMAIN_CACHE_VERSION = 'domain-cache-v9';
+const DOMAIN_CACHE_VERSION = 'domain-cache-v10';
 const DOMAIN_PRECOMPUTE_BATCH_SIZE = 24;
 const TABU_TENURE = 24;
 
@@ -1026,6 +1026,8 @@ const chooseCandidate = <T>(candidates: T[], rng: () => number, stochasticity = 
 export const generateClassPool = (data: GenerationData, index = createSchedulerIndex(data)): UnscheduledEntry[] => {
     const { groups, electives } = data;
     const entries: UnscheduledEntry[] = [];
+    const hasSharedShiftSlot = [...data.timeSlots, ...(data.settings.useShortenedPreHolidaySchedule ? data.timeSlotsShortened : []),
+        ...(data.bellScheduleProfiles || []).filter(profile => profile.isActive && (profile.appliesToWeekdays?.length || profile.appliesToDates?.some(date => date >= data.settings.semesterStart && date <= data.settings.semesterEnd))).flatMap(profile => profile.slots)].some(slot => slot.shift === 'both');
 
     const processedGroupLectures = new Set<string>();
 
@@ -1057,7 +1059,7 @@ export const generateClassPool = (data: GenerationData, index = createSchedulerI
                         !processedGroupLectures.has(`${planEntry.subjectId}-${planEntrySemester}-${candidate.id}`) &&
                         candidate.course === group.course &&
                         getPlanForGroup(candidate, index)?.entries.find(item => item.subjectId === planEntry.subjectId && item.semester === planEntrySemester)?.lectureHours === planEntry.lectureHours &&
-                        (!group.shift || !candidate.shift || group.shift === 'both' || candidate.shift === 'both' || candidate.shift === group.shift)
+                        (!group.shift || !candidate.shift || group.shift === 'both' || candidate.shift === 'both' || candidate.shift === group.shift || hasSharedShiftSlot)
                     );
                 }
 

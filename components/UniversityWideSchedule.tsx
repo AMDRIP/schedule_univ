@@ -331,7 +331,7 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
 
     const slot = timeSlots.find(item => item.id === entry.timeSlotId);
     if (slot && !areGroupsCompatibleWithTimeSlot(slot, entryGroups)) {
-      issues.push({ type: 'shift', label: `Слот ${getTimeSlotShiftLabel(slot)} не совпадает со сменой группы`, severity: 'warning' });
+      issues.push({ type: 'shift', label: `Слот ${getTimeSlotShiftLabel(slot.shift)} не совпадает со сменой группы`, severity: 'warning' });
     }
     const studentCount = entryGroups.reduce((sum, group) => sum + group.studentCount, 0);
     if (classroom && studentCount > classroom.capacity) {
@@ -765,7 +765,7 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
                     {columns.map(column => (
                       <th key={column.id} className="min-w-[160px] border-b border-r p-2 text-xs font-medium text-gray-500">
                         {column.slot.time}
-                        {column.slot.shift && <span className="ml-1 text-[10px] text-gray-400">{getTimeSlotShiftLabel(column.slot)}</span>}
+                        {column.slot.shift && <span className="ml-1 text-[10px] text-gray-400">{getTimeSlotShiftLabel(column.slot.shift)}</span>}
                       </th>
                     ))}
                   </tr>

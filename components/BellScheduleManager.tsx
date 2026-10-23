@@ -9,6 +9,7 @@ type BuiltInProfileId = 'normal' | 'shortened';
 const SHIFT_LABELS: Record<TimeSlotShift, string> = {
   first: 'Первая смена',
   second: 'Вторая смена',
+  both: 'Обе смены',
 };
 
 const PROFILE_TYPE_LABELS: Record<BellScheduleProfileType, string> = {
@@ -108,8 +109,8 @@ const BellScheduleManager: React.FC = () => {
   ];
 
   const totalSlots = timeSlots.length + timeSlotsShortened.length + bellScheduleProfiles.reduce((sum, profile) => sum + profile.slots.length, 0);
-  const firstShiftSlots = [...timeSlots, ...timeSlotsShortened, ...bellScheduleProfiles.flatMap(profile => profile.slots)].filter(slot => slot.shift === 'first').length;
-  const secondShiftSlots = [...timeSlots, ...timeSlotsShortened, ...bellScheduleProfiles.flatMap(profile => profile.slots)].filter(slot => slot.shift === 'second').length;
+  const firstShiftSlots = [...timeSlots, ...timeSlotsShortened, ...bellScheduleProfiles.flatMap(profile => profile.slots)].filter(slot => slot.shift === 'first' || slot.shift === 'both').length;
+  const secondShiftSlots = [...timeSlots, ...timeSlotsShortened, ...bellScheduleProfiles.flatMap(profile => profile.slots)].filter(slot => slot.shift === 'second' || slot.shift === 'both').length;
 
   const qualityIssues = useMemo(() => {
     const issues: { title: string; detail: string; severity: 'critical' | 'warning' | 'info'; profileId?: string; builtIn?: BuiltInProfileId }[] = [];
@@ -121,10 +122,10 @@ const BellScheduleManager: React.FC = () => {
       }
       const sorted = sortSlots(slots);
       const shifts = new Set(sorted.map(slot => slot.shift));
-      if (!shifts.has('first')) {
+      if (!shifts.has('first') && !shifts.has('both')) {
         issues.push({ title: 'Нет первой смены', detail: `${name}: отсутствуют слоты первой смены.`, severity: 'warning', profileId, builtIn });
       }
-      if (!shifts.has('second')) {
+      if (!shifts.has('second') && !shifts.has('both')) {
         issues.push({ title: 'Нет второй смены', detail: `${name}: отсутствуют слоты второй смены.`, severity: 'info', profileId, builtIn });
       }
       sorted.forEach((slot, index) => {
@@ -416,6 +417,7 @@ const BellScheduleManager: React.FC = () => {
             <div className="flex flex-wrap gap-2">
               <button onClick={() => addBuiltInSlot(activeBuiltInDataType, 'first')} className="rounded-md bg-cyan-600 px-3 py-2 text-sm font-semibold text-white hover:bg-cyan-700">Добавить в 1 смену</button>
               <button onClick={() => addBuiltInSlot(activeBuiltInDataType, 'second')} className="rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Добавить во 2 смену</button>
+              <button onClick={() => addBuiltInSlot(activeBuiltInDataType, 'both')} className="inline-flex items-center gap-2 rounded-md bg-emerald-700 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-800"><PlusIcon className="h-4 w-4" />Для обеих смен</button>
             </div>
           </div>
           <SlotEditor
@@ -440,6 +442,7 @@ const BellScheduleManager: React.FC = () => {
                   <div className="flex gap-2">
                     <button onClick={() => addSlotToDraft('first')} className="text-sm font-semibold text-cyan-700 hover:text-cyan-900">+ 1 смена</button>
                     <button onClick={() => addSlotToDraft('second')} className="text-sm font-semibold text-indigo-700 hover:text-indigo-900">+ 2 смена</button>
+                    <button onClick={() => addSlotToDraft('both')} className="text-sm font-semibold text-emerald-700 hover:text-emerald-900">+ Обе смены</button>
                   </div>
                 </div>
                 <div className="mt-3 space-y-2">
@@ -634,7 +637,7 @@ const Timeline: React.FC<{ slots: TimeSlot[] }> = ({ slots }) => {
   return (
     <div className="mt-4 flex flex-wrap gap-2">
       {sorted.slice(0, 8).map(slot => (
-        <span key={slot.id} className={`rounded-md px-2 py-1 text-xs font-semibold ${slot.shift === 'second' ? 'bg-indigo-50 text-indigo-700' : 'bg-cyan-50 text-cyan-700'}`}>
+        <span key={slot.id} title={SHIFT_LABELS[slot.shift]} className={`rounded-md px-2 py-1 text-xs font-semibold ${slot.shift === 'both' ? 'bg-emerald-50 text-emerald-800' : slot.shift === 'second' ? 'bg-indigo-50 text-indigo-700' : 'bg-cyan-50 text-cyan-700'}`}>
           {slot.time}
         </span>
       ))}
@@ -680,7 +683,7 @@ const Input: React.FC<{ label: string; value: string | number; type?: string; on
 const Select: React.FC<{ label: string; value: string; options: { value: string; label: string }[]; onChange: (value: string) => void }> = ({ label, value, options, onChange }) => (
   <label className="block">
     <span className="text-sm font-medium text-gray-700">{label}</span>
-    <select value={value} onChange={event => onChange(event.target.value)} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500">
+    <select aria-label={label} value={value} onChange={event => onChange(event.target.value)} className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500">
       {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
     </select>
   </label>

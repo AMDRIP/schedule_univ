@@ -5,6 +5,26 @@ const os = require('os');
 const { Worker } = require('worker_threads');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log');
+const { randomBytes } = require('node:crypto');
+const { createReadServer } = require('./integrations/readServer.cjs');
+const { sanitizeFeed } = require('./integrations/publicSchedule.cjs');
+
+let publishedFeed = null;
+let publicationServer = null;
+let publicationAccess = null;
+let publicationQueue = Promise.resolve();
+const queuePublication = operation => {
+  const result = publicationQueue.then(operation);
+  publicationQueue = result.catch(() => {});
+  return result;
+};
+const stopPublicationServer = async () => {
+  if (publicationServer) await publicationServer.stop();
+  publicationServer = null; publicationAccess = null;
+};
+const assertPublicationSender = event => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('Publication access denied.');
+};
 
 // --- Updater Configuration ---
 log.transports.file.level = 'info';
@@ -105,6 +125,37 @@ app.whenReady().then(async () => {
   await loadAppSettings();
   console.log('Main process: App is ready.');
   // --- IPC Handlers ---
+  ipcMain.handle('sync-published-feed', (event, value) => {
+    assertPublicationSender(event);
+    const next = value === null ? null : sanitizeFeed(value);
+    return queuePublication(async () => {
+      if (!next || publishedFeed?.current.projectId !== next.current.projectId) await stopPublicationServer();
+      const filename = path.join(app.getPath('userData'), 'published-schedule.json');
+      if (next) {
+        await fs.writeFile(filename + '.tmp', JSON.stringify(next), 'utf8');
+        await fs.rename(filename + '.tmp', filename);
+      } else await fs.unlink(filename).catch(error => { if (error.code !== 'ENOENT') throw error; });
+      publishedFeed = next;
+      return { success: true };
+    });
+  });
+  ipcMain.handle('publication-server-status', event => {
+    assertPublicationSender(event);
+    return queuePublication(() => ({ running: !!publicationServer, ...publicationAccess, publicationFile: path.join(app.getPath('userData'), 'published-schedule.json') }));
+  });
+  ipcMain.handle('start-publication-server', (event, port) => {
+    assertPublicationSender(event);
+    return queuePublication(async () => {
+      if (!publishedFeed) throw new Error('Сначала опубликуйте расписание.');
+      if (publicationServer) return { running: true, ...publicationAccess };
+      const apiToken = randomBytes(32).toString('hex'), calendarToken = randomBytes(32).toString('hex');
+      const server = createReadServer({ getFeed: () => publishedFeed, apiToken, calendarToken });
+      const url = await server.start(port);
+      publicationServer = server; publicationAccess = { url, apiToken, calendarToken };
+      return { running: true, ...publicationAccess };
+    });
+  });
+  ipcMain.handle('stop-publication-server', event => { assertPublicationSender(event); return queuePublication(stopPublicationServer); });
 
   // API Key & AI Flag
   ipcMain.handle('get-api-key', () => userApiKey);
@@ -367,6 +418,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', function () {
+  stopPublicationServer().catch(() => {});
   console.log('Main process: All windows closed.');
   // Clean up autosave file on normal exit
   fs.unlink(getAutosavePath()).catch(() => { });

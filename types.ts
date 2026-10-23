@@ -255,7 +255,7 @@ export interface Cabinet extends BaseItem {
   notes?: string;
 }
 export type StudyShift = 'first' | 'second' | 'both';
-export type TimeSlotShift = 'first' | 'second';
+export type TimeSlotShift = 'first' | 'second' | 'both';
 export type BellScheduleProfileType = 'normal' | 'shortened' | 'session' | 'saturday' | 'practice' | 'exam' | 'custom';
 
 export interface TimeSlot extends BaseItem {

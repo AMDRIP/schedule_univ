@@ -1051,6 +1051,10 @@ video {
   max-height: 24rem;
 }
 
+.max-h-\[480px\] {
+  max-height: 480px;
+}
+
 .max-h-\[72vh\] {
   max-height: 72vh;
 }
@@ -1734,8 +1738,16 @@ video {
   white-space: pre-line;
 }
 
+.whitespace-pre-wrap {
+  white-space: pre-wrap;
+}
+
 .break-words {
   overflow-wrap: break-word;
+}
+
+.break-all {
+  word-break: break-all;
 }
 
 .rounded {
@@ -1805,6 +1817,11 @@ video {
 
 .border-dashed {
   border-style: dashed;
+}
+
+.\!border-emerald-700 {
+  --tw-border-opacity: 1 !important;
+  border-color: rgb(4 120 87 / var(--tw-border-opacity, 1)) !important;
 }
 
 .border-amber-100 {
@@ -1895,6 +1912,11 @@ video {
 .border-emerald-600 {
   --tw-border-opacity: 1;
   border-color: rgb(5 150 105 / var(--tw-border-opacity, 1));
+}
+
+.border-emerald-700 {
+  --tw-border-opacity: 1;
+  border-color: rgb(4 120 87 / var(--tw-border-opacity, 1));
 }
 
 .border-emerald-900 {
@@ -2135,6 +2157,16 @@ video {
   border-left-color: rgb(59 130 246 / var(--tw-border-opacity, 1));
 }
 
+.border-l-emerald-300 {
+  --tw-border-opacity: 1;
+  border-left-color: rgb(110 231 183 / var(--tw-border-opacity, 1));
+}
+
+.border-l-emerald-500 {
+  --tw-border-opacity: 1;
+  border-left-color: rgb(16 185 129 / var(--tw-border-opacity, 1));
+}
+
 .border-l-gray-300 {
   --tw-border-opacity: 1;
   border-left-color: rgb(209 213 219 / var(--tw-border-opacity, 1));
@@ -2197,6 +2229,11 @@ video {
 
 .border-opacity-10 {
   --tw-border-opacity: 0.1;
+}
+
+.\!bg-emerald-700 {
+  --tw-bg-opacity: 1 !important;
+  background-color: rgb(4 120 87 / var(--tw-bg-opacity, 1)) !important;
 }
 
 .bg-\[\#f3f3f3\] {
@@ -2784,6 +2821,11 @@ video {
   padding-bottom: 1rem;
 }
 
+.py-5 {
+  padding-top: 1.25rem;
+  padding-bottom: 1.25rem;
+}
+
 .py-6 {
   padding-top: 1.5rem;
   padding-bottom: 1.5rem;
@@ -3078,6 +3120,11 @@ video {
 .text-emerald-800 {
   --tw-text-opacity: 1;
   color: rgb(6 95 70 / var(--tw-text-opacity, 1));
+}
+
+.text-emerald-950 {
+  --tw-text-opacity: 1;
+  color: rgb(2 44 34 / var(--tw-text-opacity, 1));
 }
 
 .text-gray-300 {
@@ -3616,6 +3663,11 @@ video {
 .hover\:bg-emerald-700:hover {
   --tw-bg-opacity: 1;
   background-color: rgb(4 120 87 / var(--tw-bg-opacity, 1));
+}
+
+.hover\:bg-emerald-800:hover {
+  --tw-bg-opacity: 1;
+  background-color: rgb(6 95 70 / var(--tw-bg-opacity, 1));
 }
 
 .hover\:bg-gray-100:hover {
@@ -4349,6 +4401,10 @@ video {
 
   .xl\:grid-cols-\[1fr_360px\] {
     grid-template-columns: 1fr 360px;
+  }
+
+  .xl\:grid-cols-\[260px_minmax\(0\2c 1fr\)\] {
+    grid-template-columns: 260px minmax(0,1fr);
   }
 
   .xl\:grid-cols-\[320px_minmax\(0\2c 1fr\)\] {

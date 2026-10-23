@@ -12,6 +12,10 @@ dist
 dist-ssr
 .test-output/
 *.local
+.env
+.env.*
+!.env.example
+.telegram-bot.local.json*
 
 # Editor directories and files
 .vscode/*

@@ -583,6 +583,7 @@ interface ScheduleCellProps {
 }
 
 const getShiftCellClass = (shift?: TimeSlot['shift']) => {
+  if (shift === 'both') return 'bg-emerald-50 border-l-2 border-l-emerald-300';
   if (shift === 'second') return 'bg-amber-50 border-l-2 border-l-amber-200';
   if (shift === 'first') return 'bg-sky-50 border-l-2 border-l-sky-200';
   return 'bg-white';

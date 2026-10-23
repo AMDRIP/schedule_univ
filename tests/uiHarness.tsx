@@ -8,10 +8,10 @@ import SplashScreen from '../components/SplashScreen';
 import GenerationShowcaseModal from '../components/GenerationShowcaseModal';
 import { Role } from '../types';
 
-declare global { interface Window { __store: ReturnType<typeof useStore>; __enter: () => void; } }
+declare global { interface Window { __store: ReturnType<typeof useStore>; __enter: () => void; __setRole: (role: Role) => void; } }
 const Harness = () => {
-    const store = useStore(); const [splash, setSplash] = useState(true);
-    useEffect(() => { window.__store = store; window.__enter = () => setSplash(false); }, [store]);
-    return splash ? <SplashScreen onFinish={() => setSplash(false)} /> : <DndProvider backend={HTML5Backend}><Dashboard currentRole={Role.Admin} /><GenerationShowcaseModal /></DndProvider>;
+    const store = useStore(); const [splash, setSplash] = useState(true); const [role, setRole] = useState(Role.Admin);
+    useEffect(() => { window.__store = store; window.__enter = () => setSplash(false); window.__setRole = setRole; }, [store]);
+    return splash ? <SplashScreen onFinish={() => setSplash(false)} /> : <DndProvider backend={HTML5Backend}><Dashboard currentRole={role} /><GenerationShowcaseModal /></DndProvider>;
 };
 createRoot(document.getElementById('root')!).render(<StoreProvider><Harness /></StoreProvider>);

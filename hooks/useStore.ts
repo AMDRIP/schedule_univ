@@ -15,6 +15,7 @@ import { validateSubstitution } from '../services/substitutions';
 import { migrateStudents, groupsShareParticipants } from '../utils/participants';
 import { electiveDemand } from '../utils/trajectories';
 import { prepareLearningGroupUpdate } from '../services/learningGroups';
+import { PublicationState, emptyPublications, normalizePublications, prepareRevision, publishRevision, exportPublishedFeed } from '../services/publication';
 import { generateScheduleWithGemini } from '../services/geminiService';
 import { generateScheduleWithOpenRouter } from '../services/openRouterService';
 import { runIterativeScheduler } from '../services/iterativeScheduler';
@@ -384,6 +385,13 @@ const generateUnscheduledEntries = (
 
 
 interface StoreState {
+  projectId: string;
+  publications: PublicationState;
+  publicationSyncError: string;
+  submitScheduleForReview: (title: string, note: string, timeZone: string) => string;
+  publishScheduleRevision: (id: string) => Promise<void>;
+  archiveScheduleRevision: (id: string) => void;
+  restoreScheduleRevision: (id: string) => void;
   saveLearningGroup: (elective: Elective) => void;
   students: Student[];
   setStudents: React.Dispatch<React.SetStateAction<Student[]>>;
@@ -533,6 +541,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [timeSlotsShortened, setTimeSlotsShortened] = useState(initialTimeSlotsShortened);
   const [bellScheduleProfiles, setBellScheduleProfiles] = useState(initialBellScheduleProfiles);
   const [schedule, setSchedule] = useState<ScheduleEntry[]>(initialSchedule);
+  const [projectId, setProjectId] = useState(() => crypto.randomUUID());
+  const [publications, setPublications] = useState<PublicationState>(emptyPublications);
+  const [publicationSyncError, setPublicationSyncError] = useState('');
+  const publishing = useRef(false);
   const [repairPreview, setRepairPreview] = useState<RepairPreview | null>(null);
   const [repairUndo, setRepairUndo] = useState<{ before: ScheduleEntry[]; afterSignature: string } | null>(null);
   const repairRunning = useRef(false);
@@ -712,7 +724,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
   const getFullState = () => ({
-    schemaVersion: 3, academicWorks, students, resourceAbsences, substitutionLog,
+    schemaVersion: 4, projectId, publications, academicWorks, students, resourceAbsences, substitutionLog,
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, bellScheduleProfiles, schedule, unscheduledEntries,
     teacherSubjectLinks, schedulingRules, productionCalendar, settings, ugs, specialties, educationalPlans, educationalPlanTemplates, scheduleTemplates,
     classroomTypes, classroomTags, isGeminiAvailable, subgroups, electives, buildingPlans, currentFilePath, lastAutosave,
@@ -725,6 +737,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
   
   const loadFullState = (data: any) => {
+    const incomingProjectId = typeof data.projectId === 'string' && data.projectId ? data.projectId : crypto.randomUUID();
+    const incomingPublications = normalizePublications(data.publications, incomingProjectId);
+    setProjectId(incomingProjectId); setPublications(incomingPublications);
     setRepairPreview(null); setRepairUndo(null);
     const migrated = migrateStudents(data.students || [], data.academicWorks || [], normalizeLoadedScheduleDates(data.schedule || []));
     setAcademicWorks(migrated.academicWorks); setStudents(migrated.students);
@@ -1573,6 +1588,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
   
   const clearAllData = () => {
+    setProjectId(crypto.randomUUID()); setPublications(emptyPublications());
     setRepairPreview(null); setRepairUndo(null);
     setStudents([]); setResourceAbsences([]); setSubstitutionLog([]);
     setAcademicWorks([]);
@@ -1961,6 +1977,43 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
+  const submitScheduleForReview = (title: string, note: string, timeZone: string) => {
+    if (publishing.current) throw new Error('Дождитесь завершения публикации.');
+    const revision = prepareRevision(getSchedulingData(), publications, projectId, title, note, timeZone);
+    setPublications({ revisions: [...publications.revisions, revision] });
+    return revision.id;
+  };
+  const publishScheduleRevision = async (id: string) => {
+    if (publishing.current) throw new Error('Публикация уже выполняется.');
+    publishing.current = true;
+    const base = stateRef.current;
+    try {
+      const next = await publishRevision(getSchedulingData(), publications, id);
+      if (stateRef.current.projectId !== projectId || planningSignature(stateRef.current) !== planningSignature(base) || JSON.stringify(stateRef.current.publications) !== JSON.stringify(base.publications)) throw new Error('Проект изменился во время проверки. Повторите публикацию.');
+      setPublications(next);
+    } finally { publishing.current = false; }
+  };
+  const archiveScheduleRevision = (id: string) => {
+    if (publishing.current) throw new Error('Дождитесь завершения публикации.');
+    const target = publications.revisions.find(item => item.id === id);
+    if (target?.status === 'published') throw new Error('Действующая версия заменяется только новой публикацией.');
+    setPublications({ revisions: publications.revisions.map(item => item.id === id ? { ...item, status: 'archived' } : item) });
+  };
+  const restoreScheduleRevision = (id: string) => {
+    if (publishing.current) throw new Error('Дождитесь завершения публикации.');
+    const target = publications.revisions.find(item => item.id === id);
+    if (!target) throw new Error('Версия не найдена.');
+    setSchedule(JSON.parse(JSON.stringify(target.schedule)));
+    setRepairPreview(null); setRepairUndo(null);
+  };
+  useEffect(() => {
+    let active = true;
+    if (window.electronAPI?.syncPublishedFeed) window.electronAPI.syncPublishedFeed(exportPublishedFeed(publications)).then(() => {
+      if (active) setPublicationSyncError('');
+    }).catch(() => { if (active) setPublicationSyncError('Не удалось обновить файл публикации и API. Повторите публикацию или перезапустите приложение.'); });
+    return () => { active = false; };
+  }, [projectId, publications]);
+
   // --- File Handlers ---
   const handleSave = async () => {
     if (!window.electronAPI) return;
@@ -2020,6 +2073,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
 
   const value: StoreState = {
+    projectId, publications, publicationSyncError, submitScheduleForReview, publishScheduleRevision, archiveScheduleRevision, restoreScheduleRevision,
     students, setStudents, saveLearningGroup, resourceAbsences, substitutionLog, applySubstitution, removeResourceAbsence: id => setResourceAbsences(prev => prev.filter(item => item.id !== id)),
     academicWorks, setAcademicWorks,
     faculties, departments, teachers, groups, streams, classrooms, subjects, cabinets, timeSlots, timeSlotsShortened, bellScheduleProfiles, schedule, unscheduledEntries,

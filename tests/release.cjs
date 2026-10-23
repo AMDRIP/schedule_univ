@@ -15,6 +15,10 @@ const packed = JSON.parse(asar.extractFile(archive, 'package.json').toString('ut
 assert.equal(packed.version, pkg.version);
 const files = asar.listPackage(archive).map(name => name.replaceAll('\\', '/'));
 assert.ok(files.some(name => name.endsWith('/dist/schedulerBrowserWorker.js')));
+for (const name of ['main.js', 'preload.js', 'integrations/publicSchedule.cjs', 'integrations/readServer.cjs', 'integrations/server.cjs', 'integrations/telegramBot.cjs', 'integrations/.env.example', 'docs/PUBLICATION_API.md']) {
+    assert.deepEqual(asar.extractFile(archive, name), fs.readFileSync(name), `Packaged file mismatch: ${name}`);
+}
+assert.ok(!files.some(name => /\.schd$/i.test(name) || /\/\.env(?:$|\.)/.test(name) && !name.endsWith('/.env.example')));
 assert.ok(!files.some(name => name.includes('/dist/win-unpacked/') || /\.exe$/i.test(name)));
 assert.ok(asar.extractFile(archive, 'dist/bundle.js').toString('utf8').includes(pkg.version));
 const manifest = yaml.load(fs.readFileSync('dist/latest.yml', 'utf8'));
@@ -26,4 +30,4 @@ assert.equal(manifest.sha512, sha512);
 assert.equal(manifest.files[0].sha512, sha512);
 assert.equal(manifest.files[0].size, fs.statSync(filename).size);
 assert.ok(manifest.path.includes(pkg.version));
-console.log(`Release ${pkg.version}: package/lock/ASAR/renderer/updater versions match; installer SHA-512 and size verified; worker included; no nested installer.`);
+console.log(`Release ${pkg.version}: package/lock/ASAR/renderer/updater versions match; installer SHA-512 and size verified; workers, publication API, bot and docs included; no projects, secrets or nested installer.`);

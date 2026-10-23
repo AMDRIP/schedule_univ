@@ -9,6 +9,7 @@ export const SHIFT_LABELS: Record<StudyShift, string> = {
 export const TIME_SLOT_SHIFT_LABELS: Record<TimeSlotShift, string> = {
   first: '1 смена',
   second: '2 смена',
+  both: 'Обе смены',
 };
 
 export const getGroupShiftLabel = (shift?: StudyShift) => SHIFT_LABELS[shift || 'both'];
@@ -18,7 +19,7 @@ export const getTimeSlotShiftLabel = (shift?: TimeSlotShift) =>
 
 export const isTimeSlotCompatibleWithGroup = (timeSlot: TimeSlot | undefined, group: Group | undefined) => {
   if (!timeSlot || !group) return true;
-  if (!timeSlot.shift || !group.shift || group.shift === 'both') return true;
+  if (!timeSlot.shift || timeSlot.shift === 'both' || !group.shift || group.shift === 'both') return true;
   return timeSlot.shift === group.shift;
 };
 

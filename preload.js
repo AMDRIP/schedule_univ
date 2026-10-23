@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   isAiForced: () => ipcRenderer.invoke('is-ai-forced'),
   runParallelScheduler: (data, config) => ipcRenderer.invoke('run-parallel-scheduler', data, config),
+  syncPublishedFeed: (feed) => ipcRenderer.invoke('sync-published-feed', feed),
+  getPublicationServerStatus: () => ipcRenderer.invoke('publication-server-status'),
+  startPublicationServer: (port) => ipcRenderer.invoke('start-publication-server', port),
+  stopPublicationServer: () => ipcRenderer.invoke('stop-publication-server'),
 
   // --- File System and Window API ---
   setWindowTitle: (title) => ipcRenderer.invoke('set-window-title', title),

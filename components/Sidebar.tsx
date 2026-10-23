@@ -30,6 +30,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
   const getNavItems = (): SidebarItem[] => {
     const baseItems: NavItem[] = [
       { name: 'Просмотр расписания', icon: <CalendarIcon /> },
+      { name: 'Публикация расписания', icon: <ShieldCheckIcon /> },
       { name: 'Академический календарь', icon: <CalendarIcon /> },
       { name: 'Сводное расписание', icon: <TableCellsIcon /> },
       { name: 'Личный календарь', icon: <IdentificationIcon /> },
@@ -87,7 +88,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentRole, activeView, setActiveVie
       ];
     }
 
-    return baseItems;
+    return [{ name: 'Просмотр расписания', icon: <CalendarIcon /> }];
   };
 
   const navItems = getNavItems();
