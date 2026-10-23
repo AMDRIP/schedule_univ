@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect, useRef } from 'react';
+import { parseProject } from '../integrations/projectValidation.cjs';
 import { 
     Faculty, Department, Teacher, Group, Stream, Classroom, Subject, Cabinet, TimeSlot, ScheduleEntry, 
     UnscheduledEntry, DataItem, DataType, ClassroomType, ClassType, TeacherSubjectLink, SchedulingRule, 
@@ -456,8 +457,8 @@ interface StoreState {
   startNewProject: () => void;
   handleOpen: () => Promise<void>;
   openRecentProject: (filePath: string) => Promise<boolean>;
-  handleSave: () => Promise<void>;
-  handleSaveAs: () => Promise<void>;
+  handleSave: () => Promise<boolean>;
+  handleSaveAs: () => Promise<boolean>;
   getFullState: () => any;
   loadFullState: (data: any) => void;
   mergeFullState: (data: any) => void;
@@ -737,6 +738,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   });
   
   const loadFullState = (data: any) => {
+    data = parseProject(JSON.stringify(data));
     const incomingProjectId = typeof data.projectId === 'string' && data.projectId ? data.projectId : crypto.randomUUID();
     const incomingPublications = normalizePublications(data.publications, incomingProjectId);
     setProjectId(incomingProjectId); setPublications(incomingPublications);
@@ -776,6 +778,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const mergeFullState = (data: any) => {
+    data = parseProject(JSON.stringify(data));
     const incomingStudents: Student[] = data.students || [];
     const migrated = migrateStudents([...students.filter(student => !incomingStudents.some(item => item.id === student.id)), ...incomingStudents], data.academicWorks || [], data.schedule || []);
     const merge = <T extends BaseItem>(
@@ -839,8 +842,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (!window.electronAPI) return;
     const interval = setInterval(async () => {
       const state = stateRef.current; // Read from ref to get the latest state
-      await window.electronAPI.autosave(JSON.stringify(state));
-      setLastAutosave(new Date());
+      try { await window.electronAPI.autosave(JSON.stringify(state)); setLastAutosave(new Date()); }
+      catch { setLastAutosave(null); console.error('Автосохранение не выполнено. Сохраните проект вручную.'); }
     }, 30000); // Autosave every 30 seconds
     return () => clearInterval(interval);
   }, []); // Empty dependency array ensures the effect runs only once
@@ -867,7 +870,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                     alert("Не удалось восстановить данные: файл поврежден.");
                 }
             }
-        }
+        } else await window.electronAPI.skipAutosaveRecovery?.();
     });
   }, []); // Should only run once
   
@@ -2016,24 +2019,29 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   // --- File Handlers ---
   const handleSave = async () => {
-    if (!window.electronAPI) return;
+    if (!window.electronAPI) return false;
     if (currentFilePath) {
       const stateString = JSON.stringify(getFullState());
-      await window.electronAPI.saveFile(currentFilePath, stateString);
+      const result = await window.electronAPI.saveFile(currentFilePath, stateString);
+      if (!result?.success) throw new Error(result?.error || 'Не удалось сохранить проект.');
+      if (result.backupWarning) alert(result.backupWarning);
       rememberRecentProject(currentFilePath, new Blob([stateString]).size);
+      return true;
     } else {
-      await handleSaveAs();
+      return handleSaveAs();
     }
   };
 
   const handleSaveAs = async () => {
-    if (!window.electronAPI) return;
+    if (!window.electronAPI) return false;
     const stateString = JSON.stringify(getFullState());
     const filePath = await window.electronAPI.saveAsFile(stateString);
     if (filePath) {
       setCurrentFilePath(filePath);
       rememberRecentProject(filePath, new Blob([stateString]).size);
+      return true;
     }
+    return false;
   };
 
   const openRecentProject = async (filePath: string): Promise<boolean> => {

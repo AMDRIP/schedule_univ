@@ -1,4 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
+let initialProjectCallback, restoreCallback, pendingProject, pendingRestore = false;
+ipcRenderer.on('load-initial-project', (_event, project) => { if (initialProjectCallback) initialProjectCallback(project); else pendingProject = project; });
+ipcRenderer.on('restore-autosave-prompt', () => { if (restoreCallback) restoreCallback(); else pendingRestore = true; });
 
 // Безопасно предоставляем API из главного процесса процессу рендеринга
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -53,10 +56,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveAsFile: (data) => ipcRenderer.invoke('save-as-file', data),
   autosave: (data) => ipcRenderer.invoke('autosave', data),
   savePdfFile: (data, defaultPath) => ipcRenderer.invoke('save-pdf-file', data, defaultPath),
+  listProjectBackups: (filename) => ipcRenderer.invoke('list-project-backups', filename),
+  createProjectBackup: (filename) => ipcRenderer.invoke('create-project-backup', filename),
+  restoreProjectBackup: (filename, id) => ipcRenderer.invoke('restore-project-backup', filename, id),
+  chooseProjectForRecovery: () => ipcRenderer.invoke('choose-project-for-recovery'),
+  printHtml: (html) => ipcRenderer.invoke('print-html', html),
 
   // --- Autosave Recovery ---
-  onRestoreAutosaveRequest: (callback) => ipcRenderer.on('restore-autosave-prompt', callback),
+  onRestoreAutosaveRequest: (callback) => { restoreCallback = callback; if (pendingRestore) { pendingRestore = false; callback(); } },
   restoreAutosave: () => ipcRenderer.invoke('restore-autosave'),
+  skipAutosaveRecovery: () => ipcRenderer.invoke('skip-autosave-recovery'),
 
   /**
    * Отправляет сообщение для логирования в консоль основного процесса.
@@ -73,5 +82,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
   restartApp: () => ipcRenderer.send('restart-app'),
 
   // --- Initial Project Load ---
-  onLoadInitialProject: (callback) => ipcRenderer.on('load-initial-project', (_event, project) => callback(project)),
+  onLoadInitialProject: (callback) => { initialProjectCallback = callback; if (pendingProject) { const project = pendingProject; pendingProject = null; callback(project); } },
 });

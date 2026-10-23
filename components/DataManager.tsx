@@ -261,9 +261,6 @@ const DataManager: React.FC<DataManagerProps> = ({ dataType, title, onNavigate }
             case 'departments': return ['id', 'name', 'facultyId', 'specialtyIds'];
             case 'streams': return ['id', 'name', 'groupIds'];
             case 'cabinets': return ['id', 'number', 'departmentId'];
-            case 'timeSlots':
-            case 'timeSlotsShortened':
-                return ['id', 'time', 'shift'];
             case 'productionCalendar': return ['id', 'date', 'name', 'type', 'isWorkDay'];
             case 'ugs': return ['id', 'code', 'name'];
             case 'specialties': return ['id', 'code', 'name', 'ugsId', 'oksoCode'];

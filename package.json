@@ -1,7 +1,8 @@
 {
   "name": "schedule-system-app",
-  "version": "5510.2310.2026",
-  "releaseType": "функциональный релиз",
+  "version": "6000.2310.2026-rc.1",
+  "displayVersion": "6000.2310.2026rc1",
+  "releaseType": "кандидат в релиз",
   "description": "Веб-приложение для управления и просмотра расписаний занятий в высшем учебном заведении. Позволяет администраторам управлять данными, методистам составлять расписания (в том числе с помощью ИИ), а студентам и преподавателям просматривать актуальное расписание.",
   "main": "main.js",
   "scripts": {
@@ -16,8 +17,9 @@
     "start": "electron .",
     "prestart": "npm run build:js && npm run build:css",
     "build": "npm run build:js && npm run build:css",
-    "dist": "npm run build && electron-builder --publish always",
-    "predist": "npm run build:js && npm run build:css && git add . && git commit -m \"Pre-release commit\" || echo Nothing to commit && git push origin main || echo Push failed or not needed",
+    "dist": "npm run build && electron-builder --win --publish never",
+    "test:security": "node tests/security.cjs",
+    "test:release": "node tests/release.cjs",
     "build:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css",
     "watch:css": "tailwindcss -i ./TWD/input.css -o ./TWD/output.css --watch",
     "build:js": "node esbuild.config.js",
@@ -27,9 +29,15 @@
   "author": "Дмитрий Власов",
   "license": "ISC",
   "devDependencies": {
-    "electron": "^28.2.3",
-    "electron-builder": "^24.9.1",
-    "esbuild": "^0.21.4",
+    "electron": "45.0.0",
+    "electron-builder": "26.15.3",
+    "esbuild": "0.28.2",
+    "typescript": "^5.9.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@electron/asar": "^4.0.0",
+    "js-yaml": "^4.1.1",
     "playwright": "^1.64.1",
     "tailwindcss": "^3.4.3"
   },
@@ -37,7 +45,7 @@
     "@google/genai": "^1.29.0",
     "bindings": "^1.5.0",
     "electron-log": "^5.1.5",
-    "electron-updater": "^6.7.0",
+    "electron-updater": "6.8.9",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "node-addon-api": "^7.1.0",
@@ -45,9 +53,11 @@
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
     "react-dom": "^19.2.1",
-    "xlsx": "^0.18.5"
+    "semver": "^7.7.3",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "gypfile": true,
+  "overrides": { "postcss-selector-parser": "7.1.6" },
   "build": {
     "productName": "Расписание ВУЗ",
     "appId": "com.schedule-system.app",
@@ -56,7 +66,8 @@
         "provider": "github",
         "owner": "AMDRIP",
         "repo": "schedule_univ",
-        "releaseType": "release"
+        "channel": "rc",
+        "releaseType": "prerelease"
       }
     ],
     "files": [
@@ -65,9 +76,10 @@
       "integrations/*.cjs",
       "integrations/.env.example",
       "docs/PUBLICATION_API.md",
+      "docs/STABILITY.md",
+      "SECURITY.md",
       "index.html",
       "dist/*.js",
-      "dist/*.js.map",
       "TWD/output.css",
       "icon.svg",
       "1631285.ico",
@@ -77,13 +89,25 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "1631285.ico"
+      "icon": "1631285.ico",
+      "artifactName": "schedule-system-app-setup-${version}.${ext}",
+      "fileAssociations": [{ "ext": "schd", "name": "University schedule project", "description": "Проект расписания ВУЗа", "role": "Editor" }]
     },
     "nsis": {
       "oneClick": false,
+      "include": "build/installer.nsh",
+      "installerLanguages": ["ru_RU", "en_US"],
+      "language": "1049",
+      "installerIcon": "1631285.ico",
+      "uninstallerIcon": "1631285.ico",
+      "allowElevation": true,
+      "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "uninstallDisplayName": "Расписание ВУЗ"
     },
     "mac": {
       "target": "dmg",

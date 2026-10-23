@@ -14,6 +14,7 @@ import { chooseWorkerCount, runWorkerPool } from '../services/parallelScheduler'
 import { buildWhatIfScenario } from '../services/whatIfTrial';
 import { affectedByAbsence, previewSubstitution, validateSubstitution } from '../services/substitutions';
 import './generatorRegression.test';
+import './storage.test';
 import './sessionScheduler.test';
 import './trajectories.test';
 import './trajectoryRegression.test';

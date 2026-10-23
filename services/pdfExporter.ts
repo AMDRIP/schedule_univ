@@ -540,7 +540,7 @@ export const exportAllDataAsPdf = async (store: ReturnType<typeof useStore>) => 
 
     addTable("Правила и производственный календарь", [['Раздел', 'Описание', 'Параметры']], [
         ...store.schedulingRules.map(rule => ['Правило', rule.description, `${rule.severity}; ${rule.action}; ${rule.day || ''}; ${rule.param || ''}`]),
-        ...store.productionCalendar.map(event => ['Календарь', `${event.date}: ${event.type}`, event.description || '']),
+        ...store.productionCalendar.map(event => ['Календарь', `${event.date}: ${event.type}`, event.name || '']),
     ], { limit: 160, fontSize: 6 });
 
     addTable("Настройки генерации и аналитики", [['Параметр', 'Значение']], [
@@ -564,7 +564,7 @@ export const exportAllDataAsPdf = async (store: ReturnType<typeof useStore>) => 
             rooms.length,
             rooms.filter(room => room.resourceKind === 'classroom').length,
             rooms.filter(room => room.resourceKind === 'cabinet').length,
-            sum(rooms.map(room => room.openings?.length || 0)),
+            sum(plan.floors.map(floor => floor.openings?.length || 0)),
             sum(rooms.map(room => room.furniture?.length || 0)),
         ];
     }));

@@ -19,6 +19,8 @@ async function build() {
             platform: 'browser',
             format: 'iife',
             sourcemap: true,
+            minify: true,
+            define: { 'process.env.NODE_ENV': '"production"' },
             loader: {
                 '.ts': 'ts',
                 '.tsx': 'tsx',

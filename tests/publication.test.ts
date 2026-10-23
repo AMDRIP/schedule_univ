@@ -14,6 +14,7 @@ import os from 'node:os';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
+import { pathToFileURL } from 'node:url';
 
 const lesson = (patch: Partial<ScheduleEntry> = {}): ScheduleEntry => ({ id: 'lesson', subjectId: 'subject', groupId: 'group', teacherId: 'teacher', classroomId: 'room', timeSlotId: 'first', day: 'Понедельник', date: '2026-10-19', weekType: 'every', classType: ClassType.Practical, deliveryMode: DeliveryMode.Offline, ...patch });
 const fixture = () => { const data = makeFixture(); data.schedule = [lesson()]; return data; };
@@ -209,12 +210,12 @@ test('desktop IPC serializes API startup, rotates tokens, sanitizes files and st
     const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'univ-publication-'));
     const root = process.cwd(); const actualRequire = createRequire(path.join(root, 'main.js'));
     const handlers = new Map<string, (...args: any[]) => any>(); let ready: Promise<unknown>;
-    const app = Object.assign(new EventEmitter(), { getPath: () => folder, isPackaged: true,
+    const app = Object.assign(new EventEmitter(), { getPath: () => folder, isPackaged: true, requestSingleInstanceLock: () => true,
         whenReady: () => ({ then: (callback: () => unknown) => { ready = Promise.resolve().then(callback); return ready; } }), quit: () => {} });
     let window: any;
     class FakeWindow {
         static getAllWindows() { return [window]; }
-        webContents = Object.assign(new EventEmitter(), { mainFrame: {}, send: () => {}, openDevTools: () => {} });
+        webContents = Object.assign(new EventEmitter(), { mainFrame: { url: pathToFileURL(path.join(root, 'index.html')).href }, session: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} }, setWindowOpenHandler() {}, send: () => {}, openDevTools: () => {} });
         constructor() { window = this; }
         loadFile() {} setTitle() {}
     }
@@ -231,7 +232,7 @@ test('desktop IPC serializes API startup, rotates tokens, sanitizes files and st
     const call = (name: string, ...args: any[]) => Promise.resolve().then(() => handlers.get(name)(event, ...args));
     t.after(async () => { await call('stop-publication-server'); await fs.rm(folder, { recursive: true, force: true }); });
     await assert.rejects(Promise.resolve().then(() => handlers.get('publication-server-status')({ sender: {}, senderFrame: {} })), /denied/);
-    for (const channel of ['telegram-bot-status', 'telegram-bot-save', 'telegram-bot-check', 'telegram-bot-start', 'telegram-bot-stop', 'telegram-bot-forget']) {
+    for (const channel of handlers.keys()) {
         await assert.rejects(Promise.resolve().then(() => handlers.get(channel)({ sender: {}, senderFrame: {} })), /denied/);
         await assert.rejects(Promise.resolve().then(() => handlers.get(channel)({ sender: window.webContents, senderFrame: {} })), /denied/);
     }

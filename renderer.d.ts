@@ -35,11 +35,17 @@ interface IElectronAPI {
   setWindowTitle: (title: string) => Promise<void>;
   openFile: () => Promise<{ filePath: string; data: string; stats?: { size: number; lastModified: string } } | null>;
   openRecentFile: (filePath: string) => Promise<{ filePath: string; data: string; stats?: { size: number; lastModified: string } } | null>;
-  saveFile: (filePath: string, data: string) => Promise<{ success: boolean; error?: string }>;
+  saveFile: (filePath: string, data: string) => Promise<{ success: boolean; error?: string; backupWarning?: string }>;
   saveAsFile: (data: string) => Promise<string | null>;
   autosave: (data: string) => Promise<void>;
   onRestoreAutosaveRequest: (callback: () => void) => void;
   restoreAutosave: () => Promise<{ data: string } | null>;
+  skipAutosaveRecovery?: () => Promise<void>;
+  listProjectBackups?: (filename: string) => Promise<{ id: string; createdAt: string; size: number; valid: boolean }[]>;
+  createProjectBackup?: (filename: string) => Promise<{ id: string }>;
+  restoreProjectBackup?: (filename: string, id: string) => Promise<{ filePath: string; data: string }>;
+  chooseProjectForRecovery?: () => Promise<string | null>;
+  printHtml?: (html: string) => Promise<{ success: boolean; failureReason: string }>;
   log: (...args: any[]) => void;
   savePdfFile: (data: ArrayBuffer, defaultPath: string) => Promise<string | null>;
 

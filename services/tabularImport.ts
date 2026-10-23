@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { MAX_PROJECT_BYTES, parseSafeJSON } from '../integrations/projectValidation.cjs';
 
 const KNOWN_COLLECTIONS = new Set([
   'academicWorks', 'students', 'resourceAbsences', 'substitutionLog',
@@ -14,8 +15,9 @@ const parseMaybeJson = (value: unknown) => {
   if (!trimmed) return value;
   if (!['[', '{'].includes(trimmed[0])) return value;
   try {
-    return JSON.parse(trimmed);
-  } catch {
+    return parseSafeJSON(trimmed);
+  } catch (error) {
+    if (error?.code === 'UNSAFE_KEY') throw error;
     return value;
   }
 };
@@ -46,7 +48,9 @@ const normalizeRows = (rows: Record<string, unknown>[], options: TabularImportOp
   const normalized: Record<string, unknown> = {};
   Object.entries(row).forEach(([key, value]) => {
     const trimmedKey = key.trim();
-    normalized[mappings.get(trimmedKey) || trimmedKey] = parseMaybeJson(value);
+    const target = mappings.get(trimmedKey) || trimmedKey;
+    if (['__proto__', 'constructor', 'prototype'].includes(target)) throw new Error('Небезопасное имя колонки.');
+    normalized[target] = parseMaybeJson(value);
   });
   return normalized;
   });
@@ -58,21 +62,26 @@ const collectionFromFileName = (fileName: string) => {
 };
 
 export const readTabularImport = async (file: File, options: TabularImportOptions = {}): Promise<Record<string, unknown[]>> => {
+  if (file.size > MAX_PROJECT_BYTES) throw new Error('Файл импорта превышает 128 МБ.');
   const buffer = await file.arrayBuffer();
+  if (buffer.byteLength > MAX_PROJECT_BYTES) throw new Error('Файл импорта превышает 128 МБ.');
   const isCsv = /\.csv$/i.test(file.name);
   const csvDelimiter = options.csvDelimiter === '\\t' ? '\t' : options.csvDelimiter;
   const workbook = isCsv
     ? XLSX.read(new TextDecoder(options.csvEncoding || 'utf-8').decode(buffer), {
         type: 'string',
         FS: csvDelimiter && csvDelimiter !== 'auto' ? csvDelimiter : undefined,
+        sheetRows: 100001,
       })
-    : XLSX.read(buffer, { type: 'array' });
+    : XLSX.read(buffer, { type: 'array', sheetRows: 100001 });
+  if (workbook.SheetNames.length > 100) throw new Error('В файле больше 100 листов.');
   const result: Record<string, unknown[]> = {};
 
   workbook.SheetNames.forEach(sheetName => {
     const collectionName = KNOWN_COLLECTIONS.has(sheetName) ? sheetName : collectionFromFileName(file.name);
     if (!collectionName) return;
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(workbook.Sheets[sheetName], { defval: '' });
+    if (rows.length > 100000) throw new Error('В листе больше 100000 записей. Разделите импорт.');
     result[collectionName] = normalizeRows(rows, options);
   });
 

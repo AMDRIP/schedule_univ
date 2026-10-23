@@ -44,9 +44,9 @@ const getAiClient = async (): Promise<GoogleGenAI | null> => {
   // Проверяем, не активирован ли принудительный режим
   const aiForced = await window.electronAPI?.isAiForced?.();
   if (aiForced) {
-      const apiKey = process.env.API_KEY;
+      const apiKey = await window.electronAPI?.getApiKey();
       if (!apiKey) {
-          console.error("AI forced, but process.env.API_KEY is not available in the renderer.");
+          console.error("AI forced, but no session API key is available.");
           alert("AI-режим активирован, но ключ API не найден. Убедитесь, что он задан в переменных окружения.");
           ai = null;
           return null;

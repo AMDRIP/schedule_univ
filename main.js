@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, net } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, net, shell } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const os = require('os');
@@ -9,6 +9,16 @@ const { randomBytes } = require('node:crypto');
 const { createReadServer } = require('./integrations/readServer.cjs');
 const { sanitizeFeed } = require('./integrations/publicSchedule.cjs');
 const { createBotController } = require('./integrations/botController.cjs');
+const { createProjectStorage, projectPath } = require('./integrations/projectStorage.cjs');
+const { trustedSender, protectWindow } = require('./integrations/desktopSecurity.cjs');
+const { printDocument } = require('./integrations/printWindow.cjs');
+const { parseProject } = require('./integrations/projectValidation.cjs');
+const { prerelease } = require('semver');
+const entryFile = path.join(__dirname, 'index.html');
+const projectStorage = createProjectStorage();
+const approvedProjects = new Set();
+const approveProject = filename => approvedProjects.add(projectPath(filename).toLowerCase());
+const assertProject = filename => { if (!approvedProjects.has(projectPath(filename).toLowerCase())) throw new Error('Сначала откройте проект через приложение.'); };
 
 let telegramController;
 
@@ -26,12 +36,17 @@ const stopPublicationServer = async () => {
   publicationServer = null; publicationAccess = null;
 };
 const assertPublicationSender = event => {
-  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error('Publication access denied.');
+  if (!trustedSender(mainWindow, event, entryFile)) throw new Error('IPC access denied.');
 };
+const handle = (channel, callback) => ipcMain.handle(channel, (event, ...args) => { assertPublicationSender(event); if (quitting) throw new Error('Приложение завершает работу.'); return callback(event, ...args); });
+const listen = (channel, callback) => ipcMain.on(channel, (event, ...args) => { if (trustedSender(mainWindow, event, entryFile)) callback(event, ...args); });
 
 // --- Updater Configuration ---
 log.transports.file.level = 'info';
 autoUpdater.logger = log;
+autoUpdater.allowPrerelease = !!prerelease(require('./package.json').version);
+if (autoUpdater.allowPrerelease) autoUpdater.channel = 'rc';
+autoUpdater.allowDowngrade = false;
 
 // --- App Settings Management ---
 const SETTINGS_FILE = 'app-settings.json';
@@ -44,7 +59,9 @@ let appSettings = {
 async function loadAppSettings() {
   try {
     const data = await fs.readFile(getSettingsPath(), 'utf-8');
-    appSettings = { ...appSettings, ...JSON.parse(data) };
+    const loaded = JSON.parse(data);
+    appSettings = { autoUpdateEnabled: loaded.autoUpdateEnabled !== false, lastProjectPath: typeof loaded.lastProjectPath === 'string' ? loaded.lastProjectPath : null };
+    if (appSettings.lastProjectPath) { try { approveProject(appSettings.lastProjectPath); } catch { appSettings.lastProjectPath = null; } }
     console.log('Main process: App settings loaded.');
   } catch (error) {
     console.log('Main process: Could not load app settings, using defaults.');
@@ -53,7 +70,7 @@ async function loadAppSettings() {
 
 async function saveAppSettings() {
   try {
-    await fs.writeFile(getSettingsPath(), JSON.stringify(appSettings, null, 2), 'utf-8');
+    await projectStorage.atomic(getSettingsPath(), Buffer.from(JSON.stringify(appSettings, null, 2)));
   } catch (error) {
     console.error('Main process: Failed to save app settings:', error);
   }
@@ -67,6 +84,18 @@ let userOpenRouterKey = process.env.OPENROUTER_API_KEY; // Key for OpenRouter
 // --- File Operations ---
 const AUTOSAVE_FILE = 'autosave.schd';
 const getAutosavePath = () => path.join(app.getPath('userData'), AUTOSAVE_FILE);
+let pendingProject = process.argv.find(value => typeof value === 'string' && path.isAbsolute(value) && /\.schd$/i.test(value));
+async function loadProject(filename) {
+  const project = await projectStorage.open(filename); approveProject(project.filePath);
+  appSettings.lastProjectPath = project.filePath; await saveAppSettings(); return project;
+}
+async function loadLastProject() {
+  const filename = pendingProject || appSettings.lastProjectPath;
+  pendingProject = null;
+  if (!filename) return;
+  try { mainWindow.webContents.send('load-initial-project', await loadProject(filename)); }
+  catch { dialog.showErrorBox('Ошибка открытия проекта', 'Проект недоступен или повреждён. Откройте его резервную копию через настройки.'); }
+}
 
 async function createWindow() {
   console.log('Main process: Creating browser window...');
@@ -78,43 +107,32 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      webviewTag: false,
     },
   });
 
-  mainWindow.loadFile('index.html');
+  protectWindow(mainWindow, shell);
+  mainWindow.webContents.session.setPermissionRequestHandler((_content, _permission, callback) => callback(false));
+  mainWindow.webContents.session.setPermissionCheckHandler(() => false);
 
   // After the window is loaded, check for an autosave file.
   mainWindow.webContents.on('did-finish-load', async () => {
+    if (appSettings.autoUpdateEnabled) autoUpdater.checkForUpdatesAndNotify().catch(() => {});
     try {
-      await fs.access(getAutosavePath());
+      if (pendingProject) throw new Error('Explicit project requested');
+      await projectStorage.open(getAutosavePath());
       // If the file exists, ask the renderer to prompt the user.
       mainWindow.webContents.send('restore-autosave-prompt');
       console.log('Main process: Autosave file found, sent prompt to renderer.');
+      return;
     } catch (error) {
       // No autosave file, do nothing.
       console.log('Main process: No autosave file found.');
     }
-    // Check for updates if enabled
-    if (appSettings.autoUpdateEnabled) {
-      console.log('Main process: Auto-update enabled, checking for updates...');
-      autoUpdater.checkForUpdatesAndNotify();
-    } else {
-      console.log('Main process: Auto-update disabled.');
-    }
-
-    // Load last project
-    if (appSettings.lastProjectPath) {
-      try {
-        await fs.access(appSettings.lastProjectPath);
-        const data = await fs.readFile(appSettings.lastProjectPath, 'utf-8');
-        console.log(`Main process: Loading last project from ${appSettings.lastProjectPath}`);
-        mainWindow.webContents.send('load-initial-project', { filePath: appSettings.lastProjectPath, data });
-      } catch (error) {
-        console.warn(`Main process: Could not load last project from ${appSettings.lastProjectPath}:`, error.message);
-        appSettings.lastProjectPath = null;
-        await saveAppSettings();
-      }
-    }
+    await loadLastProject();
   });
 
   // Open DevTools automatically if not in production
@@ -122,16 +140,18 @@ async function createWindow() {
     mainWindow.webContents.openDevTools();
     console.log('Main process: DevTools opened because app is not packaged.');
   }
+  await mainWindow.loadFile(entryFile);
 }
 
-app.whenReady().then(async () => {
+if (!app.requestSingleInstanceLock()) app.quit();
+else app.whenReady().then(async () => {
   await loadAppSettings();
   telegramController = createBotController({ directory: app.getPath('userData'), secureStorage: safeStorage, getFeed: () => publishedFeed,
     fetchImpl: net?.fetch ? net.fetch.bind(net) : undefined });
   await telegramController.initialize();
   console.log('Main process: App is ready.');
   // --- IPC Handlers ---
-  ipcMain.handle('sync-published-feed', (event, value) => {
+  handle('sync-published-feed', (event, value) => {
     assertPublicationSender(event);
     const next = value === null ? null : sanitizeFeed(value);
     return queuePublication(async () => {
@@ -146,11 +166,11 @@ app.whenReady().then(async () => {
       return { success: true };
     });
   });
-  ipcMain.handle('publication-server-status', event => {
+  handle('publication-server-status', event => {
     assertPublicationSender(event);
     return queuePublication(() => ({ running: !!publicationServer, ...publicationAccess, publicationFile: path.join(app.getPath('userData'), 'published-schedule.json') }));
   });
-  ipcMain.handle('start-publication-server', (event, port) => {
+  handle('start-publication-server', (event, port) => {
     assertPublicationSender(event);
     return queuePublication(async () => {
       if (!publishedFeed) throw new Error('Сначала опубликуйте расписание.');
@@ -162,31 +182,34 @@ app.whenReady().then(async () => {
       return { running: true, ...publicationAccess };
     });
   });
-  ipcMain.handle('stop-publication-server', event => { assertPublicationSender(event); return queuePublication(stopPublicationServer); });
-  ipcMain.handle('telegram-bot-status', event => { assertPublicationSender(event); return telegramController.getStatus(); });
-  ipcMain.handle('telegram-bot-save', (event, input) => { assertPublicationSender(event); return telegramController.save(input); });
-  ipcMain.handle('telegram-bot-check', event => { assertPublicationSender(event); return telegramController.check(); });
-  ipcMain.handle('telegram-bot-start', event => { assertPublicationSender(event); return telegramController.start(); });
-  ipcMain.handle('telegram-bot-stop', event => { assertPublicationSender(event); return telegramController.stop(); });
-  ipcMain.handle('telegram-bot-forget', event => { assertPublicationSender(event); return telegramController.forget(); });
+  handle('stop-publication-server', event => queuePublication(stopPublicationServer));
+  handle('telegram-bot-status', () => telegramController.getStatus());
+  handle('telegram-bot-save', (_event, input) => telegramController.save(input));
+  handle('telegram-bot-check', () => telegramController.check());
+  handle('telegram-bot-start', () => telegramController.start());
+  handle('telegram-bot-stop', () => telegramController.stop());
+  handle('telegram-bot-forget', () => telegramController.forget());
 
   // API Key & AI Flag
-  ipcMain.handle('get-api-key', () => userApiKey);
-  ipcMain.handle('set-api-key', (event, key) => {
+  handle('get-api-key', () => userApiKey);
+  handle('set-api-key', (event, key) => {
+    if (typeof key !== 'string' || key.length > 4096) throw new Error('Некорректный ключ API.');
     console.log(`Main process: Gemini API key set in session (length: ${key ? key.length : 0})`);
     userApiKey = key;
     return { success: true };
   });
-  ipcMain.handle('get-openrouter-api-key', () => userOpenRouterKey);
-  ipcMain.handle('set-openrouter-api-key', (event, key) => {
+  handle('get-openrouter-api-key', () => userOpenRouterKey);
+  handle('set-openrouter-api-key', (event, key) => {
+    if (typeof key !== 'string' || key.length > 4096) throw new Error('Некорректный ключ API.');
     console.log(`Main process: OpenRouter API key set in session (length: ${key ? key.length : 0})`);
     userOpenRouterKey = key;
     return { success: true };
   });
-  ipcMain.handle('is-ai-forced', () => process.argv.some(arg => arg === '-ai' || arg === '--ai'));
+  handle('is-ai-forced', () => process.argv.some(arg => arg === '-ai' || arg === '--ai'));
 
-  ipcMain.handle('run-parallel-scheduler', async (event, data, config) => {
-    const iterations = Math.max(1, Number(config?.iterations || 1));
+  handle('run-parallel-scheduler', async (event, data, config) => {
+    parseProject(JSON.stringify(data));
+    const iterations = Math.max(1, Math.min(1000, Math.floor(Number(config?.iterations) || 1)));
     const cpuCount = Math.max(1, (os.cpus()?.length || 2) - 1);
     const concurrency = Math.max(1, Math.min(iterations, cpuCount, 4));
     const spare = Math.floor(Math.min(cpuCount, 4) / concurrency) - 1;
@@ -240,19 +263,19 @@ app.whenReady().then(async () => {
 
 
   // Window Title
-  ipcMain.handle('set-window-title', (event, title) => {
+  handle('set-window-title', (event, title) => {
+    if (typeof title !== 'string' || title.length > 1000) throw new Error('Некорректное название окна.');
     if (mainWindow) {
       mainWindow.setTitle(title);
     }
   });
 
   // Log from renderer to main process
-  ipcMain.on('log-to-main', (event, ...args) => {
-    console.log('[Renderer]:', ...args);
-  });
+  // Renderer logs are intentionally not persisted: they can contain project data or keys.
+  listen('log-to-main', () => {});
 
   // Open File
-  ipcMain.handle('open-file', async () => {
+  handle('open-file', async () => {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
       title: 'Открыть проект',
       buttonLabel: 'Открыть',
@@ -264,10 +287,7 @@ app.whenReady().then(async () => {
     }
     const filePath = filePaths[0];
     try {
-      const data = await fs.readFile(filePath, 'utf-8');
-      const stats = await fs.stat(filePath);
-      console.log(`Main process: Opened file ${filePath}`);
-      return { filePath, data, stats: { size: stats.size, lastModified: stats.mtime.toISOString() } };
+      return await loadProject(filePath);
     } catch (error) {
       console.error('Failed to open file:', error);
       dialog.showErrorBox('Ошибка открытия файла', `Не удалось прочитать файл: ${error.message}`);
@@ -275,15 +295,9 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle('open-recent-file', async (event, filePath) => {
+  handle('open-recent-file', async (event, filePath) => {
     try {
-      await fs.access(filePath);
-      const data = await fs.readFile(filePath, 'utf-8');
-      const stats = await fs.stat(filePath);
-      console.log(`Main process: Opened recent file ${filePath}`);
-      appSettings.lastProjectPath = filePath;
-      await saveAppSettings();
-      return { filePath, data, stats: { size: stats.size, lastModified: stats.mtime.toISOString() } };
+      return await loadProject(filePath);
     } catch (error) {
       console.error('Failed to open recent file:', error);
       dialog.showErrorBox('Ошибка открытия файла', `Не удалось прочитать файл: ${error.message}`);
@@ -292,13 +306,13 @@ app.whenReady().then(async () => {
   });
 
   // Save File
-  ipcMain.handle('save-file', async (event, filePath, data) => {
+  handle('save-file', async (event, filePath, data) => {
     try {
-      await fs.writeFile(filePath, data, 'utf-8');
-      console.log(`Main process: Saved file to ${filePath}`);
+      assertProject(filePath);
+      const result = await projectStorage.save(filePath, data);
       appSettings.lastProjectPath = filePath;
       await saveAppSettings();
-      return { success: true };
+      return result;
     } catch (error) {
       console.error('Failed to save file:', error);
       dialog.showErrorBox('Ошибка сохранения файла', `Не удалось сохранить файл: ${error.message}`);
@@ -307,7 +321,8 @@ app.whenReady().then(async () => {
   });
 
   // Save File As
-  ipcMain.handle('save-as-file', async (event, data) => {
+  handle('save-as-file', async (event, data) => {
+    parseProject(data);
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Сохранить проект как...',
       buttonLabel: 'Сохранить',
@@ -317,8 +332,7 @@ app.whenReady().then(async () => {
       return null;
     }
     try {
-      await fs.writeFile(filePath, data, 'utf-8');
-      console.log(`Main process: Saved file as ${filePath}`);
+      await projectStorage.save(filePath, data, { force: true }); approveProject(filePath);
       appSettings.lastProjectPath = filePath;
       await saveAppSettings();
       return filePath;
@@ -330,11 +344,11 @@ app.whenReady().then(async () => {
   });
 
   // Save PDF File
-  ipcMain.handle('save-pdf-file', async (event, data, defaultPath) => {
+  handle('save-pdf-file', async (event, data, defaultPath) => {
     if (!mainWindow) return null;
     const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
       title: 'Сохранить PDF',
-      defaultPath: defaultPath,
+      defaultPath: typeof defaultPath === 'string' ? path.basename(defaultPath) : 'schedule.pdf',
       filters: [{ name: 'PDF Documents', extensions: ['pdf'] }],
     });
     if (canceled || !filePath) {
@@ -353,21 +367,15 @@ app.whenReady().then(async () => {
   });
 
   // Autosave
-  ipcMain.handle('autosave', async (event, data) => {
-    try {
-      await fs.writeFile(getAutosavePath(), data, 'utf-8');
-    } catch (error) {
-      console.error('Autosave failed:', error);
-    }
+  handle('autosave', async (event, data) => {
+    await projectStorage.save(getAutosavePath(), data, { force: true });
   });
 
   // Restore Autosave
-  ipcMain.handle('restore-autosave', async () => {
+  handle('restore-autosave', async () => {
     try {
       const autosavePath = getAutosavePath();
-      const data = await fs.readFile(autosavePath, 'utf-8');
-      // Clean up autosave file after successful read
-      await fs.unlink(autosavePath).catch(err => console.error("Could not delete autosave file:", err));
+      const { data } = await projectStorage.open(autosavePath);
       console.log('Main process: Autosave restored.');
       return { data };
     } catch (error) {
@@ -375,20 +383,31 @@ app.whenReady().then(async () => {
       return null;
     }
   });
+  handle('skip-autosave-recovery', () => loadLastProject());
+  handle('list-project-backups', (_event, filename) => { assertProject(filename); return projectStorage.list(filename); });
+  handle('create-project-backup', (_event, filename) => { assertProject(filename); return projectStorage.backup(filename); });
+  handle('restore-project-backup', async (_event, filename, id) => { assertProject(filename); return projectStorage.restore(filename, id); });
+  handle('choose-project-for-recovery', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, { title: 'Выбрать проект для восстановления', filters: [{ name: 'Проект расписания', extensions: ['schd'] }], properties: ['openFile'] });
+    if (canceled || !filePaths[0]) return null;
+    const filename = projectPath(filePaths[0]); approveProject(filename); return filename;
+  });
+  handle('print-html', (_event, html) => printDocument(BrowserWindow, shell, mainWindow, html));
 
   // --- Auto-updater IPC and App Settings ---
-  ipcMain.handle('get-auto-update-setting', () => appSettings.autoUpdateEnabled);
-  ipcMain.handle('set-auto-update-setting', async (event, enabled) => {
+  handle('get-auto-update-setting', () => appSettings.autoUpdateEnabled);
+  handle('set-auto-update-setting', async (event, enabled) => {
+    if (typeof enabled !== 'boolean') throw new Error('Некорректная настройка обновлений.');
     appSettings.autoUpdateEnabled = enabled;
     await saveAppSettings();
     console.log(`Main process: Auto-update setting changed to: ${enabled}`);
   });
-  ipcMain.handle('check-for-updates', () => {
+  handle('check-for-updates', () => {
     console.log('Main process: Manual update check triggered.');
-    autoUpdater.checkForUpdates();
+    return autoUpdater.checkForUpdates().then(() => {});
   });
 
-  ipcMain.on('restart-app', () => {
+  listen('restart-app', () => {
     autoUpdater.quitAndInstall();
   });
 
@@ -418,24 +437,31 @@ app.whenReady().then(async () => {
   });
 
   autoUpdater.on('error', (err) => {
-    log.error('Update error:', err);
-    dialog.showErrorBox('Ошибка обновления', `Не удалось проверить или загрузить обновление: ${err.message}`);
+    log.warn('Update check failed.');
+    dialog.showErrorBox('Ошибка обновления', 'Не удалось проверить или загрузить обновление. Проверьте доступ к GitHub и повторите попытку позже.');
   });
 
 
-  createWindow();
+  await createWindow();
 
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
+app.on('second-instance', async (_event, argv) => {
+  if (!mainWindow) return;
+  if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus();
+  const filename = argv.find(value => typeof value === 'string' && path.isAbsolute(value) && /\.schd$/i.test(value));
+  if (!filename) return;
+  const { response } = await dialog.showMessageBox(mainWindow, { type: 'question', buttons: ['Открыть проект', 'Отмена'], defaultId: 1, cancelId: 1, message: 'Открыть выбранный проект? Несохранённые изменения в текущем проекте будут потеряны.' });
+  if (response === 0) { pendingProject = filename; await loadLastProject(); }
+});
+
 app.on('window-all-closed', function () {
   telegramController?.stop().catch(() => {});
   stopPublicationServer().catch(() => {});
   console.log('Main process: All windows closed.');
-  // Clean up autosave file on normal exit
-  fs.unlink(getAutosavePath()).catch(() => { });
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -443,5 +469,5 @@ let quitting = false;
 app.on('before-quit', event => {
   if (quitting) return;
   quitting = true; event.preventDefault();
-  Promise.allSettled([telegramController?.stop(), stopPublicationServer()]).finally(() => app.quit());
+  Promise.allSettled([telegramController?.stop(), stopPublicationServer(), projectStorage.flush()]).finally(() => app.quit());
 });

@@ -43,7 +43,7 @@ const Header: React.FC<HeaderProps> = ({
   }, []);
   
   const handleMenuClick = (action: () => void) => {
-    action();
+    Promise.resolve(action()).catch(error => alert(String(error instanceof Error ? error.message : error)));
     setProjectMenuOpen(false);
   };
 

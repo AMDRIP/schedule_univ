@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { FolderIcon, PlusIcon, DocumentTextIcon, ClockIcon, DocumentSearchIcon, DocumentDownloadIcon, UploadIcon, CogIcon } from './icons';
 import { useStore } from '../hooks/useStore';
 
-import { version as APP_VERSION } from '../package.json';
+import { displayVersion as APP_VERSION } from '../package.json';
 
 interface SplashScreenProps {
     onFinish: () => void;
@@ -80,13 +80,11 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onFinish, onOpenProject, on
     };
 
     const handleSaveProject = async () => {
-        await handleSave();
-        setStatusMessage('Проект сохранен.');
+        try { if (await handleSave()) setStatusMessage('Проект сохранен.'); } catch (error) { setStatusMessage(String(error instanceof Error ? error.message : error)); }
     };
 
     const handleSaveProjectAs = async () => {
-        await handleSaveAs();
-        setStatusMessage('Проект сохранен как новый файл.');
+        try { if (await handleSaveAs()) setStatusMessage('Проект сохранен как новый файл.'); } catch (error) { setStatusMessage(String(error instanceof Error ? error.message : error)); }
     };
 
     const handleOpenRecent = async (projectPath: string) => {

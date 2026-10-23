@@ -4,6 +4,7 @@ import { ClassType, SchedulingSettings } from '../types';
 import { CogIcon, SparklesIcon } from './icons';
 import { exportAllDataAsPdf } from '../services/pdfExporter';
 import { readTabularImport } from '../services/tabularImport';
+import ProjectRecoveryPanel from './ProjectRecoveryPanel';
 
 const ImportConfirmModal: React.FC<{
     onConfirm: (method: 'replace' | 'merge') => void;
@@ -726,6 +727,7 @@ const SettingsView: React.FC = () => {
           </div>
        </div>
 
+       <ProjectRecoveryPanel />
        <div className="pt-8 border-t">
           <h3 className="text-xl font-bold text-gray-800 mb-4">Управление данными</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

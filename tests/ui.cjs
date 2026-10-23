@@ -24,7 +24,7 @@ async function run() {
         app = await _electron.launch({ executablePath: require('electron'), args: [path.join(__dirname, 'ui-main.cjs')], env: { ...process.env, UNIV_TEST_URL: `http://127.0.0.1:${server.address().port}/` }, timeout: 30000 });
         const page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message));
         await page.waitForFunction(() => !!window.__store);
-        const version = require('../package.json').version;
+        const version = require('../package.json').displayVersion || require('../package.json').version;
         await page.getByText(`Версия ${version}`, { exact: true }).waitFor();
         await page.evaluate(data => { window.__store.loadFullState(data); window.__enter(); }, makeFixture());
         await page.getByRole('link', { name: 'Работы и исследования', exact: true }).click();
@@ -356,8 +356,40 @@ async function run() {
         await page.getByRole('link', { name: 'Публикация расписания', exact: true }).click();
         await page.getByRole('tab', { name: 'Telegram-бот', exact: true }).click();
         await page.getByRole('form', { name: 'Настройки Telegram-бота', exact: true }).waitFor();
+        await page.evaluate(() => {
+            window.__backupCalls = [];
+            window.__recoveryPath = 'Y:\\UNIV\\.test-output\\recovery.schd';
+            window.__backupFixture = window.__store.getFullState();
+            window.__backupFixture.currentFilePath = window.__recoveryPath;
+            window.__backupFixture.subjects[0].name = 'Восстановленная дисциплина';
+            Object.assign(window.electronAPI, {
+                saveFile: async () => window.__failSave ? { success: false, error: 'Тест: диск недоступен' } : { success: true },
+                chooseProjectForRecovery: async () => window.__recoveryPath,
+                listProjectBackups: async () => [{ id: '1780000000000-00000000-0000-0000-0000-000000000001.schd', createdAt: '2026-10-23T00:00:00Z', size: 1024, valid: true }, { id: '1780000000000-00000000-0000-0000-0000-000000000002.schd', createdAt: '2026-10-22T00:00:00Z', size: 12, valid: false }],
+                createProjectBackup: async () => { window.__backupCalls.push('backup'); return { id: 'copy' }; },
+                restoreProjectBackup: async () => { window.__backupCalls.push('restore'); return { filePath: window.__recoveryPath, data: JSON.stringify(window.__backupFixture) }; },
+            });
+        });
+        await page.getByRole('link', { name: 'Настройки', exact: true }).click();
+        const recovery = page.getByRole('region', { name: 'Резервные копии проектов', exact: true });
+        await recovery.getByRole('button', { name: 'Выбрать проект', exact: true }).click();
+        await recovery.getByRole('cell', { name: 'Доступна', exact: true }).waitFor();
+        assert.equal(await recovery.getByRole('button', { name: /Восстановить копию.*000000000002/ }).isDisabled(), true);
+        page.once('dialog', dialog => dialog.accept());
+        await recovery.getByRole('button', { name: /Восстановить копию.*000000000001/ }).click();
+        await recovery.getByText('Проект восстановлен из резервной копии.', { exact: true }).waitFor();
+        await page.waitForFunction(() => window.__store.subjects[0]?.name === 'Восстановленная дисциплина');
+        await recovery.getByRole('button', { name: 'Создать резервную копию', exact: true }).click();
+        await recovery.getByText('Резервная копия создана.', { exact: true }).waitFor();
+        await page.evaluate(() => { window.__failSave = true; });
+        await recovery.getByRole('button', { name: 'Создать резервную копию', exact: true }).click();
+        await recovery.getByRole('alert').filter({ hasText: 'Тест: диск недоступен' }).waitFor();
+        assert.deepEqual(await page.evaluate(() => window.__backupCalls), ['restore', 'backup']);
+        await page.setViewportSize({ width: 760, height: 1000 });
+        const recoveryBounds = await recovery.boundingBox(); assert.ok(recoveryBounds.x >= 0 && recoveryBounds.x + recoveryBounds.width <= 761);
+        await page.screenshot({ path: '.test-output/recovery-6000-compact.png', fullPage: true });
         assert.deepEqual(errors, []);
-        console.log('Electron UI: existing scheduling/publication regressions and Telegram token input/save/check/start/stop/delete, autostart, formatting preview, reconnection status, project secrecy, compact bounds and both navigation paths passed.');
+        console.log('Electron UI: scheduling/publication/Telegram regressions, backup selection/restore/create, corrupt-copy rejection, truthful save failure and compact layout passed.');
     } catch (error) {
         if (app) console.error('UI diagnostics:', { errors, navigation: await (await app.firstWindow()).getByRole('link').allTextContents() });
         throw error;

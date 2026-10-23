@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { escapeHtml } from '../utils/html';
 import { groupsShareParticipants } from '../utils/participants';
 import * as XLSX from 'xlsx';
 import { useDrag, useDrop } from 'react-dnd';
@@ -630,13 +631,14 @@ const UniversityWideSchedule: React.FC<UniversityWideScheduleProps> = ({ setView
         <body>
           <h1>Сводное расписание ${weekStart} - ${weekEnd}</h1>
           <table>
-            <thead><tr>${headers.map(header => `<th>${header}</th>`).join('')}</tr></thead>
-            <tbody>${rows.map(row => `<tr>${headers.map(header => `<td>${String(row[header] || '')}</td>`).join('')}</tr>`).join('')}</tbody>
+            <thead><tr>${headers.map(header => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+            <tbody>${rows.map(row => `<tr>${headers.map(header => `<td>${escapeHtml(row[header])}</td>`).join('')}</tr>`).join('')}</tbody>
           </table>
         </body>
       </html>
     `;
-    const win = window.open('', '_blank');
+    if (window.electronAPI?.printHtml) { window.electronAPI.printHtml(html).catch(() => alert('Не удалось открыть печатную форму.')); return; }
+    const win = window.open('', 'schedule-print');
     if (!win) return;
     win.document.write(html);
     win.document.close();

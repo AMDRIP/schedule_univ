@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { escapeHtml } from '../utils/html';
 import { useStore } from '../hooks/useStore';
 import { Role, WeekType, ScheduleEntry, ClassType, ScheduleTemplate, DeliveryMode, TimeSlot, ProductionCalendarEventType, Teacher, Group, Classroom } from '../types';
 import { DAYS_OF_WEEK, PRODUCTION_CALENDAR_COLORS } from '../constants';
@@ -523,11 +524,9 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
       const teacher = teachers.find(t => t.id === entry.teacherId)?.name || entry.teacherId;
       const classroom = classrooms.find(c => c.id === entry.classroomId)?.number || entry.classroomId;
       const groupNames = entry.groupIds?.map(id => groups.find(g => g.id === id)?.number || id).join(', ') || groups.find(g => g.id === entry.groupId)?.number || '';
-      return `<tr><td>${entry.date || entry.day}</td><td>${time}</td><td>${subject}</td><td>${entry.classType}</td><td>${teacher}</td><td>${groupNames}</td><td>${classroom}</td></tr>`;
+      return `<tr>${[entry.date || entry.day, time, subject, entry.classType, teacher, groupNames, classroom].map(value => `<td>${escapeHtml(value)}</td>`).join('')}</tr>`;
     }).join('');
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) return;
-    printWindow.document.write(`
+    const printHtml = `
       <html>
         <head>
           <title>Печатная форма расписания</title>
@@ -541,15 +540,19 @@ const ScheduleView: React.FC<ScheduleViewProps> = ({ currentRole, viewDate, setV
           </style>
         </head>
         <body>
-          <h1>Расписание: ${selectedItemName}</h1>
-          <p>${exportScope === 'semester' ? `Семестр ${settings.semesterStart} - ${settings.semesterEnd}` : `Неделя ${weekStart} - ${weekEnd}`}</p>
+          <h1>Расписание: ${escapeHtml(selectedItemName)}</h1>
+          <p>${escapeHtml(exportScope === 'semester' ? `Семестр ${settings.semesterStart} - ${settings.semesterEnd}` : `Неделя ${weekStart} - ${weekEnd}`)}</p>
           <table>
             <thead><tr><th>Дата/день</th><th>Время</th><th>Дисциплина</th><th>Тип</th><th>Преподаватель</th><th>Группы</th><th>Аудитория</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>
         </body>
       </html>
-    `);
+    `;
+    if (window.electronAPI?.printHtml) { window.electronAPI.printHtml(printHtml).catch(() => alert('Не удалось открыть печатную форму.')); return; }
+    const printWindow = window.open('', 'schedule-print');
+    if (!printWindow) return;
+    printWindow.document.write(printHtml);
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();

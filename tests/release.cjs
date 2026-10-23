@@ -15,16 +15,23 @@ const packed = JSON.parse(asar.extractFile(archive, 'package.json').toString('ut
 assert.equal(packed.version, pkg.version);
 const files = asar.listPackage(archive).map(name => name.replaceAll('\\', '/'));
 assert.ok(files.some(name => name.endsWith('/dist/schedulerBrowserWorker.js')));
-for (const name of ['main.js', 'preload.js', 'integrations/publicSchedule.cjs', 'integrations/readServer.cjs', 'integrations/server.cjs', 'integrations/telegramBot.cjs', 'integrations/botMessages.cjs', 'integrations/botRuntime.cjs', 'integrations/botController.cjs', 'integrations/.env.example', 'docs/PUBLICATION_API.md']) {
+for (const name of ['main.js', 'preload.js', 'integrations/publicSchedule.cjs', 'integrations/readServer.cjs', 'integrations/server.cjs', 'integrations/telegramBot.cjs', 'integrations/botMessages.cjs', 'integrations/botRuntime.cjs', 'integrations/botController.cjs', 'integrations/projectStorage.cjs', 'integrations/projectValidation.cjs', 'integrations/desktopSecurity.cjs', 'integrations/printWindow.cjs', 'integrations/.env.example', 'docs/PUBLICATION_API.md', 'docs/STABILITY.md', 'SECURITY.md']) {
     assert.deepEqual(asar.extractFile(archive, name), fs.readFileSync(name), `Packaged file mismatch: ${name}`);
 }
 assert.ok(!files.some(name => /\.schd$/i.test(name) || /\/\.env(?:$|\.)/.test(name) && !name.endsWith('/.env.example')));
 assert.ok(!files.some(name => /\/(telegram-settings|telegram-state-[^/]+)\.json(?:$|\.)/.test(name)));
 assert.ok(!files.some(name => name.includes('/dist/win-unpacked/') || /\.exe$/i.test(name)));
-assert.ok(asar.extractFile(archive, 'dist/bundle.js').toString('utf8').includes(pkg.version));
-const manifest = yaml.load(fs.readFileSync('dist/latest.yml', 'utf8'));
+assert.ok(asar.extractFile(archive, 'dist/bundle.js').toString('utf8').includes(pkg.displayVersion || pkg.version));
+assert.ok(!files.some(name => name.startsWith('/dist/') && name.endsWith('.js.map')));
+assert.ok(require('semver').valid(pkg.version));
+assert.equal(pkg.build.appId, 'com.schedule-system.app');
+assert.equal(pkg.build.nsis.deleteAppDataOnUninstall, false);
+assert.ok(fs.readFileSync('build/installer.nsh', 'utf8').includes(pkg.displayVersion));
+assert.ok(fs.readFileSync('index.html', 'utf8').includes('Content-Security-Policy'));
+const channel = require('semver').prerelease(pkg.version) ? 'rc' : 'latest';
+const manifest = yaml.load(fs.readFileSync(`dist/${channel}.yml`, 'utf8'));
 assert.equal(manifest.version, pkg.version);
-const filename = path.join('dist', `${pkg.build.productName} Setup ${pkg.version}.exe`);
+const filename = path.join('dist', `schedule-system-app-setup-${pkg.version}.exe`);
 assert.ok(fs.statSync(filename + '.blockmap').size > 0);
 const sha512 = crypto.createHash('sha512').update(fs.readFileSync(filename)).digest('base64');
 assert.equal(manifest.sha512, sha512);

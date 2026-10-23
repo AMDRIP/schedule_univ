@@ -18,6 +18,9 @@ dist-ssr
 .telegram-bot.local.json*
 telegram-state-*.json*
 telegram-settings.json*
+*.schd
+*.schd.backups/
+.*.schd.*.tmp
 
 # Editor directories and files
 .vscode/*
